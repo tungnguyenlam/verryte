@@ -1,0 +1,9 @@
+[package]
+name = "verryte-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core ECS/world/resource/event/schedule primitives for the Verryte terminal game engine."
+
+[lints]
+workspace = true

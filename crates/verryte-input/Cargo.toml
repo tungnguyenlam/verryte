@@ -1,0 +1,9 @@
+[package]
+name = "verryte-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Terminal-agnostic input model: keys, bindings, action queue. The shared path for interactive, scripted, and agent-driven control."
+
+[lints]
+workspace = true

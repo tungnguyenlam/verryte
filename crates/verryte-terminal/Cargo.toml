@@ -1,0 +1,9 @@
+[package]
+name = "verryte-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Terminal-cell primitives for Verryte: Color, Cell, Grid, layered composition, plain renderer."
+
+[lints]
+workspace = true

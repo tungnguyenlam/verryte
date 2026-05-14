@@ -1,0 +1,9 @@
+[package]
+name = "verryte-map"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Map and spatial primitives for terminal-native Verryte games."
+
+[lints]
+workspace = true

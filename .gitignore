@@ -1,0 +1,26 @@
+# Rust build output
+target/
+
+# Local binaries and artifacts
+*.rlib
+*.rmeta
+*.dSYM/
+
+# Temporary and backup files
+*.log
+*.tmp
+*.temp
+*~
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor settings
+.vscode/
+.idea/
+
+# Tool caches
+.cache/

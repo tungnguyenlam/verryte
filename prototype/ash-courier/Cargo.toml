@@ -1,0 +1,22 @@
+[package]
+name = "ash-courier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Proving game for the Verryte engine: a small turn-based grid roguelike."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ash-courier-script"
+path = "src/bin/script.rs"
+
+[dependencies]
+verryte-core = { path = "../../crates/verryte-core" }
+verryte-input = { path = "../../crates/verryte-input" }
+verryte-map = { path = "../../crates/verryte-map" }
+verryte-terminal = { path = "../../crates/verryte-terminal" }
+
+[lints]
+workspace = true
