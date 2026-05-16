@@ -26,12 +26,92 @@ impl Color {
     pub const DARK_GREY: Color = Color(60, 60, 60);
 }
 
+/// Bitflags for terminal cell text attributes.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct CellAttrs {
+    pub bold: bool,
+    pub underline: bool,
+    pub dim: bool,
+    pub italic: bool,
+    pub reverse: bool,
+    pub blink: bool,
+}
+
+impl CellAttrs {
+    pub const NONE: CellAttrs = CellAttrs {
+        bold: false,
+        underline: false,
+        dim: false,
+        italic: false,
+        reverse: false,
+        blink: false,
+    };
+
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+
+    pub fn dim(mut self) -> Self {
+        self.dim = true;
+        self
+    }
+
+    pub fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    pub fn reverse(mut self) -> Self {
+        self.reverse = true;
+        self
+    }
+
+    pub fn blink(mut self) -> Self {
+        self.blink = true;
+        self
+    }
+
+    /// Convert to ANSI escape sequences. Returns an empty string if no attributes are set.
+    pub fn to_ansi(&self) -> String {
+        if *self == Self::NONE {
+            return String::new();
+        }
+        let mut codes = Vec::new();
+        if self.bold {
+            codes.push("1");
+        }
+        if self.dim {
+            codes.push("2");
+        }
+        if self.italic {
+            codes.push("3");
+        }
+        if self.underline {
+            codes.push("4");
+        }
+        if self.blink {
+            codes.push("5");
+        }
+        if self.reverse {
+            codes.push("7");
+        }
+        format!("\x1b[{}m", codes.join(";"))
+    }
+}
+
 /// One terminal cell.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Cell {
     pub glyph: char,
     pub fg: Color,
     pub bg: Color,
+    pub attrs: CellAttrs,
 }
 
 impl Cell {
@@ -39,6 +119,7 @@ impl Cell {
         glyph: ' ',
         fg: Color::WHITE,
         bg: Color::BLACK,
+        attrs: CellAttrs::NONE,
     };
 
     pub fn new(glyph: char) -> Self {
@@ -46,6 +127,7 @@ impl Cell {
             glyph,
             fg: Color::WHITE,
             bg: Color::BLACK,
+            attrs: CellAttrs::NONE,
         }
     }
 
@@ -56,6 +138,11 @@ impl Cell {
 
     pub fn with_bg(mut self, bg: Color) -> Self {
         self.bg = bg;
+        self
+    }
+
+    pub fn with_attrs(mut self, attrs: CellAttrs) -> Self {
+        self.attrs = attrs;
         self
     }
 
@@ -368,6 +455,45 @@ impl Grid {
         true
     }
 
+    /// Shift all content up by `n` rows. Rows that scroll off the top are
+    /// discarded; new rows at the bottom are filled with `fill`.
+    ///
+    /// Useful for scrolling text areas, message logs, and terminal output.
+    /// A scroll of 0 or ≥ height is equivalent to clearing.
+    pub fn scroll_up(&mut self, n: u16, fill: Cell) {
+        if n == 0 || self.height == 0 {
+            return;
+        }
+        let w = self.width as usize;
+        if n >= self.height {
+            self.cells.fill(fill);
+            return;
+        }
+        let offset = (n as usize) * w;
+        self.cells.copy_within(offset.., 0);
+        let new_start = self.cells.len() - offset;
+        self.cells[new_start..].fill(fill);
+    }
+
+    /// Shift all content down by `n` rows. Rows that scroll off the bottom are
+    /// discarded; new rows at the top are filled with `fill`.
+    ///
+    /// Useful for inserting new content at the top of a display area.
+    pub fn scroll_down(&mut self, n: u16, fill: Cell) {
+        if n == 0 || self.height == 0 {
+            return;
+        }
+        let w = self.width as usize;
+        if n >= self.height {
+            self.cells.fill(fill);
+            return;
+        }
+        let offset = (n as usize) * w;
+        let len = self.cells.len();
+        self.cells.copy_within(..len - offset, offset);
+        self.cells[..offset].fill(fill);
+    }
+
     /// Write a cell at (x, y). Returns `false` if the position is out of bounds.
     pub fn put(&mut self, x: u16, y: u16, cell: Cell) -> bool {
         if let Some(i) = self.index(x, y) {
@@ -385,7 +511,16 @@ impl Grid {
             if cx >= self.width {
                 break;
             }
-            self.put(cx, y, Cell { glyph: ch, fg, bg });
+            self.put(
+                cx,
+                y,
+                Cell {
+                    glyph: ch,
+                    fg,
+                    bg,
+                    attrs: CellAttrs::NONE,
+                },
+            );
             cx = cx.saturating_add(1);
         }
     }
@@ -597,7 +732,9 @@ impl Grid {
     }
 
     /// Draw a clipped straight line using integer cell coordinates.
-    pub fn draw_line(&mut self, start: (i32, i32), end: (i32, i32), cell: Cell) {
+    ///
+    /// Returns the number of cells written.
+    pub fn draw_line(&mut self, start: (i32, i32), end: (i32, i32), cell: Cell) -> u16 {
         let (mut x0, mut y0) = start;
         let (x1, y1) = end;
         let dx = (x1 - x0).abs();
@@ -605,10 +742,13 @@ impl Grid {
         let dy = -(y1 - y0).abs();
         let sy = if y0 < y1 { 1 } else { -1 };
         let mut err = dx + dy;
+        let mut count = 0u16;
 
         loop {
             if x0 >= 0 && y0 >= 0 {
-                self.put(x0 as u16, y0 as u16, cell);
+                if self.put(x0 as u16, y0 as u16, cell) {
+                    count += 1;
+                }
             }
             if x0 == x1 && y0 == y1 {
                 break;
@@ -623,6 +763,7 @@ impl Grid {
                 y0 += sy;
             }
         }
+        count
     }
 
     /// Copy `other` into `self` at (dst_x, dst_y), treating transparent cells
@@ -657,13 +798,7 @@ impl Grid {
     /// `src` defines the region to copy from the source grid. `dst_x` and
     /// `dst_y` define the top-left destination in this grid. Transparent cells
     /// (space glyph) are skipped. Out-of-bounds areas are clipped.
-    pub fn blit_region(
-        &mut self,
-        other: &Grid,
-        src: Rect,
-        dst_x: i32,
-        dst_y: i32,
-    ) {
+    pub fn blit_region(&mut self, other: &Grid, src: Rect, dst_x: i32, dst_y: i32) {
         let clipped = src.intersect(Rect::new(0, 0, other.width, other.height));
         if clipped.is_empty() {
             return;
@@ -712,6 +847,7 @@ impl Grid {
         let mut out = String::with_capacity(self.cells.len() * 20 + self.height as usize * 10);
         let mut last_fg: Option<Color> = None;
         let mut last_bg: Option<Color> = None;
+        let mut last_attrs: Option<CellAttrs> = None;
 
         for y in 0..self.height {
             if y > 0 {
@@ -719,6 +855,15 @@ impl Grid {
             }
             for x in 0..self.width {
                 let cell = &self.cells[(y as usize) * (self.width as usize) + (x as usize)];
+                if last_attrs != Some(cell.attrs) {
+                    let attr_str = cell.attrs.to_ansi();
+                    if attr_str.is_empty() {
+                        out.push_str("\x1b[0m");
+                    } else {
+                        out.push_str(&attr_str);
+                    }
+                    last_attrs = Some(cell.attrs);
+                }
                 if last_fg != Some(cell.fg) {
                     out.push_str(&format!(
                         "\x1b[38;2;{};{};{}m",
@@ -2773,5 +2918,87 @@ mod tests {
 
         assert_eq!(dst.get(0, 0).unwrap().glyph, 'A');
         assert_eq!(dst.get(1, 1).unwrap().glyph, 'D');
+    }
+
+    #[test]
+    fn scroll_up_shifts_content() {
+        let mut grid = Grid::new(3, 4);
+        grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "DEF", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 2, "GHI", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 3, "JKL", Color::WHITE, Color::BLACK);
+
+        grid.scroll_up(2, Cell::EMPTY);
+
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'G');
+        assert_eq!(grid.get(0, 1).unwrap().glyph, 'J');
+        assert_eq!(grid.get(0, 2).unwrap().glyph, ' ');
+        assert_eq!(grid.get(0, 3).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn scroll_down_shifts_content() {
+        let mut grid = Grid::new(3, 4);
+        grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "DEF", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 2, "GHI", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 3, "JKL", Color::WHITE, Color::BLACK);
+
+        grid.scroll_down(1, Cell::EMPTY);
+
+        assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
+        assert_eq!(grid.get(0, 1).unwrap().glyph, 'A');
+        assert_eq!(grid.get(0, 2).unwrap().glyph, 'D');
+        assert_eq!(grid.get(0, 3).unwrap().glyph, 'G');
+    }
+
+    #[test]
+    fn scroll_up_zero_is_noop() {
+        let mut grid = Grid::new(2, 2);
+        grid.write_str(0, 0, "AB", Color::WHITE, Color::BLACK);
+        grid.scroll_up(0, Cell::EMPTY);
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'A');
+    }
+
+    #[test]
+    fn scroll_up_full_height_clears() {
+        let mut grid = Grid::new(2, 2);
+        grid.write_str(0, 0, "AB", Color::WHITE, Color::BLACK);
+        grid.scroll_up(2, Cell::EMPTY);
+        assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
+        assert_eq!(grid.get(1, 1).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn cell_attrs_to_ansi_handles_multiple_attributes() {
+        let attrs = CellAttrs::NONE.bold().underline();
+        let ansi = attrs.to_ansi();
+        assert_eq!(ansi, "\x1b[1;4m");
+
+        let attrs = CellAttrs::NONE.bold().dim().italic();
+        let ansi = attrs.to_ansi();
+        assert_eq!(ansi, "\x1b[1;2;3m");
+
+        let attrs = CellAttrs::NONE.reverse().blink();
+        let ansi = attrs.to_ansi();
+        assert_eq!(ansi, "\x1b[5;7m");
+
+        let attrs = CellAttrs::NONE;
+        let ansi = attrs.to_ansi();
+        assert_eq!(ansi, "");
+    }
+
+    #[test]
+    fn cell_attrs_to_ansi_all_attributes() {
+        let attrs = CellAttrs {
+            bold: true,
+            underline: true,
+            dim: true,
+            italic: true,
+            reverse: true,
+            blink: true,
+        };
+        let ansi = attrs.to_ansi();
+        assert_eq!(ansi, "\x1b[1;2;3;4;5;7m");
     }
 }

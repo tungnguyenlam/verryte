@@ -21,6 +21,7 @@ trait Column: Any + Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn clear_index(&mut self, index: usize);
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+    fn shrink_to_fit(&mut self);
 }
 
 struct TypedColumn<T: 'static + Send + Sync> {
@@ -54,6 +55,12 @@ impl<T: 'static + Send + Sync> Column for TypedColumn<T> {
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
     }
+    fn shrink_to_fit(&mut self) {
+        while self.slots.last().is_none() {
+            self.slots.pop();
+        }
+        self.slots.shrink_to_fit();
+    }
 }
 
 /// The container that holds entities, their components, and engine resources.
@@ -73,6 +80,26 @@ impl World {
             free: Vec::new(),
             columns: HashMap::new(),
             resources: HashMap::new(),
+        }
+    }
+
+    /// Pre-allocate entity ID slots for bulk spawning.
+    ///
+    /// Reserves capacity for `n` additional entities without actually spawning
+    /// them. This avoids repeated reallocations when spawning many entities at
+    /// once (e.g., during level generation or map population).
+    ///
+    /// The reserved slots are added to the free list, so subsequent `spawn()`
+    /// calls will reuse them without growing the internal vectors.
+    pub fn reserve_entities(&mut self, n: usize) {
+        let start = self.generations.len() as u32;
+        self.generations.reserve(n);
+        self.alive.reserve(n);
+        self.free.reserve(n);
+        for i in 0..n {
+            self.generations.push(1);
+            self.alive.push(false);
+            self.free.push(start + i as u32);
         }
     }
 
@@ -198,6 +225,28 @@ impl World {
     pub fn clear(&mut self) {
         self.clear_entities();
         self.resources.clear();
+    }
+
+    /// Reclaim memory from dead entity slots.
+    ///
+    /// Trims trailing `None` entries from every component column and calls
+    /// `shrink_to_fit()` on the underlying vectors. This does not compact
+    /// holes in the middle of columns — it only trims unused capacity at the
+    /// end. Useful after bulk despawns or level transitions.
+    pub fn shrink(&mut self) {
+        for column in self.columns.values_mut() {
+            column.shrink_to_fit();
+        }
+        // Also trim generations/alive/free if possible.
+        while self.generations.last().is_some_and(|&g| g == 0) {
+            self.generations.pop();
+            self.alive.pop();
+        }
+        self.generations.shrink_to_fit();
+        self.alive.shrink_to_fit();
+        self.free.shrink_to_fit();
+        self.resources.shrink_to_fit();
+        self.columns.shrink_to_fit();
     }
 
     /// Attach a component to an entity. Returns the previous value if one was
@@ -340,11 +389,32 @@ impl World {
                 slot.is_some()
                     && i < &self.alive.len()
                     && self.alive[*i]
-                    && slot.as_ref().is_some_and(|(gen, _)| {
-                        *gen == self.generations[*i]
-                    })
+                    && slot
+                        .as_ref()
+                        .is_some_and(|(gen, _)| *gen == self.generations[*i])
             })
             .count()
+    }
+
+    /// Check whether any live entity has a given component type.
+    ///
+    /// Returns `true` if at least one entity has the component. Equivalent to
+    /// `count_with::<T>() > 0` but short-circuits on the first match.
+    pub fn contains<T: 'static + Send + Sync>(&self) -> bool {
+        let Some(column) = self.columns.get(&TypeId::of::<T>()) else {
+            return false;
+        };
+        let Some(typed) = column.as_any().downcast_ref::<TypedColumn<T>>() else {
+            return false;
+        };
+        typed.slots.iter().enumerate().any(|(i, slot)| {
+            slot.is_some()
+                && i < self.alive.len()
+                && self.alive[i]
+                && slot
+                    .as_ref()
+                    .is_some_and(|(gen, _)| *gen == self.generations[i])
+        })
     }
 
     /// Query entities with a component, returning an iterator.
@@ -748,6 +818,32 @@ impl World {
             entity,
         }
     }
+
+    /// Spawn `n` entities, each with the same component value.
+    ///
+    /// The component is cloned for each entity. Returns the list of spawned
+    /// entities. Useful for bulk placement of hazards, enemies, items, or any
+    /// entity type that shares initial component state.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let hazards = world.spawn_batch(5, Position { x: 0, y: 0 });
+    /// assert_eq!(hazards.len(), 5);
+    /// ```
+    pub fn spawn_batch<T: 'static + Send + Sync + Clone>(
+        &mut self,
+        n: usize,
+        component: T,
+    ) -> Vec<Entity> {
+        let mut entities = Vec::with_capacity(n);
+        for _ in 0..n {
+            let e = self.spawn();
+            self.insert(e, component.clone());
+            entities.push(e);
+        }
+        entities
+    }
 }
 
 /// A fluent builder for spawning entities with multiple components.
@@ -787,7 +883,12 @@ impl<'a, T> Iterator for Query<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
 }
+
+impl<'a, T> ExactSizeIterator for Query<'a, T> {}
 
 /// An iterator over two-component query results.
 pub struct Query2<'a, A, B> {
@@ -799,7 +900,12 @@ impl<'a, A, B> Iterator for Query2<'a, A, B> {
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
 }
+
+impl<'a, A, B> ExactSizeIterator for Query2<'a, A, B> {}
 
 /// An iterator over three-component query results.
 pub struct Query3<'a, A, B, C> {
@@ -811,7 +917,12 @@ impl<'a, A, B, C> Iterator for Query3<'a, A, B, C> {
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
 }
+
+impl<'a, A, B, C> ExactSizeIterator for Query3<'a, A, B, C> {}
 
 impl Default for World {
     fn default() -> Self {
@@ -823,13 +934,13 @@ impl Default for World {
 mod tests {
     use super::*;
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Clone)]
     struct Pos(i32, i32);
 
     #[derive(Debug, PartialEq)]
     struct Tag(&'static str);
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Clone)]
     struct Counter(u32);
 
     impl Default for Counter {
@@ -1346,5 +1457,147 @@ mod tests {
 
         world.despawn(b);
         assert_eq!(world.count_with::<Pos>(), 1);
+    }
+
+    #[test]
+    fn reserve_entities_preallocates_slots() {
+        let mut world = World::new();
+        world.reserve_entities(5);
+        assert_eq!(world.entity_count(), 0);
+        assert_eq!(world.free.len(), 5);
+
+        // Spawning should reuse reserved slots without growing generations.
+        let gen_len_before = world.generations.len();
+        let e = world.spawn();
+        assert!(world.is_alive(e));
+        assert_eq!(world.entity_count(), 1);
+        assert_eq!(world.generations.len(), gen_len_before);
+    }
+
+    #[test]
+    fn reserve_entities_with_existing_entities() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.reserve_entities(3);
+        assert_eq!(world.free.len(), 3);
+        assert_eq!(world.entity_count(), 1);
+    }
+
+    #[test]
+    fn shrink_trims_empty_columns() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.insert(a, Tag("test"));
+        world.insert(a, Counter(5));
+        world.despawn(a);
+        world.shrink();
+        assert_eq!(world.entity_count(), 0);
+        assert!(world.query::<Pos>().is_empty());
+    }
+
+    #[test]
+    fn shrink_preserves_live_entities() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.insert(b, Pos(1, 1));
+        world.shrink();
+        assert_eq!(world.entity_count(), 2);
+        assert_eq!(world.get::<Pos>(a), Some(&Pos(0, 0)));
+        assert_eq!(world.get::<Pos>(b), Some(&Pos(1, 1)));
+    }
+
+    #[test]
+    fn contains_returns_true_when_component_present() {
+        let mut world = World::new();
+        assert!(!world.contains::<Pos>());
+        let e = world.spawn();
+        world.insert(e, Pos(1, 2));
+        assert!(world.contains::<Pos>());
+        assert!(!world.contains::<Tag>());
+    }
+
+    #[test]
+    fn contains_returns_false_after_despawn() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Counter(1));
+        assert!(world.contains::<Counter>());
+        world.despawn(e);
+        assert!(!world.contains::<Counter>());
+    }
+
+    #[test]
+    fn query_exact_size_iterator() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        let c = world.spawn();
+        world.insert(a, Pos(1, 1));
+        world.insert(b, Pos(2, 2));
+        world.insert(c, Pos(3, 3));
+
+        let q = world.query_iter::<Pos>();
+        assert_eq!(q.len(), 3);
+    }
+
+    #[test]
+    fn query2_exact_size_iterator() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Pos(1, 1));
+        world.insert(a, Tag("x"));
+        world.insert(b, Pos(2, 2));
+        world.insert(b, Tag("y"));
+
+        let q = world.query2_iter::<Pos, Tag>();
+        assert_eq!(q.len(), 2);
+    }
+
+    #[test]
+    fn query3_exact_size_iterator() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Pos(1, 1));
+        world.insert(a, Tag("x"));
+        world.insert(a, Counter(1));
+
+        let q = world.query3_iter::<Pos, Tag, Counter>();
+        assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn spawn_batch_creates_multiple_entities() {
+        let mut world = World::new();
+        let entities = world.spawn_batch(5, Counter(42));
+        assert_eq!(entities.len(), 5);
+        assert_eq!(world.entity_count(), 5);
+        for e in &entities {
+            assert!(world.is_alive(*e));
+            assert_eq!(world.get::<Counter>(*e), Some(&Counter(42)));
+        }
+    }
+
+    #[test]
+    fn spawn_batch_returns_distinct_entities() {
+        let mut world = World::new();
+        let entities = world.spawn_batch(3, Pos(0, 0));
+        for i in 0..entities.len() {
+            for j in (i + 1)..entities.len() {
+                assert_ne!(entities[i], entities[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_batch_zero_is_noop() {
+        let mut world = World::new();
+        let entities = world.spawn_batch(0, Counter(1));
+        assert!(entities.is_empty());
+        assert_eq!(world.entity_count(), 0);
     }
 }

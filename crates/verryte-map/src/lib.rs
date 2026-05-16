@@ -340,6 +340,90 @@ impl<T> TileGrid<T> {
         Ok(Self { size, tiles })
     }
 
+    /// Construct a tile grid from a multi-line ASCII string.
+    ///
+    /// Each character in the string is mapped to a tile via `f`. Lines are
+    /// separated by `\n`. The grid width is the length of the longest line;
+    /// shorter lines are padded with the tile produced by `f(' ', y)`.
+    /// Empty input produces a 0×0 grid.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let ascii = "\
+    /// #####
+    /// #...#
+    /// #.@.#
+    /// #...#
+    /// #####";
+    /// let grid = TileGrid::from_ascii(ascii, |ch, _x, _y| match ch {
+    ///     '#' => Tile::Wall,
+    ///     '.' => Tile::Floor,
+    ///     '@' => Tile::Floor,
+    ///     _ => Tile::Floor,
+    /// });
+    /// assert_eq!(grid.width(), 5);
+    /// assert_eq!(grid.height(), 5);
+    /// ```
+    pub fn from_ascii<F>(input: &str, mut f: F) -> Self
+    where
+        F: FnMut(char, u16, u16) -> T,
+    {
+        if input.is_empty() {
+            return Self {
+                size: Size::new(0, 0),
+                tiles: Vec::new(),
+            };
+        }
+        let lines: Vec<&str> = input.split('\n').collect();
+        let height = lines.len() as u16;
+        let width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+        let mut tiles = Vec::with_capacity((width as usize) * (height as usize));
+        for (y, line) in lines.iter().enumerate() {
+            for (x, ch) in line.chars().enumerate() {
+                tiles.push(f(ch, x as u16, y as u16));
+            }
+            let line_len = line.chars().count() as u16;
+            for x in line_len..width {
+                tiles.push(f(' ', x, y as u16));
+            }
+        }
+        Self {
+            size: Size::new(width, height),
+            tiles,
+        }
+    }
+
+    /// Transform each tile into a different type, producing a new grid.
+    ///
+    /// The mapping function receives the point and a reference to the tile.
+    /// Useful for converting a logical tile map into a display representation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let logical: TileGrid<bool> = TileGrid::new(3, 2, true);
+    /// let display: TileGrid<char> = logical.map_tiles(|_, &b| if b { '.' } else { '#' });
+    /// ```
+    pub fn map_tiles<U, F>(&self, f: F) -> TileGrid<U>
+    where
+        F: Fn(Point, &T) -> U,
+    {
+        let mut tiles = Vec::with_capacity(self.tiles.len());
+        let width = self.size.width as i16;
+        for y in 0..self.size.height as i16 {
+            for x in 0..width {
+                let p = Point::new(x, y);
+                let idx = (y as usize) * (width as usize) + (x as usize);
+                tiles.push(f(p, &self.tiles[idx]));
+            }
+        }
+        TileGrid {
+            size: self.size,
+            tiles,
+        }
+    }
+
     pub fn size(&self) -> Size {
         self.size
     }
@@ -514,7 +598,10 @@ impl<T> TileGrid<T> {
         for y in 0..self.size.height as i16 {
             for x in 0..width {
                 let p = Point::new(x, y);
-                let new_tile = f(p, &self.tiles[(y as usize) * (width as usize) + (x as usize)]);
+                let new_tile = f(
+                    p,
+                    &self.tiles[(y as usize) * (width as usize) + (x as usize)],
+                );
                 self.tiles[(y as usize) * (width as usize) + (x as usize)] = new_tile;
             }
         }
@@ -809,6 +896,159 @@ impl<T> TileGrid<T> {
         }
 
         out
+    }
+
+    /// Return every point reachable from `start` by cardinal movement within
+    /// `max_steps`.
+    ///
+    /// `start` is included when it is in bounds. Points are returned in BFS
+    /// order (nearest first). Useful for movement range indicators or limited
+    /// visibility without scanning the entire map.
+    pub fn reachable_points4_bounded<F>(
+        &self,
+        start: Point,
+        max_steps: u16,
+        passable: F,
+    ) -> Vec<Point>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) {
+            return Vec::new();
+        }
+
+        let mut frontier = VecDeque::new();
+        let mut seen = HashMap::new();
+        let mut out = Vec::new();
+
+        frontier.push_back((start, 0u16));
+        seen.insert(start, ());
+
+        while let Some((current, dist)) = frontier.pop_front() {
+            out.push(current);
+            if dist >= max_steps {
+                continue;
+            }
+            for neighbor in current.neighbors4() {
+                if seen.contains_key(&neighbor) {
+                    continue;
+                }
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+                seen.insert(neighbor, ());
+                frontier.push_back((neighbor, dist + 1));
+            }
+        }
+
+        out
+    }
+
+    /// Return every point reachable from `start` by 8-directional movement
+    /// within `max_steps`.
+    ///
+    /// `start` is included when it is in bounds. Points are returned in BFS
+    /// order (nearest first). Uses Chebyshev distance for step counting.
+    pub fn reachable_points8_bounded<F>(
+        &self,
+        start: Point,
+        max_steps: u16,
+        passable: F,
+    ) -> Vec<Point>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) {
+            return Vec::new();
+        }
+
+        let mut frontier = VecDeque::new();
+        let mut seen = HashMap::new();
+        let mut out = Vec::new();
+
+        frontier.push_back((start, 0u16));
+        seen.insert(start, ());
+
+        while let Some((current, dist)) = frontier.pop_front() {
+            out.push(current);
+            if dist >= max_steps {
+                continue;
+            }
+            for neighbor in current.neighbors8() {
+                if seen.contains_key(&neighbor) {
+                    continue;
+                }
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+                seen.insert(neighbor, ());
+                frontier.push_back((neighbor, dist + 1));
+            }
+        }
+
+        out
+    }
+
+    /// Return the 8-directional distance from `start` to the nearest reachable target.
+    ///
+    /// Uses BFS with 8-directional neighbors, so the distance reflects the
+    /// minimum number of steps when diagonal movement is allowed. Returns
+    /// `None` if no target is reachable or `start` is out of bounds.
+    pub fn distance_to_nearest8<I, F>(&self, start: Point, targets: I, passable: F) -> Option<u16>
+    where
+        I: IntoIterator<Item = Point>,
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) {
+            return None;
+        }
+
+        let targets: HashMap<Point, ()> = targets
+            .into_iter()
+            .filter(|point| self.in_bounds(*point))
+            .map(|point| (point, ()))
+            .collect();
+        if targets.is_empty() {
+            return None;
+        }
+        if targets.contains_key(&start) {
+            return Some(0);
+        }
+
+        let mut frontier = VecDeque::new();
+        let mut seen = HashMap::new();
+        frontier.push_back((start, 0u16));
+        seen.insert(start, ());
+
+        while let Some((current, distance)) = frontier.pop_front() {
+            for neighbor in current.neighbors8() {
+                if seen.contains_key(&neighbor) {
+                    continue;
+                }
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let next_distance = distance.saturating_add(1);
+                if targets.contains_key(&neighbor) {
+                    return Some(next_distance);
+                }
+
+                seen.insert(neighbor, ());
+                frontier.push_back((neighbor, next_distance));
+            }
+        }
+
+        None
     }
 
     /// Return the cardinal direction from `from` to `to`, if they are adjacent.
@@ -1335,6 +1575,108 @@ impl<T> TileGrid<T> {
         }
 
         centers
+    }
+
+    /// Generate a cave using cellular automata.
+    ///
+    /// Fills the grid randomly based on `fill_chance` (0.0–1.0), then runs
+    /// `iterations` smoothing passes. Each pass applies the standard cave rule:
+    /// a cell becomes `floor` if it has ≥ `birth_limit` wall neighbors,
+    /// otherwise it becomes `wall`. Border cells are always kept as `wall`.
+    ///
+    /// The `seed` controls reproducibility. Returns the count of floor tiles
+    /// carved.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut grid = TileGrid::new(40, 20, Tile::Wall);
+    /// let floors = grid.cellular_automata_cave(Tile::Wall, Tile::Floor, 0.45, 5, 4, 12345);
+    /// ```
+    pub fn cellular_automata_cave(
+        &mut self,
+        wall: T,
+        floor: T,
+        fill_chance: f64,
+        iterations: usize,
+        birth_limit: u8,
+        seed: u64,
+    ) -> usize
+    where
+        T: Clone + PartialEq,
+    {
+        let w = self.width();
+        let h = self.height();
+        if w < 3 || h < 3 {
+            return 0;
+        }
+
+        let mut state = seed | 1;
+        let mut rng = || -> u64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        // Initial random fill: borders stay as wall, interior uses fill_chance.
+        for y in 0..h {
+            for x in 0..w {
+                let is_border = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                let tile = if is_border {
+                    wall.clone()
+                } else if (rng() as f64 / u64::MAX as f64) < fill_chance {
+                    wall.clone()
+                } else {
+                    floor.clone()
+                };
+                self.set(Point::new(x as i16, y as i16), tile);
+            }
+        }
+
+        // Smoothing passes.
+        let mut buffer = vec![wall.clone(); (w * h) as usize];
+        for _ in 0..iterations {
+            for y in 0..h {
+                for x in 0..w {
+                    let is_border = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                    if is_border {
+                        buffer[(y * w + x) as usize] = wall.clone();
+                        continue;
+                    }
+                    let mut wall_count = 0u8;
+                    for dy in -1i16..=1 {
+                        for dx in -1i16..=1 {
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
+                            let nx = x as i16 + dx;
+                            let ny = y as i16 + dy;
+                            if nx < 0 || ny < 0 || nx >= w as i16 || ny >= h as i16 {
+                                wall_count += 1;
+                            } else if self.get(Point::new(nx, ny)).map_or(true, |t| *t == wall) {
+                                wall_count += 1;
+                            }
+                        }
+                    }
+                    buffer[(y * w + x) as usize] = if wall_count >= birth_limit {
+                        wall.clone()
+                    } else {
+                        floor.clone()
+                    };
+                }
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    self.set(
+                        Point::new(x as i16, y as i16),
+                        buffer[(y * w + x) as usize].clone(),
+                    );
+                }
+            }
+        }
+
+        self.count_matching(|_, t| *t == floor)
     }
 
     /// Count how many tiles match the predicate.
@@ -2729,5 +3071,136 @@ mod tests {
         grid.set(Point::new(1, 1), 'X');
         assert!(grid.swap(Point::new(1, 1), Point::new(1, 1)));
         assert_eq!(*grid.get(Point::new(1, 1)).unwrap(), 'X');
+    }
+
+    #[test]
+    fn cellular_automata_carves_a_cave() {
+        let mut grid = TileGrid::new(30, 20, '#');
+        let floors = grid.cellular_automata_cave('#', '.', 0.45, 5, 4, 42);
+        // A cave should have a meaningful number of floor tiles.
+        assert!(floors > 0);
+        // Borders should remain walls.
+        for x in 0..30 {
+            assert_eq!(*grid.get(Point::new(x, 0)).unwrap(), '#');
+            assert_eq!(*grid.get(Point::new(x, 19)).unwrap(), '#');
+        }
+        for y in 0..20 {
+            assert_eq!(*grid.get(Point::new(0, y)).unwrap(), '#');
+            assert_eq!(*grid.get(Point::new(29, y)).unwrap(), '#');
+        }
+    }
+
+    #[test]
+    fn cellular_automata_is_reproducible_with_same_seed() {
+        let mut g1 = TileGrid::new(25, 15, '#');
+        let mut g2 = TileGrid::new(25, 15, '#');
+        let f1 = g1.cellular_automata_cave('#', '.', 0.42, 4, 4, 777);
+        let f2 = g2.cellular_automata_cave('#', '.', 0.42, 4, 4, 777);
+        assert_eq!(f1, f2);
+        for y in 0..15 {
+            for x in 0..25 {
+                assert_eq!(g1.get(Point::new(x, y)), g2.get(Point::new(x, y)));
+            }
+        }
+    }
+
+    #[test]
+    fn cellular_automata_differs_with_different_seeds() {
+        let mut g1 = TileGrid::new(25, 15, '#');
+        let mut g2 = TileGrid::new(25, 15, '#');
+        g1.cellular_automata_cave('#', '.', 0.45, 5, 4, 111);
+        g2.cellular_automata_cave('#', '.', 0.45, 5, 4, 999);
+        // With different seeds, at least some tiles should differ.
+        let mut differs = false;
+        for y in 0..15 {
+            for x in 0..25 {
+                if g1.get(Point::new(x, y)) != g2.get(Point::new(x, y)) {
+                    differs = true;
+                    break;
+                }
+            }
+        }
+        assert!(differs);
+    }
+
+    #[test]
+    fn cellular_automata_returns_empty_for_tiny_grid() {
+        let mut grid = TileGrid::new(2, 2, '#');
+        let floors = grid.cellular_automata_cave('#', '.', 0.45, 5, 4, 42);
+        assert_eq!(floors, 0);
+    }
+
+    #[test]
+    fn from_ascii_parses_multiline_string() {
+        let ascii = "\
+#####
+#...#
+#.@.#
+#...#
+#####";
+        let grid = TileGrid::from_ascii(ascii, |ch, _x, _y| ch);
+        assert_eq!(grid.width(), 5);
+        assert_eq!(grid.height(), 5);
+        assert_eq!(*grid.get(Point::new(0, 0)).unwrap(), '#');
+        assert_eq!(*grid.get(Point::new(2, 2)).unwrap(), '@');
+        assert_eq!(*grid.get(Point::new(1, 1)).unwrap(), '.');
+    }
+
+    #[test]
+    fn from_ascii_handles_ragged_lines() {
+        let ascii = "###\n#.\n#####";
+        let grid = TileGrid::from_ascii(ascii, |ch, _x, _y| ch);
+        assert_eq!(grid.width(), 5);
+        assert_eq!(grid.height(), 3);
+        // Short line is padded with space.
+        assert_eq!(*grid.get(Point::new(3, 1)).unwrap(), ' ');
+        assert_eq!(*grid.get(Point::new(0, 2)).unwrap(), '#');
+    }
+
+    #[test]
+    fn from_ascii_empty_input_produces_empty_grid() {
+        let grid = TileGrid::from_ascii("", |ch, _x, _y| ch);
+        assert_eq!(grid.width(), 0);
+        assert_eq!(grid.height(), 0);
+        assert!(grid.is_empty());
+    }
+
+    #[test]
+    fn from_ascii_receives_coordinates() {
+        let ascii = "AB\nCD";
+        let mut coords = Vec::new();
+        let _grid = TileGrid::from_ascii(ascii, |ch, x, y| {
+            coords.push((ch, x, y));
+            ch
+        });
+        assert_eq!(
+            coords,
+            vec![('A', 0, 0), ('B', 1, 0), ('C', 0, 1), ('D', 1, 1)]
+        );
+    }
+
+    #[test]
+    fn map_tiles_transforms_to_different_type() {
+        let grid = TileGrid::from_ascii("#.@", |ch, _x, _y| ch);
+        let mapped: TileGrid<u8> = grid.map_tiles(|_, &ch| match ch {
+            '#' => 1,
+            '.' => 2,
+            '@' => 3,
+            _ => 0,
+        });
+        assert_eq!(mapped.width(), 3);
+        assert_eq!(mapped.height(), 1);
+        assert_eq!(*mapped.get(Point::new(0, 0)).unwrap(), 1);
+        assert_eq!(*mapped.get(Point::new(1, 0)).unwrap(), 2);
+        assert_eq!(*mapped.get(Point::new(2, 0)).unwrap(), 3);
+    }
+
+    #[test]
+    fn map_tiles_preserves_dimensions() {
+        let grid = TileGrid::new(4, 3, 10u32);
+        let mapped: TileGrid<bool> = grid.map_tiles(|_, &v| v > 5);
+        assert_eq!(mapped.width(), 4);
+        assert_eq!(mapped.height(), 3);
+        assert_eq!(*mapped.get(Point::new(0, 0)).unwrap(), true);
     }
 }

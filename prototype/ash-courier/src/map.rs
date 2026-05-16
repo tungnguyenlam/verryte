@@ -23,6 +23,22 @@ impl Map {
         }
     }
 
+    /// Construct a map from a multi-line ASCII string.
+    ///
+    /// `#` → Wall, `G` → Goal, everything else → Floor.
+    pub fn from_ascii(input: &str) -> Self {
+        let tiles = TileGrid::from_ascii(input, |ch, _x, _y| match ch {
+            '#' => Tile::Wall,
+            'G' => Tile::Goal,
+            _ => Tile::Floor,
+        });
+        Self {
+            width: tiles.width(),
+            height: tiles.height(),
+            tiles,
+        }
+    }
+
     pub fn tile(&self, x: i16, y: i16) -> Tile {
         self.tiles
             .get(Point { x, y })
@@ -46,7 +62,7 @@ impl Map {
 
     pub fn visible_from(&self, point: Point, radius: u16) -> Vec<Point> {
         self.tiles
-            .visible_points(point, radius, |tile| matches!(tile, Tile::Wall))
+            .field_of_view(point, radius, |tile| matches!(tile, Tile::Wall))
     }
 
     pub fn shortest_walkable_path(&self, start: Point, goal: Point) -> Option<Vec<Point>> {

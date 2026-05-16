@@ -855,3 +855,205 @@ sub-layer ordering within a single layer.
 **Assumptions.** The dark_dungeon palette is a good default. The bounded log at 50 messages is enough for typical play sessions. Named systems don't need conditions yet.
 
 **Follow-ups.** Consider exposing the palette as a configurable option in the TTY frontend. The `Game::render()` method could accept a palette parameter instead of hardcoding dark_dungeon.
+
+## 2026-05-16 - Batch 11: engine primitives and cell attributes
+
+**Goal.** Add 8+ meaningful improvements across engine crates and integrate into Ash Courier.
+
+**Changes.**
+- `crates/verryte-core/src/world.rs:79` - Added `reserve_entities(n)` for bulk entity pre-allocation. Reserves capacity in generations/alive/free vectors and adds slots to the free list so subsequent spawns don't grow vectors.
+- `crates/verryte-core/src/world.rs:22` - Added `Column::shrink_to_fit()` trait method and impl for `TypedColumn<T>` that trims trailing None slots and calls `shrink_to_fit()` on the underlying Vec.
+- `crates/verryte-core/src/world.rs:218` - Added `World::shrink()` that calls `shrink_to_fit()` on all columns and trims empty trailing entity slots. Useful after bulk despawns or level transitions.
+- `crates/verryte-map/src/lib.rs:860` - Added `reachable_points4_bounded(start, max_steps, passable)` for limited-range cardinal reachability. Returns points in BFS order.
+- `crates/verryte-map/src/lib.rs:903` - Added `reachable_points8_bounded(start, max_steps, passable)` for limited-range 8-directional reachability.
+- `crates/verryte-map/src/lib.rs:946` - Added `distance_to_nearest8(start, targets, passable)` for 8-directional distance queries. Uses BFS with 8-dir neighbors.
+- `crates/verryte-terminal/src/lib.rs:29` - Added `CellAttrs` struct with `bold`, `underline`, `dim`, `italic`, `reverse`, `blink` fields and builder methods. Updated `Cell` to include `attrs: CellAttrs` field.
+- `crates/verryte-terminal/src/lib.rs:803` - Updated `to_ansi_string()` to emit attribute escape codes when cells have non-default attributes.
+- `crates/verryte-terminal/src/lib.rs:692` - Changed `draw_line()` to return `u16` count of cells written, matching `draw_hline`/`draw_vline` API.
+- `crates/verryte-input/src/lib.rs:51` - Added `Key::Modified { char, ctrl, alt, shift }` variant for modifier key bindings. Added `Key::is_modified()` helper.
+- `crates/verryte-input/src/lib.rs:812` - Added `InputRouter::drain_filtered()` that returns the removed `Vec<QueuedAction<A>>`, complementing `filter_pending()` which only returns a count.
+
+**Reasoning.** 
+- `reserve_entities` and `shrink` address memory management for games with entity churn (level transitions, projectile cleanup).
+- Bounded reachability is essential for movement range indicators and limited FOV without scanning the entire map.
+- Cell attributes enable richer terminal text styling (bold titles, underlined links, dimmed disabled items) without changing the cell model fundamentally.
+- Modifier key support is a prerequisite for keyboard shortcuts (Ctrl+Q quit, Alt+1 switch tab, etc.).
+- `drain_filtered` returning the removed items enables logging canceled actions or re-routing them.
+- `QueryMut` iterator types were attempted but removed because they require `unsafe` pointer-to-ref conversion, which the workspace lint forbids. The existing `for_each_mut` callback pattern remains the safe alternative.
+
+**Assumptions.** 
+- `CellAttrs::to_ansi()` is simplified and only handles single-attribute or common two-attribute combinations. Full composite sequences would need a buffering approach.
+- `reserve_entities` adds to the free list but doesn't actually spawn entities - callers still need to call `spawn()`.
+
+**Gotchas.**
+- The workspace has `-F unsafe-code` lint, so any `unsafe` blocks are hard errors. This blocked the `QueryMut` implementation that used raw pointer derefs.
+- Adding `attrs` field to `Cell` broke `write_str` which constructed `Cell` manually. Fixed by adding `attrs: CellAttrs::NONE`.
+
+**Follow-ups.**
+- Consider adding `ExactSizeIterator` impl for `Query`/`Query2`/`Query3` types.
+- Consider adding composite attribute sequences to `CellAttrs::to_ansi()`.
+- Consider integrating bounded reachability into Ash Courier for movement range display.
+
+## 2026-05-16 - GameClock, shadowcasting FOV, diff-based TTY, schedule stages, Rng resource
+
+**Goal.** Continue autonomous Verryte development with improvements that validate
+engine primitives through Ash Courier, improve rendering efficiency, and add
+schedule organization.
+
+**Changes.**
+- `prototype/ash-courier/src/game.rs:1` - Added `GameClock` as an ECS resource
+  alongside `GameState`. `advance_turn()` now calls `clock.tick()` in addition
+  to incrementing `GameState.turn`, keeping both synchronized. Added `clock()`
+  accessor and `with_seed()` / `from_layout_with_seed()` constructors.
+- `prototype/ash-courier/src/map.rs:49` - Switched `visible_from` from
+  `TileGrid::visible_points` (brute-force raycasting) to `TileGrid::field_of_view`
+  (recursive shadowcasting). Same signature, drop-in replacement. Shadowcasting
+  is faster on larger maps and produces symmetric visibility.
+- `crates/verryte-tty/src/lib.rs:91` - Added `render_diff(prev, next)` that
+  computes `Grid::diff()` and only writes changed cells to the terminal using
+  cursor positioning. Dramatically reduces I/O for turn-based games where most
+  of the frame is unchanged.
+- `prototype/ash-courier/src/bin/tty.rs:9` - TTY frontend now maintains a
+  `prev_frame` and uses `render_diff` instead of full-frame `render` on each
+  tick. Initial frame still uses full `render` to establish the baseline.
+- `crates/verryte-core/src/schedule.rs:55` - Added `stage_markers` field to
+  `Schedule` for named execution phases. Added `add_stage(name)` to mark stage
+  boundaries, `run_stage(name, world)` to execute only systems in one stage,
+  and `stage_names()` to query defined stages. Systems added between
+  `add_stage` calls belong to that stage. `run()` continues to execute all
+  systems in order (backward compatible). `clear()` also clears stage markers.
+  Seven new tests covering stage tracking, selective execution, condition
+  respect, independence from full `run`, and clear behavior.
+- `prototype/ash-courier/src/systems.rs:24` - Chaser system now shuffles chaser
+  entity order each tick using the seeded `Rng` resource, preventing
+  deterministic ordering bias from entity allocation order.
+- `prototype/ash-courier/src/lib.rs` - Added tests for GameClock integration
+  (tick tracking, no-advance on noop, clock/state synchronization), Rng resource
+  availability, deterministic chaser outcomes with same seed, and `with_seed`
+  constructor.
+- `README.md` - Updated crate descriptions to document schedule stages,
+  diff-based TTY rendering, shadowcasting FOV usage, GameClock/Rng integration.
+
+**Reasoning.** These five improvements validate existing engine primitives through
+the proving game rather than adding speculative features. GameClock was
+implemented but never used by any game — integrating it into Ash Courier proves
+the resource-as-timing pattern works. Shadowcasting FOV was the better algorithm
+but Ash Courier still used the brute-force `visible_points`; switching validates
+the engine upgrade path. Diff-based rendering uses `Grid::diff()` which existed
+only for tests — now it's used in the real TTY frontend, proving the primitive's
+practical value. Schedule stages address the "flat list gets hard to reason about"
+problem that Ash Courier's three systems already hint at. Rng-as-resource is the
+pattern the engine was designed for but no game had exercised.
+
+**Assumptions.** `GameClock` and `GameState.turn` both track turns independently
+rather than `GameState.turn` being derived from the clock. This keeps backward
+compatibility with all existing tests while making the clock available for
+future pause/resume and real-time tracking. Schedule stages use index-based
+ranges rather than a separate data structure, keeping the flat execution model
+intact. Chaser shuffling with Rng means chaser behavior is deterministic given
+the same seed, which is correct for replay/agent scenarios.
+
+**Gotchas.** The `field_of_view` shadowcasting produces slightly different
+visibility at edges compared to `visible_points` raycasting, but all existing
+tests pass because they test structural properties (visible tiles contain the
+player, hazards are detected) rather than exact tile counts. The diff-based TTY
+rendering needs a full initial frame as baseline; without it, the first diff
+would write every cell.
+
+**Follow-ups.** Schedule stages could gain per-stage hooks for profiling or
+logging. The `Rng` resource could be exposed in the snapshot for agent
+observation. `render_diff` could be extended to handle terminal resize by
+falling back to a full render when the grid dimensions change.
+
+## 2026-05-16 - modifier keys, cave generation, ECS ergonomics, query size hints, Ash Courier cave map
+
+**Goal.** Continue autonomous Verryte development with a vertical slice that fixes a real gap in the input path, adds organic procedural map generation, and improves ECS ergonomics — all validated through the Ash Courier proving game.
+
+**Changes.**
+- `crates/verryte-tty/src/lib.rs:175` — rewired `map_key` to pass Ctrl/Alt/Shift modifiers through to `Key::Modified` instead of silently dropping them. Unmodified keys retain backward-compatible behavior. Added `KeyModifiers` import at `:14`.
+- `crates/verryte-tty/src/lib.rs:228` — added 10 unit tests covering char, ctrl, alt, ctrl+shift, uppercase ctrl normalization, special keys without modifiers, arrow+ctrl, shift+tab, enter+ctrl, and F-key+alt.
+- `crates/verryte-map/src/lib.rs:1496` — added `TileGrid::cellular_automata_cave` for organic procedural cave generation using cellular automata. Configurable fill chance, smoothing iterations, birth limit, and seed. Returns floor tile count. Borders are always walls.
+- `crates/verryte-map/src/lib.rs:3048` — added 4 tests: basic cave carving, reproducibility with same seed, divergence with different seeds, and tiny-grid edge case.
+- `crates/verryte-core/src/world.rs:398` — added `World::contains<T>()` for checking if any live entity has a given component type. Short-circuits on first match, more efficient than `count_with() > 0` for existence checks.
+- `crates/verryte-core/src/world.rs:848` — added `ExactSizeIterator` and `size_hint` implementations for `Query`, `Query2`, and `Query3` iterator types. Delegates to the underlying `Vec::IntoIter`.
+- `crates/verryte-core/src/world.rs:1505` — added 5 tests: `contains` present/absent/after-despawn, and `ExactSizeIterator` for all three query types.
+- `prototype/ash-courier/src/game.rs:127` — added `Game::from_cave(width, height, seed)` constructor that generates a cave via cellular automata, picks player/goal/package/hazard positions from walkable tiles using the seeded RNG, and wires everything into the ECS.
+- `prototype/ash-courier/src/lib.rs:764` — added 3 tests: `from_cave` creates playable game, has package and goal entities, and is deterministic with same seed.
+- `README.md` — updated crate descriptions to document modifier key passthrough, cellular automata cave generation, `World::contains`, `ExactSizeIterator`, and `Game::from_cave`.
+
+**Reasoning.** The modifier key gap was the most impactful fix: `Key::Modified` existed in the input model but the TTY frontend never produced it, making the entire modifier system dead code. Games can now bind Ctrl+Q for quit, Alt+1 for tab switching, etc. through the same shared action path. Cellular automata cave generation complements BSP and random walk for procedural map variety and validates the engine's map primitives through the proving game. `World::contains` is a common existence check that was missing. `ExactSizeIterator` on query types lets consumers know result counts without collecting. `Game::from_cave` validates the cave generator and the shared action path works with procedurally generated maps.
+
+**Assumptions.** Ctrl+char normalizes to lowercase (Ctrl+C produces 'c' not 'C') to match standard terminal conventions. Shift alone with a char does not produce `Key::Modified` because crossterm already capitalizes the char. Arrow/special keys without modifiers remain as their normal `Key` variants for backward compatibility. Cave generation uses a fixed 0.42 fill chance and 5 iterations with birth limit 4 as defaults that produce reasonable caves at common grid sizes.
+
+**Gotchas.** The initial `map_key` implementation produced `Key::Modified` for all arrow keys even without modifiers, which would have broken existing bindings. Fixed by only emitting `Modified` when Ctrl or Alt is held. `Rng::pick_index` returns `Option<usize>` (None for empty), so the cave constructor must unwrap. The `Map` struct's `tiles` field is `pub(crate)` which allows `from_cave` to set the goal tile directly after generation.
+
+**Follow-ups.** The cave constructor could be extended with configurable fill chance, iterations, and birth limit parameters. A `from_bsp` constructor would complement `from_cave` for structured dungeon maps. The modifier key system could be exercised in Ash Courier by binding Ctrl+Q to quit or similar shortcuts. The TTY frontend's `map_key` function should handle Ctrl+letter for lowercase-only normalization (currently it passes through the original char case for ctrl).
+
+## 2026-05-17 - engine primitives: from_ascii, spawn_batch, grid scroll, CellAttrs ANSI fix, map_tiles
+
+**Goal.** Continue autonomous Verryte development with a batch of reusable engine
+primitives that improve map construction, ECS bulk operations, terminal rendering,
+and attribute serialization.
+
+**Changes.**
+- `crates/verryte-map/src/lib.rs:337` - added `TileGrid::from_ascii` for
+  constructing grids from multi-line string literals via a char-mapping closure.
+  Handles ragged lines (shorter lines padded), empty input (0×0 grid), and
+  passes coordinates to the mapping function. Tests at `:3049`, `:3060`, `:3070`,
+  and `:3080`.
+- `crates/verryte-map/src/lib.rs:395` - added `TileGrid::map_tiles<U>` for
+  transforming each tile into a different type, producing a new grid with the
+  same dimensions. Useful for converting logical tile maps into display
+  representations. Tests at `:3092` and `:3101`.
+- `crates/verryte-core/src/world.rs:828` - added `World::spawn_batch` for bulk
+  entity creation with a shared component. Clones the component for each entity
+  and returns the list of spawned entities. Tests at `:1575`, `:1586`, and
+  `:1596`.
+- `crates/verryte-terminal/src/lib.rs:466` - added `Grid::scroll_up` and
+  `Grid::scroll_down` for shifting grid content by N rows. New rows are filled
+  with a provided cell. Uses `copy_within` for efficient memory movement.
+  Tests at `:2932`, `:2946`, `:2960`, `:2967`.
+- `crates/verryte-terminal/src/lib.rs:81` - rewrote `CellAttrs::to_ansi` to
+  handle all attribute combinations dynamically instead of pattern-matching a
+  fixed set. Now returns `String` (was `&'static str`) and builds composite
+  ANSI sequences for any combination of bold, dim, italic, underline, blink,
+  and reverse. Updated `Grid::to_ansi_string` to use the new method. Tests at
+  `:2975` and `:2987`.
+- `prototype/ash-courier/src/map.rs:27` - added `Map::from_ascii` convenience
+  constructor that uses `TileGrid::from_ascii` internally for pure-tile map
+  construction from string literals.
+- `README.md` - updated crate descriptions to document `spawn_batch`,
+  `from_ascii`, `map_tiles`, `scroll_up`/`scroll_down`, and `CellAttrs`
+  improvements.
+
+**Reasoning.** These are all small, focused primitives that terminal games
+repeatedly need. `from_ascii` eliminates the most common boilerplate in map
+construction and test fixtures — every roguelike test that creates a small map
+currently does so tile-by-tile. `map_tiles` enables the common pattern of
+separating logical tile types from display representations. `spawn_batch`
+addresses bulk entity creation that level generators and hazard placement
+routines need. Grid scrolling is a fundamental terminal UI primitive for message
+logs, scrolling text regions, and terminal output emulation. The `CellAttrs`
+fix addresses a real bug where multi-attribute combinations (e.g., bold+italic)
+produced empty ANSI sequences, making styled terminal output incomplete.
+
+**Assumptions.** `from_ascii` uses `FnMut` rather than `Fn` to support closures
+that accumulate state (e.g., collecting coordinates). `spawn_batch` requires
+`Clone` on the component type, which is reasonable since components are typically
+small data. `scroll_up`/`scroll_down` use `copy_within` for efficiency but
+handle the edge case where n ≥ height by clearing entirely.
+
+**Gotchas.** The initial `CellAttrs::to_ansi` returned `&'static str` which
+couldn't represent dynamic multi-attribute sequences. Changing the return type
+to `String` is a minor API break but the method had no external callers outside
+`to_ansi_string` (which handled attributes inline). The `from_ascii` empty-input
+test initially failed because `"".split('\n')` produces `[""]` (one empty
+string) rather than `[]`; fixed with an explicit empty-check guard. The
+`spawn_batch` tests initially failed because test structs lacked `Clone`; added
+`Clone` derives to `Pos` and `Counter` test types.
+
+**Follow-ups.** `TileGrid::from_ascii` could be extended with error handling
+(unknown glyph → Result) for cases where the mapping function needs to reject
+invalid input. `spawn_batch` could accept an iterator of components for
+heterogeneous bulk spawning. `scroll_up`/`scroll_down` could be integrated into
+the Ash Courier TTY runner's message log panel for smoother scrolling behavior.

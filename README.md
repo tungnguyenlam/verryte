@@ -9,22 +9,26 @@ those pieces as the first proving game.
 
 - `crates/verryte-core` - generational entities, component/resource storage,
   event queues, and a minimal ordered schedule. Includes `Query`, `Query2`,
-  and `Query3` iterators, `World::query2_iter` / `World::query3_iter` for
-  lazy multi-component iteration, `World::has_resource` for safe resource
-  existence checks, `World::for_each2_mut` / `World::for_each3_mut` for
-  mutable two- and three-component iteration, `World::despawn_with` for bulk
+  and `Query3` iterators (with `ExactSizeIterator` support),
+  `World::query2_iter` / `World::query3_iter` for lazy multi-component
+  iteration, `World::has_resource` and `World::contains` for safe resource
+  and component existence checks, `World::for_each2_mut` / `World::for_each3_mut`
+  for mutable two- and three-component iteration, `World::despawn_with` for bulk
   entity removal, `World::retain` for predicate-based entity filtering,
   `World::query3` for three-component queries, `World::get_or_insert` /
   `World::get_or_insert_with` for lazy component initialization,
-  `World::entities()` for iterating all live entities, `Schedule::clear`,
+  `World::entities()` for iterating all live entities, `World::spawn_batch` for
+  bulk entity creation with shared components, `Schedule::clear`,
   `Schedule::remove_by_name`, and `Schedule::run_system_by_name` for runtime
   schedule management and selective execution, `Schedule::add_conditional` for
-  systems gated by a `RunCondition` predicate, `Events::peek` / `Events::last`
-  for non-consuming event inspection, bounded `MessageLog::with_max`, a `Tag`
-  marker component for entity grouping and filtering, `Rng` (seeded xorshift64
-  RNG) for reproducible randomness in tests, replays, and procedural generation
-  (including `weighted_pick` for weighted random selection), and `GameClock`
-  for tracking elapsed ticks, pause state, and real-time duration.
+  systems gated by a `RunCondition` predicate, `Schedule::add_stage` /
+  `Schedule::run_stage` for named execution phases, `Events::peek` /
+  `Events::last` for non-consuming event inspection, bounded
+  `MessageLog::with_max`, a `Tag` marker component for entity grouping and
+  filtering, `Rng` (seeded xorshift64 RNG) for reproducible randomness in
+  tests, replays, and procedural generation (including `weighted_pick` for
+  weighted random selection), and `GameClock` for tracking elapsed ticks,
+  pause state, and real-time duration.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse bindings,
   script command bindings, sourced queued actions, replayable `ActionTrace`s,
   router-level script injection, pending queue snapshots, the shared action
@@ -47,8 +51,11 @@ those pieces as the first proving game.
   generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
   (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching` and
   `TileGrid::density` for map analysis, `TileGrid::bounding_box_of` with
-  `Bounds` for spatial framing, and `SpatialHash<T>` for efficient proximity
-  queries on grid-based entities.
+  `Bounds` for spatial framing, `SpatialHash<T>` for efficient proximity
+  queries on grid-based entities, cellular automata cave generation
+  (`TileGrid::cellular_automata_cave`) for organic procedural maps,
+  `TileGrid::from_ascii` for constructing grids from multi-line string
+  literals, and `TileGrid::map_tiles` for transforming tile types.
 - `crates/verryte-terminal` - terminal-cell data structures: colors, cells,
   grids, clipping, borders, line drawing, blitting, viewports, frame diffs,
   plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string`), HTML
@@ -59,20 +66,29 @@ those pieces as the first proving game.
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
   text wrapping utilities (`wrap_text`, `write_wrapped_text`), `Grid::transform`
   and `Grid::map` for bulk cell modification, `Grid::resize` for dynamic grid
-  sizing on terminal resize, a `Layer` system for compositing named, ordered
-  rendering layers (map, entities, UI), a `Layers` collection for managed
-  layer lifecycle, `ColorPalette` with built-in themes (dark dungeon,
+  sizing on terminal resize, `Grid::scroll_up` and `Grid::scroll_down` for
+  scrolling content within a grid, a `Layer` system for compositing named,
+  ordered rendering layers (map, entities, UI), a `Layers` collection for
+  managed layer lifecycle, `ColorPalette` with built-in themes (dark dungeon,
   light classic, amber terminal, cyberpunk) for consistent game theming,
   `Sprite` and `SpriteSheet` for frame-based terminal animation, and
   `draw_sparkline` for inline data visualization with Unicode block characters.
+  `CellAttrs` supports all attribute combinations (bold, dim, italic, underline,
+  blink, reverse) with correct ANSI escape code generation.
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
-  input polling, Grid rendering with ANSI colors, and `terminal_size()` for
-  querying the current terminal dimensions.
+  input polling with full modifier key passthrough (Ctrl, Alt, Shift produce
+  `Key::Modified` events), Grid rendering with ANSI colors, incremental
+  diff-based rendering (`render_diff`) for efficient frame updates, and
+  `terminal_size()` for querying the current terminal dimensions.
 - `prototype/ash-courier` - a small turn-based roguelike prototype that proves
   the engine path through movement, pickup, hazards, win/loss state, rendering,
-  scan/visibility state, event reports, package drop/re-pickup, path hints,
-  hazard-distance safety hints, reachable-state hints, local viewport snapshots,
-  and observable snapshots.
+  scan/visibility state (using recursive shadowcasting FOV), event reports,
+  package drop/re-pickup, path hints, hazard-distance safety hints,
+  reachable-state hints, local viewport snapshots, observable snapshots,
+  `GameClock` for turn tracking, `Rng` for reproducible chaser AI,
+  diff-based TTY rendering, procedural cave map generation via
+  `Game::from_cave` using cellular automata, and `Map::from_ascii` for
+  convenient map construction from string literals.
 
 ## Control Model
 
