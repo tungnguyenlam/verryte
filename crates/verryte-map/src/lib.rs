@@ -1186,6 +1186,82 @@ impl<T> TileGrid<T> {
         centers
     }
 
+    /// Place non-overlapping rectangular rooms on the grid.
+    ///
+    /// Fills the grid with `wall` first, then attempts to place `max_rooms`
+    /// rooms with sizes in `[min_size, max_size]`. Rooms are carved with
+    /// `floor`. Returns the centers of successfully placed rooms.
+    ///
+    /// Uses a simple rejection-sampling approach: try random positions,
+    /// skip if overlapping with existing rooms. This is simpler than BSP
+    /// and works well for cave-like or organic layouts.
+    pub fn place_rooms<F1, F2, R>(
+        &mut self,
+        max_rooms: usize,
+        min_size: u16,
+        max_size: u16,
+        wall: F1,
+        floor: F2,
+        rng: &mut R,
+    ) -> Vec<Point>
+    where
+        F1: Fn() -> T,
+        F2: Fn() -> T,
+        R: FnMut() -> u64,
+    {
+        let w = self.width() as i16;
+        let h = self.height() as i16;
+
+        // Fill with wall.
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                self.set(Point::new(x as i16, y as i16), wall());
+            }
+        }
+
+        let mut rooms: Vec<(i16, i16, u16, u16)> = Vec::new();
+        let mut centers = Vec::new();
+        let max_size = max_size.min(w as u16).min(h as u16);
+        let min_size = min_size.min(max_size);
+
+        for _ in 0..max_rooms * 10 {
+            if rooms.len() >= max_rooms {
+                break;
+            }
+            let rw = (rng() % (max_size - min_size + 1) as u64) as u16 + min_size;
+            let rh = (rng() % (max_size - min_size + 1) as u64) as u16 + min_size;
+            let rx = (rng() % (w as u64 - rw as u64 + 1)) as i16;
+            let ry = (rng() % (h as u64 - rh as u64 + 1)) as i16;
+
+            // Check overlap with existing rooms (with 1-cell padding).
+            let overlaps = rooms.iter().any(|&(ox, oy, ow, oh)| {
+                rx < ox + ow as i16 + 1
+                    && rx + rw as i16 + 1 > ox
+                    && ry < oy + oh as i16 + 1
+                    && ry + rh as i16 + 1 > oy
+            });
+            if overlaps {
+                continue;
+            }
+
+            // Carve room.
+            for dy in 0..rh {
+                for dx in 0..rw {
+                    let px = rx + dx as i16;
+                    let py = ry + dy as i16;
+                    if px >= 0 && py >= 0 {
+                        self.set(Point::new(px, py), floor());
+                    }
+                }
+            }
+
+            rooms.push((rx, ry, rw, rh));
+            centers.push(Point::new(rx + (rw / 2) as i16, ry + (rh / 2) as i16));
+        }
+
+        centers
+    }
+
     /// Count how many tiles match the predicate.
     ///
     /// Useful for measuring map density, counting floor/wall ratios, or
@@ -1467,9 +1543,135 @@ impl std::fmt::Display for GridError {
 
 impl std::error::Error for GridError {}
 
+/// A spatial hash for efficient proximity queries on grid-based entities.
+///
+/// Divides space into fixed-size cells and stores entities in the cell
+/// corresponding to their position. Queries only check the relevant cells
+/// instead of scanning all entities.
+///
+/// Useful for games with many entities where you frequently need to find
+/// entities near a point (AI targeting, collision detection, interaction range).
+///
+/// # Example
+///
+/// ```ignore
+/// let mut hash = SpatialHash::new(5); // 5-cell buckets
+/// hash.insert(Point::new(3, 3), enemy_entity);
+/// hash.insert(Point::new(4, 4), another_enemy);
+///
+/// // Find all entities within 2 cells of (5, 5).
+/// for entity in hash.query(Point::new(5, 5), 2) {
+///     // ...
+/// }
+/// ```
+pub struct SpatialHash<T> {
+    cell_size: i16,
+    cells: HashMap<(i16, i16), Vec<(Point, T)>>,
+}
+
+impl<T> SpatialHash<T> {
+    /// Create a new spatial hash with the given cell size.
+    ///
+    /// Smaller cells give finer granularity but use more memory.
+    /// Larger cells use less memory but query more irrelevant entities.
+    /// A good default is 3-10 depending on typical entity density.
+    pub fn new(cell_size: i16) -> Self {
+        Self {
+            cell_size: cell_size.max(1),
+            cells: HashMap::new(),
+        }
+    }
+
+    fn cell_key(&self, point: Point) -> (i16, i16) {
+        (
+            point.x.div_euclid(self.cell_size),
+            point.y.div_euclid(self.cell_size),
+        )
+    }
+
+    /// Insert an entity at the given point.
+    pub fn insert(&mut self, point: Point, value: T) {
+        let key = self.cell_key(point);
+        self.cells.entry(key).or_default().push((point, value));
+    }
+
+    /// Remove the first entity at `point` that equals `value` (by PartialEq).
+    ///
+    /// Returns `true` if an entity was found and removed.
+    pub fn remove(&mut self, point: Point, value: &T) -> bool
+    where
+        T: PartialEq,
+    {
+        let key = self.cell_key(point);
+        if let Some(entries) = self.cells.get_mut(&key) {
+            if let Some(pos) = entries.iter().position(|(p, v)| *p == point && v == value) {
+                entries.remove(pos);
+                if entries.is_empty() {
+                    self.cells.remove(&key);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Query all entities within `radius` (Manhattan distance) of `center`.
+    pub fn query<'a>(&'a self, center: Point, radius: u16) -> impl Iterator<Item = &'a T> + 'a {
+        let radius = radius as i16;
+        let cell_radius = (radius / self.cell_size) + 1;
+        let (cx, cy) = self.cell_key(center);
+
+        let mut results = Vec::new();
+        for dx in -cell_radius..=cell_radius {
+            for dy in -cell_radius..=cell_radius {
+                if let Some(entries) = self.cells.get(&(cx + dx, cy + dy)) {
+                    for (point, value) in entries {
+                        if point.manhattan_distance(center) <= radius as u16 {
+                            results.push(value);
+                        }
+                    }
+                }
+            }
+        }
+        results.into_iter()
+    }
+
+    /// Find the nearest entity to `center` within `radius`, using a custom
+    /// comparison function.
+    ///
+    /// The comparison function receives two entity references and the center
+    /// point, and should return an `Ordering`.
+    pub fn nearest<F>(&self, center: Point, radius: u16, mut cmp: F) -> Option<&T>
+    where
+        F: FnMut(&T, &T, Point) -> std::cmp::Ordering,
+    {
+        self.query(center, radius).min_by(|a, b| cmp(a, b, center))
+    }
+
+    /// Remove all entities from the hash.
+    pub fn clear(&mut self) {
+        self.cells.clear();
+    }
+
+    /// Total number of entities in the hash.
+    pub fn len(&self) -> usize {
+        self.cells.values().map(|v| v.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// Get the cell size.
+    pub fn cell_size(&self) -> i16 {
+        self.cell_size
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use verryte_core::Rng;
 
     #[test]
     fn point_steps_by_direction() {
@@ -2242,5 +2444,125 @@ mod tests {
         let grid = TileGrid::from_vec(5, 5, vec!['.'; 25]).unwrap();
         let fov = grid.field_of_view(Point::new(-1, -1), 5, |t| *t == '#');
         assert!(fov.is_empty());
+    }
+
+    #[test]
+    fn spatial_hash_insert_and_query() {
+        let mut hash = SpatialHash::<u32>::new(3);
+        hash.insert(Point::new(0, 0), 1);
+        hash.insert(Point::new(1, 0), 2);
+        hash.insert(Point::new(10, 10), 3);
+
+        let nearby: Vec<u32> = hash.query(Point::new(0, 0), 2).copied().collect();
+        assert_eq!(nearby.len(), 2);
+        assert!(nearby.contains(&1));
+        assert!(nearby.contains(&2));
+        assert!(!nearby.contains(&3));
+    }
+
+    #[test]
+    fn spatial_hash_remove() {
+        let mut hash = SpatialHash::<u32>::new(3);
+        hash.insert(Point::new(0, 0), 1);
+        hash.insert(Point::new(0, 0), 2);
+        assert_eq!(hash.query(Point::new(0, 0), 1).count(), 2);
+
+        hash.remove(Point::new(0, 0), &1);
+        let nearby: Vec<u32> = hash.query(Point::new(0, 0), 1).copied().collect();
+        assert_eq!(nearby, vec![2]);
+    }
+
+    #[test]
+    fn spatial_hash_cell_size_affects_grouping() {
+        let mut hash = SpatialHash::<u32>::new(5);
+        hash.insert(Point::new(0, 0), 1);
+        hash.insert(Point::new(4, 4), 2); // Same cell (0,0) with cell_size=5
+        hash.insert(Point::new(5, 5), 3); // Different cell (1,1)
+
+        // Query with radius 8 to include (4,4) which is manhattan distance 8 from (0,0).
+        let nearby: Vec<u32> = hash.query(Point::new(0, 0), 8).copied().collect();
+        assert_eq!(nearby.len(), 2);
+        assert!(nearby.contains(&1));
+        assert!(nearby.contains(&2));
+        assert!(!nearby.contains(&3));
+    }
+
+    #[test]
+    fn spatial_hash_handles_empty_query() {
+        let hash = SpatialHash::<u32>::new(3);
+        assert_eq!(hash.query(Point::new(0, 0), 5).count(), 0);
+    }
+
+    #[test]
+    fn spatial_hash_clear_removes_all() {
+        let mut hash = SpatialHash::<u32>::new(3);
+        hash.insert(Point::new(0, 0), 1);
+        hash.insert(Point::new(100, 100), 2);
+        hash.clear();
+        assert_eq!(hash.query(Point::new(0, 0), 200).count(), 0);
+    }
+
+    #[test]
+    fn spatial_hash_len_counts_all_entries() {
+        let mut hash = SpatialHash::<u32>::new(3);
+        hash.insert(Point::new(0, 0), 1);
+        hash.insert(Point::new(0, 0), 2);
+        hash.insert(Point::new(10, 10), 3);
+        assert_eq!(hash.len(), 3);
+    }
+
+    #[test]
+    fn spatial_hash_nearest_finds_closest() {
+        let mut hash = SpatialHash::<Point>::new(3);
+        let origin = Point::new(0, 0);
+        let far = Point::new(10, 10);
+        let near = Point::new(2, 0);
+        hash.insert(origin, origin);
+        hash.insert(far, far);
+        hash.insert(near, near);
+
+        // Find nearest to (5, 0). Expected: near (2,0) at distance 3, not origin (0,0) at distance 5.
+        let center = Point::new(5, 0);
+        let nearest = hash.nearest(center, 20, |a, b, c| {
+            a.manhattan_distance(c).cmp(&b.manhattan_distance(c))
+        });
+        assert_eq!(nearest, Some(&near));
+    }
+
+    #[test]
+    fn place_rooms_carves_rooms_on_wall_background() {
+        let mut grid = TileGrid::from_vec(20, 20, vec!['.'; 400]).unwrap();
+        let mut rng = Rng::seed(42);
+        let centers = grid.place_rooms(5, 3, 6, || '#', || '.', &mut || rng.next_u64());
+
+        assert!(!centers.is_empty());
+        // Room centers should be within bounds.
+        for c in &centers {
+            assert!(grid.in_bounds(*c));
+        }
+        // At least one room center should have floor under it.
+        let has_floor = centers.iter().any(|c| *grid.get(*c).unwrap() == '.');
+        assert!(has_floor);
+    }
+
+    #[test]
+    fn place_rooms_returns_deterministic_results() {
+        let mut grid1 = TileGrid::from_vec(20, 20, vec!['.'; 400]).unwrap();
+        let mut grid2 = TileGrid::from_vec(20, 20, vec!['.'; 400]).unwrap();
+        let mut rng1 = Rng::seed(99);
+        let mut rng2 = Rng::seed(99);
+
+        let c1 = grid1.place_rooms(3, 2, 5, || '#', || '.', &mut || rng1.next_u64());
+        let c2 = grid2.place_rooms(3, 2, 5, || '#', || '.', &mut || rng2.next_u64());
+
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn place_rooms_respects_max_rooms() {
+        let mut grid = TileGrid::from_vec(50, 50, vec!['.'; 2500]).unwrap();
+        let mut rng = Rng::seed(42);
+        let centers = grid.place_rooms(3, 3, 5, || '#', || '.', &mut || rng.next_u64());
+        assert!(centers.len() <= 3);
     }
 }

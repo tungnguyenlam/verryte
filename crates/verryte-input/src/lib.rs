@@ -108,6 +108,32 @@ pub enum ActionSource {
     Test,
 }
 
+impl std::fmt::Display for ActionSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActionSource::Terminal => write!(f, "Terminal"),
+            ActionSource::Script => write!(f, "Script"),
+            ActionSource::Agent => write!(f, "Agent"),
+            ActionSource::Replay => write!(f, "Replay"),
+            ActionSource::Test => write!(f, "Test"),
+        }
+    }
+}
+
+impl std::str::FromStr for ActionSource {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "terminal" => Ok(ActionSource::Terminal),
+            "script" => Ok(ActionSource::Script),
+            "agent" => Ok(ActionSource::Agent),
+            "replay" => Ok(ActionSource::Replay),
+            "test" => Ok(ActionSource::Test),
+            other => Err(format!("unknown ActionSource: {other}")),
+        }
+    }
+}
+
 /// One pending game action plus its control-plane provenance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueuedAction<A> {
@@ -627,6 +653,22 @@ impl<A: Clone> InputRouter<A> {
         self.total_queued += 1;
     }
 
+    /// Inject a high-priority action at the front of the queue.
+    ///
+    /// Use this for interrupting or urgent actions that should be processed
+    /// before any currently pending actions. The action still shares the same
+    /// drain path and is applied through the same systems.
+    pub fn inject_priority(&mut self, action: A) {
+        self.inject_priority_from(action, ActionSource::Script);
+    }
+
+    /// Inject a high-priority action at the front of the queue with explicit
+    /// provenance.
+    pub fn inject_priority_from(&mut self, action: A, source: ActionSource) {
+        self.pending.push_front(QueuedAction::new(action, source));
+        self.total_queued += 1;
+    }
+
     /// Inject many actions in order. Convenience for scripted runs.
     pub fn inject_all<I: IntoIterator<Item = A>>(&mut self, actions: I) {
         for action in actions {
@@ -721,6 +763,303 @@ impl<A: Clone> InputRouter<A> {
     /// processed.
     pub fn total_actions_queued(&self) -> usize {
         self.total_queued
+    }
+}
+
+/// A text input buffer for terminal text entry (prompts, naming, chat, etc.).
+///
+/// Handles key events and produces a plain-text string. Supports cursor
+/// movement, insertion, deletion, and a configurable max length.
+///
+/// This is separate from the action router because text entry is a continuous
+/// editing state, not a discrete action. Games can render the buffer's current
+/// value and cursor position each frame, then submit the final string when
+/// the player confirms.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut input = TextInput::with_max(32);
+/// input.handle_key(Key::Char('h'));
+/// input.handle_key(Key::Char('i'));
+/// assert_eq!(input.text(), "hi");
+///
+/// input.handle_key(Key::Backspace);
+/// assert_eq!(input.text(), "h");
+///
+/// if input.handle_key(Key::Enter) {
+///     let submitted = input.take_text();
+///     // use submitted text...
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub struct TextInput {
+    text: String,
+    cursor: usize,
+    max_len: usize,
+    dirty: bool,
+    history: Vec<String>,
+    history_index: Option<usize>,
+    max_history: usize,
+}
+
+impl TextInput {
+    /// Create a text input with no maximum length.
+    pub fn new() -> Self {
+        Self {
+            text: String::new(),
+            cursor: 0,
+            max_len: usize::MAX,
+            dirty: false,
+            history: Vec::new(),
+            history_index: None,
+            max_history: 50,
+        }
+    }
+
+    /// Create a text input with a maximum character length.
+    pub fn with_max(max_len: usize) -> Self {
+        Self {
+            text: String::new(),
+            cursor: 0,
+            max_len,
+            dirty: false,
+            history: Vec::new(),
+            history_index: None,
+            max_history: 50,
+        }
+    }
+
+    /// Set the maximum number of history entries to keep.
+    pub fn with_max_history(mut self, max: usize) -> Self {
+        self.max_history = max;
+        self
+    }
+
+    /// Handle a key event. Returns `true` if the input was submitted (Enter pressed).
+    pub fn handle_key(&mut self, key: Key) -> bool {
+        match key {
+            Key::Char(ch) => {
+                if ch.is_control() || ch == '\n' || ch == '\r' {
+                    return false;
+                }
+                if self.text.chars().count() >= self.max_len {
+                    return false;
+                }
+                let byte_pos = self.char_to_byte(self.cursor);
+                self.text.insert_str(byte_pos, &ch.to_string());
+                self.cursor += 1;
+                self.dirty = true;
+                false
+            }
+            Key::Backspace => {
+                if self.cursor > 0 {
+                    let byte_pos = self.char_to_byte(self.cursor);
+                    let prev = self.text[..byte_pos]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _c)| i)
+                        .unwrap_or(byte_pos);
+                    self.text.drain(prev..byte_pos);
+                    self.cursor -= 1;
+                    self.dirty = true;
+                }
+                false
+            }
+            Key::Delete => {
+                if self.cursor < self.text.chars().count() {
+                    let byte_pos = self.char_to_byte(self.cursor);
+                    let char_len = self.text[byte_pos..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(0);
+                    self.text.drain(byte_pos..byte_pos + char_len);
+                    self.dirty = true;
+                }
+                false
+            }
+            Key::Left => {
+                if self.cursor > 0 {
+                    self.cursor -= 1;
+                    self.dirty = true;
+                }
+                false
+            }
+            Key::Right => {
+                if self.cursor < self.text.chars().count() {
+                    self.cursor += 1;
+                    self.dirty = true;
+                }
+                false
+            }
+            Key::Home => {
+                if self.cursor > 0 {
+                    self.cursor = 0;
+                    self.dirty = true;
+                }
+                false
+            }
+            Key::End => {
+                let len = self.text.chars().count();
+                if self.cursor < len {
+                    self.cursor = len;
+                    self.dirty = true;
+                }
+                false
+            }
+            Key::Enter => {
+                if !self.text.is_empty() {
+                    self.history.push(self.text.clone());
+                    if self.history.len() > self.max_history {
+                        self.history.remove(0);
+                    }
+                }
+                self.history_index = None;
+                true
+            }
+            Key::Up => {
+                if self.history.is_empty() {
+                    return false;
+                }
+                if self.history_index.is_none() {
+                    self.history_index = Some(self.history.len());
+                }
+                if let Some(idx) = self.history_index {
+                    if idx > 0 {
+                        let new_idx = idx - 1;
+                        self.history_index = Some(new_idx);
+                        self.set_text(self.history[new_idx].clone());
+                    }
+                }
+                false
+            }
+            Key::Down => {
+                if let Some(idx) = self.history_index {
+                    if idx + 1 < self.history.len() {
+                        let new_idx = idx + 1;
+                        self.history_index = Some(new_idx);
+                        self.set_text(self.history[new_idx].clone());
+                    } else {
+                        self.history_index = None;
+                        self.clear();
+                    }
+                }
+                false
+            }
+            Key::Esc => {
+                self.history_index = None;
+                self.text.clear();
+                self.cursor = 0;
+                self.dirty = true;
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Handle an InputEvent. Only Key events are processed.
+    /// Returns `true` if the input was submitted (Enter pressed).
+    pub fn handle_event(&mut self, event: InputEvent) -> bool {
+        if let InputEvent::Key(key) = event {
+            self.handle_key(key)
+        } else {
+            false
+        }
+    }
+
+    /// Get the current text content.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Take ownership of the text and reset the buffer.
+    pub fn take_text(&mut self) -> String {
+        let text = std::mem::take(&mut self.text);
+        self.cursor = 0;
+        self.dirty = false;
+        text
+    }
+
+    /// Set the text content directly (e.g., for pre-filling or programmatic edits).
+    pub fn set_text(&mut self, text: String) {
+        self.text = text;
+        self.cursor = self.text.chars().count().min(self.max_len);
+        // Trim if over max.
+        if self.text.chars().count() > self.max_len {
+            self.text = self.text.chars().take(self.max_len).collect();
+            self.cursor = self.max_len;
+        }
+        self.dirty = true;
+    }
+
+    /// Get the current cursor position (in character units, not bytes).
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Set the cursor position (in character units). Clamped to valid range.
+    pub fn set_cursor(&mut self, pos: usize) {
+        let max = self.text.chars().count();
+        self.cursor = pos.min(max);
+        self.dirty = true;
+    }
+
+    /// Get the maximum length.
+    pub fn max_len(&self) -> usize {
+        self.max_len
+    }
+
+    /// Check if the buffer has been modified since the last clear_dirty call.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Clear the dirty flag.
+    pub fn clear_dirty(&mut self) {
+        self.dirty = false;
+    }
+
+    /// Check if the input is empty.
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// Clear the buffer.
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+        self.dirty = true;
+    }
+
+    /// Get the number of history entries.
+    pub fn history_len(&self) -> usize {
+        self.history.len()
+    }
+
+    /// Get a history entry by index (0 = oldest).
+    pub fn history_get(&self, index: usize) -> Option<&str> {
+        self.history.get(index).map(|s| s.as_str())
+    }
+
+    /// Clear the history.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+        self.history_index = None;
+    }
+
+    fn char_to_byte(&self, char_index: usize) -> usize {
+        self.text
+            .char_indices()
+            .nth(char_index)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len())
+    }
+}
+
+impl Default for TextInput {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1218,5 +1557,351 @@ mod tests {
 
         router.handle(InputEvent::Key(Key::Down));
         assert_eq!(router.total_actions_queued(), 5);
+    }
+
+    #[test]
+    fn text_input_accepts_characters() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('h'));
+        input.handle_key(Key::Char('i'));
+        assert_eq!(input.text(), "hi");
+    }
+
+    #[test]
+    fn text_input_respects_max_length() {
+        let mut input = TextInput::with_max(3);
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Char('b'));
+        input.handle_key(Key::Char('c'));
+        input.handle_key(Key::Char('d'));
+        assert_eq!(input.text(), "abc");
+    }
+
+    #[test]
+    fn text_input_backspace_deletes_before_cursor() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Char('b'));
+        input.handle_key(Key::Char('c'));
+        input.handle_key(Key::Backspace);
+        assert_eq!(input.text(), "ab");
+        assert_eq!(input.cursor(), 2);
+    }
+
+    #[test]
+    fn text_input_backspace_at_start_does_nothing() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Backspace); // deletes 'a', cursor at 0
+        assert_eq!(input.text(), "");
+        input.handle_key(Key::Backspace); // does nothing, already at start
+        assert_eq!(input.text(), "");
+    }
+
+    #[test]
+    fn text_input_delete_deletes_at_cursor() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Char('b'));
+        input.handle_key(Key::Char('c'));
+        input.handle_key(Key::Left);
+        input.handle_key(Key::Left);
+        input.handle_key(Key::Delete);
+        assert_eq!(input.text(), "ac");
+    }
+
+    #[test]
+    fn text_input_cursor_movement() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Char('b'));
+        input.handle_key(Key::Char('c'));
+        assert_eq!(input.cursor(), 3);
+
+        input.handle_key(Key::Left);
+        assert_eq!(input.cursor(), 2);
+
+        input.handle_key(Key::Right);
+        assert_eq!(input.cursor(), 3);
+
+        input.handle_key(Key::Home);
+        assert_eq!(input.cursor(), 0);
+
+        input.handle_key(Key::End);
+        assert_eq!(input.cursor(), 3);
+    }
+
+    #[test]
+    fn text_input_inserts_at_cursor() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Char('c'));
+        input.handle_key(Key::Left);
+        input.handle_key(Key::Char('b'));
+        assert_eq!(input.text(), "abc");
+    }
+
+    #[test]
+    fn text_input_enter_returns_true() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('h'));
+        input.handle_key(Key::Char('i'));
+        assert!(input.handle_key(Key::Enter));
+    }
+
+    #[test]
+    fn text_input_take_text_clears_buffer() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('h'));
+        input.handle_key(Key::Char('i'));
+        let text = input.take_text();
+        assert_eq!(text, "hi");
+        assert_eq!(input.text(), "");
+        assert_eq!(input.cursor(), 0);
+    }
+
+    #[test]
+    fn text_input_esc_clears_all() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('h'));
+        input.handle_key(Key::Char('i'));
+        input.handle_key(Key::Esc);
+        assert_eq!(input.text(), "");
+        assert_eq!(input.cursor(), 0);
+    }
+
+    #[test]
+    fn text_input_dirty_tracking() {
+        let mut input = TextInput::new();
+        assert!(!input.is_dirty());
+        input.handle_key(Key::Char('a'));
+        assert!(input.is_dirty());
+        input.clear_dirty();
+        assert!(!input.is_dirty());
+    }
+
+    #[test]
+    fn text_input_set_text() {
+        let mut input = TextInput::with_max(5);
+        input.set_text("hello world".to_owned());
+        assert_eq!(input.text(), "hello");
+        assert_eq!(input.cursor(), 5);
+    }
+
+    #[test]
+    fn text_input_is_empty() {
+        let mut input = TextInput::new();
+        assert!(input.is_empty());
+        input.handle_key(Key::Char('a'));
+        assert!(!input.is_empty());
+    }
+
+    #[test]
+    fn text_input_clear() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.clear();
+        assert!(input.is_empty());
+        assert_eq!(input.cursor(), 0);
+    }
+
+    #[test]
+    fn text_input_handles_multibyte_characters() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('日'));
+        input.handle_key(Key::Char('本'));
+        input.handle_key(Key::Char('語'));
+        assert_eq!(input.text(), "日本語");
+        assert_eq!(input.cursor(), 3);
+
+        input.handle_key(Key::Left);
+        assert_eq!(input.cursor(), 2);
+        input.handle_key(Key::Backspace);
+        // Backspace at cursor 2 deletes "本" (position 1), leaving "日語"
+        assert_eq!(input.text(), "日語");
+        assert_eq!(input.cursor(), 1);
+    }
+
+    #[test]
+    fn text_input_control_chars_ignored() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('\n'));
+        input.handle_key(Key::Char('\r'));
+        input.handle_key(Key::Char('\t'));
+        assert_eq!(input.text(), "");
+    }
+
+    #[test]
+    fn text_input_handle_event_only_processes_keys() {
+        let mut input = TextInput::new();
+        assert!(!input.handle_event(InputEvent::Tick));
+        assert!(!input.handle_event(InputEvent::Resize {
+            width: 80,
+            height: 24
+        }));
+        assert!(!input.handle_event(InputEvent::Mouse {
+            x: 0,
+            y: 0,
+            button: MouseButton::Left,
+            pressed: true,
+        }));
+        assert_eq!(input.text(), "");
+    }
+
+    #[test]
+    fn action_source_display_roundtrips() {
+        assert_eq!(ActionSource::Terminal.to_string(), "Terminal");
+        assert_eq!(ActionSource::Script.to_string(), "Script");
+        assert_eq!(ActionSource::Agent.to_string(), "Agent");
+        assert_eq!(ActionSource::Replay.to_string(), "Replay");
+        assert_eq!(ActionSource::Test.to_string(), "Test");
+    }
+
+    #[test]
+    fn action_source_from_str_parses() {
+        assert_eq!(
+            "Terminal".parse::<ActionSource>().unwrap(),
+            ActionSource::Terminal
+        );
+        assert_eq!(
+            "script".parse::<ActionSource>().unwrap(),
+            ActionSource::Script
+        );
+        assert_eq!(
+            "AGENT".parse::<ActionSource>().unwrap(),
+            ActionSource::Agent
+        );
+    }
+
+    #[test]
+    fn action_source_case_insensitive_parsing() {
+        assert_eq!(
+            "terminal".parse::<ActionSource>().unwrap(),
+            ActionSource::Terminal
+        );
+        assert_eq!(
+            "SCRIPT".parse::<ActionSource>().unwrap(),
+            ActionSource::Script
+        );
+        assert_eq!(
+            "agent".parse::<ActionSource>().unwrap(),
+            ActionSource::Agent
+        );
+        assert_eq!(
+            "replay".parse::<ActionSource>().unwrap(),
+            ActionSource::Replay
+        );
+        assert_eq!("TEST".parse::<ActionSource>().unwrap(), ActionSource::Test);
+    }
+
+    #[test]
+    fn action_source_invalid_returns_error() {
+        assert!("unknown".parse::<ActionSource>().is_err());
+        assert!("".parse::<ActionSource>().is_err());
+    }
+
+    #[test]
+    fn text_input_history_records_on_enter() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('h'));
+        input.handle_key(Key::Char('i'));
+        assert!(input.handle_key(Key::Enter));
+        assert_eq!(input.history_len(), 1);
+        assert_eq!(input.history_get(0), Some("hi"));
+    }
+
+    #[test]
+    fn text_input_history_navigate_up() {
+        let mut input = TextInput::new();
+        input.set_text("first".to_owned());
+        input.handle_key(Key::Enter);
+        input.set_text("second".to_owned());
+        input.handle_key(Key::Enter);
+
+        input.handle_key(Key::Up);
+        assert_eq!(input.text(), "second");
+        input.handle_key(Key::Up);
+        assert_eq!(input.text(), "first");
+    }
+
+    #[test]
+    fn text_input_history_navigate_down() {
+        let mut input = TextInput::new();
+        input.set_text("first".to_owned());
+        input.handle_key(Key::Enter);
+
+        input.handle_key(Key::Up);
+        assert_eq!(input.text(), "first");
+        input.handle_key(Key::Down);
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn text_input_empty_text_not_added_to_history() {
+        let mut input = TextInput::new();
+        assert!(input.handle_key(Key::Enter));
+        assert_eq!(input.history_len(), 0);
+    }
+
+    #[test]
+    fn text_input_history_respects_max() {
+        let mut input = TextInput::with_max(10).with_max_history(2);
+        input.set_text("a".to_owned());
+        input.handle_key(Key::Enter);
+        input.set_text("b".to_owned());
+        input.handle_key(Key::Enter);
+        input.set_text("c".to_owned());
+        input.handle_key(Key::Enter);
+
+        assert_eq!(input.history_len(), 2);
+        assert_eq!(input.history_get(0), Some("b"));
+        assert_eq!(input.history_get(1), Some("c"));
+    }
+
+    #[test]
+    fn text_input_clear_history() {
+        let mut input = TextInput::new();
+        input.set_text("test".to_owned());
+        input.handle_key(Key::Enter);
+        assert_eq!(input.history_len(), 1);
+        input.clear_history();
+        assert_eq!(input.history_len(), 0);
+    }
+
+    #[test]
+    fn inject_priority_puts_action_at_front() {
+        let mut router = bound_router();
+        router.inject(Move::North);
+        router.inject(Move::South);
+        router.inject_priority(Move::Wait);
+
+        assert_eq!(router.pending(), 3);
+        assert_eq!(router.next_action(), Some(Move::Wait));
+        assert_eq!(router.next_action(), Some(Move::North));
+        assert_eq!(router.next_action(), Some(Move::South));
+    }
+
+    #[test]
+    fn inject_priority_from_preserves_source() {
+        let mut router = bound_router();
+        router.inject(Move::North);
+        router.inject_priority_from(Move::Wait, ActionSource::Agent);
+
+        let queued: Vec<QueuedAction<Move>> = router.drain_queued().collect();
+        assert_eq!(
+            queued,
+            vec![
+                QueuedAction::new(Move::Wait, ActionSource::Agent),
+                QueuedAction::new(Move::North, ActionSource::Script),
+            ]
+        );
+    }
+
+    #[test]
+    fn inject_priority_counts_toward_total() {
+        let mut router = bound_router();
+        router.inject(Move::North);
+        router.inject_priority(Move::Wait);
+        assert_eq!(router.total_actions_queued(), 2);
     }
 }

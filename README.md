@@ -11,24 +11,30 @@ those pieces as the first proving game.
   event queues, and a minimal ordered schedule. Includes `Query`, `Query2`,
   and `Query3` iterators, `World::query2_iter` / `World::query3_iter` for
   lazy multi-component iteration, `World::has_resource` for safe resource
-  existence checks, `World::for_each2_mut` for mutable two-component iteration,
-  `World::despawn_with` for bulk entity removal, `World::retain` for
-  predicate-based entity filtering, `World::query3` for three-component
-  queries, `World::get_or_insert` / `World::get_or_insert_with` for lazy
-  component initialization, `World::entities()` for iterating all live
-  entities, `Schedule::clear`, `Schedule::remove_by_name`, and
-  `Schedule::run_system_by_name` for runtime schedule management and selective
-  execution, `Schedule::add_conditional` for systems gated by a `RunCondition`
-  predicate, `Events::peek` / `Events::last` for non-consuming event inspection,
-  bounded `MessageLog::with_max`, and a `Tag` marker component for entity
-  grouping and filtering.
+  existence checks, `World::for_each2_mut` / `World::for_each3_mut` for
+  mutable two- and three-component iteration, `World::despawn_with` for bulk
+  entity removal, `World::retain` for predicate-based entity filtering,
+  `World::query3` for three-component queries, `World::get_or_insert` /
+  `World::get_or_insert_with` for lazy component initialization,
+  `World::entities()` for iterating all live entities, `Schedule::clear`,
+  `Schedule::remove_by_name`, and `Schedule::run_system_by_name` for runtime
+  schedule management and selective execution, `Schedule::add_conditional` for
+  systems gated by a `RunCondition` predicate, `Events::peek` / `Events::last`
+  for non-consuming event inspection, bounded `MessageLog::with_max`, a `Tag`
+  marker component for entity grouping and filtering, `Rng` (seeded xorshift64
+  RNG) for reproducible randomness in tests, replays, and procedural generation
+  (including `weighted_pick` for weighted random selection), and `GameClock`
+  for tracking elapsed ticks, pause state, and real-time duration.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse bindings,
   script command bindings, sourced queued actions, replayable `ActionTrace`s,
   router-level script injection, pending queue snapshots, the shared action
   queue, input context switching via `set_bindings` and `bindings_guard`, batch
   event processing (`handle_batch`), `Bindings::merge` for layering keymaps,
-  `CommandBindings::merge` for layering command sets, and
-  `InputRouter::total_actions_queued()` for lifetime action metrics.
+  `CommandBindings::merge` for layering command sets,
+  `InputRouter::total_actions_queued()` for lifetime action metrics,
+  `TextInput` for terminal text entry (prompts, naming, chat) with cursor
+  movement, insertion, deletion, max length, and dirty tracking, and
+  `ActionSource` with `Display`/`FromStr` for serialization and debugging.
 - `crates/verryte-map` - reusable grid/spatial primitives: `Point`,
   `Direction`, `Direction8`, `Size`, typed `TileGrid<T>`, cardinal and
   8-directional neighbors, line tracing (both `Vec`-returning `line_between`
@@ -40,8 +46,9 @@ those pieces as the first proving game.
   hazard-distance safety scoring (`safer_neighbors4`), random-walk dungeon
   generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
   (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching` and
-  `TileGrid::density` for map analysis, and `TileGrid::bounding_box_of` with
-  `Bounds` for spatial framing.
+  `TileGrid::density` for map analysis, `TileGrid::bounding_box_of` with
+  `Bounds` for spatial framing, and `SpatialHash<T>` for efficient proximity
+  queries on grid-based entities.
 - `crates/verryte-terminal` - terminal-cell data structures: colors, cells,
   grids, clipping, borders, line drawing, blitting, viewports, frame diffs,
   plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string`), HTML
@@ -51,8 +58,13 @@ those pieces as the first proving game.
   (`draw_border_rounded`, `draw_rounded_panel`), horizontal/vertical lines
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
   text wrapping utilities (`wrap_text`, `write_wrapped_text`), `Grid::transform`
-  and `Grid::map` for bulk cell modification, and a `Layer` system for
-  compositing named, ordered rendering layers (map, entities, UI).
+  and `Grid::map` for bulk cell modification, `Grid::resize` for dynamic grid
+  sizing on terminal resize, a `Layer` system for compositing named, ordered
+  rendering layers (map, entities, UI), a `Layers` collection for managed
+  layer lifecycle, `ColorPalette` with built-in themes (dark dungeon,
+  light classic, amber terminal, cyberpunk) for consistent game theming,
+  `Sprite` and `SpriteSheet` for frame-based terminal animation, and
+  `draw_sparkline` for inline data visualization with Unicode block characters.
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
   input polling, Grid rendering with ANSI colors, and `terminal_size()` for
   querying the current terminal dimensions.

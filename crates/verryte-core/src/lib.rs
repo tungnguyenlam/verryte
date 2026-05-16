@@ -14,16 +14,20 @@
 //! `verryte-core` is the right-hand side of that arrow: systems run against a
 //! [`World`], and tests/agents read state straight off the same `World`.
 
+pub mod clock;
 pub mod entity;
 pub mod event;
 pub mod log;
+pub mod rng;
 pub mod schedule;
 pub mod tag;
 pub mod world;
 
+pub use clock::GameClock;
 pub use entity::Entity;
 pub use event::Events;
 pub use log::MessageLog;
+pub use rng::Rng;
 pub use schedule::{NamedSystem, Schedule, System};
 pub use tag::Tag;
 pub use world::{Query, Query2, Query3, World};

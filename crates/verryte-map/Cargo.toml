@@ -5,5 +5,8 @@ edition.workspace = true
 license.workspace = true
 description = "Map and spatial primitives for terminal-native Verryte games."
 
+[dev-dependencies]
+verryte-core = { path = "../verryte-core" }
+
 [lints]
 workspace = true

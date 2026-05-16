@@ -198,6 +198,9 @@ version = "0.0.1"
 [[package]]
 name = "verryte-map"
 version = "0.0.1"
+dependencies = [
+ "verryte-core",
+]
 
 [[package]]
 name = "verryte-terminal"

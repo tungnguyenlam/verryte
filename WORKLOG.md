@@ -568,3 +568,175 @@ Chebyshev distance could be added for games that want 8-directional FOV.
 The schedule could benefit from a `run_systems_by_tag` or system grouping
 feature for running subsets of systems. `Grid::transform` could be extended
 with a `transform_rect` variant for region-limited transformations.
+
+## 2026-05-16 - engine primitives: seeded RNG, color palettes, grid resize, text input, game clock
+
+**Goal.** Continue autonomous Verryte development with a batch of reusable engine
+primitives that improve reproducibility, theming, responsive layouts, text entry,
+and timing — all areas that terminal games repeatedly need.
+
+**Changes.**
+- `crates/verryte-core/src/rng.rs` - added `Rng`, a seeded xorshift64 PRNG with
+  `next_u64`, `next_u32`, `roll` (range), `flip`, `chance` (probability), `pick`,
+  `pick_index`, `shuffle` (Fisher-Yates), and `next_f64`. Deterministic sequences
+  from the same seed enable reproducible tests, replays, and agent behavior.
+  Tests at `:107` covering seed determinism, range bounds, shuffle permutation,
+  and clone semantics.
+- `crates/verryte-core/src/clock.rs` - added `GameClock` resource tracking
+  elapsed ticks, pause state, real-time duration (excluding paused time), and
+  total paused duration. Methods: `tick`, `tick_n`, `pause`, `resume`,
+  `toggle_pause`, `reset`, `set_elapsed_ticks`. Store as an ECS resource so
+  systems can read timing without plumbing it through arguments. Tests at
+  `:135` covering tick advancement, pause/resume, real-time exclusion of paused
+  duration, and reset.
+- `crates/verryte-terminal/src/lib.rs:855` - added `ColorPalette` with four
+  built-in themes (`dark_dungeon`, `light_classic`, `amber_terminal`,
+  `cyberpunk`) and convenience cell constructors (`floor_cell`, `wall_cell`,
+  `player_cell`, `hazard_cell`, `item_cell`, `goal_cell`). Games can swap
+  palettes for theming or player customization without touching rendering code.
+  Tests at `:1709`.
+- `crates/verryte-terminal/src/lib.rs:1004` - added `Layers` collection type
+  with `add` (replace-by-name), `get`, `get_mut`, `remove`, `composite`,
+  `len`, `is_empty`, and `iter`. Layers are kept sorted by draw order. This
+  provides a managed lifecycle on top of the raw `Vec<Layer>` pattern. Tests
+  at `:1737`.
+- `crates/verryte-terminal/src/lib.rs:1068` - added `Grid::resize(new_width,
+  new_height)` for dynamic grid sizing. Preserves overlapping content, fills
+  new cells with `Cell::EMPTY`. Useful for responsive TTY layouts that adapt
+  to terminal resize events. Tests at `:1797`.
+- `crates/verryte-input/src/lib.rs:727` - added `TextInput` buffer for terminal
+  text entry (prompts, naming, chat). Handles `Key` events for character
+  insertion, backspace, delete, left/right/home/end cursor movement, Enter
+  (submit), and Esc (clear). Supports max length, dirty tracking, multibyte
+  character awareness, and `take_text` for consuming the final string. Tests
+  at `:1467` covering character input, max length, cursor movement, multibyte
+  chars, dirty tracking, and event handling.
+- `README.md` - updated crate descriptions to document `Rng`, `GameClock`,
+  `ColorPalette`, `Layers`, `Grid::resize`, and `TextInput`.
+
+**Reasoning.** These are all small, focused additions that terminal games
+repeatedly need. A seeded RNG is fundamental for reproducible procedural
+generation, test fixtures, and agent replay scenarios. `GameClock` gives
+turn-based games a clean way to track turns and real-time games a way to
+measure session duration while respecting pause state. Color palettes solve
+the "hardcoded RGB values scattered across rendering code" problem that every
+terminal game eventually hits. `Layers` collection is the natural evolution of
+the raw `Vec<Layer>` pattern — games need to find layers by name, replace them,
+and composite without manual sorting. `Grid::resize` enables the TTY frontend
+to respond to terminal resize events without recreating the entire grid.
+`TextInput` fills the gap for games that need player text entry (naming
+characters, entering commands, chat in multiplayer terminal games) without
+each game reinventing cursor management and multibyte handling.
+
+**Assumptions.** I assumed `Rng` should use xorshift64 rather than a more
+sophisticated algorithm because terminal games don't need cryptographic
+randomness and xorshift64 is fast, simple, and has no dependencies. I assumed
+`GameClock` should use `std::time::Instant` for real-time tracking, which
+means it's not serializable for save games — the tick count can be set
+directly via `set_elapsed_ticks` for that use case. I assumed `TextInput`
+should handle `Key` events rather than raw characters, since the engine
+already has a neutral `Key` type and frontends translate terminal input into
+keys. I assumed `ColorPalette` should ship with four opinionated themes rather
+than being purely a blank struct, since most games will want a starting point.
+
+**Gotchas.** The initial `TextInput` backspace-at-start test had a wrong
+expectation: after typing 'a' and pressing backspace once, the text is empty,
+not 'a'. The multibyte test also had wrong expectations: backspace at cursor
+position 2 in "日本語" deletes "本" (position 1), leaving "日語" with cursor
+at 1, not "日本" with cursor at 2. Both were fixed by correcting the test
+expectations to match actual behavior. The `Grid::resize` test initially had
+a temporary-value-dropped-while-borrowed error from chaining `.to_plain_string().lines().collect()`; fixed by introducing a `let` binding.
+
+**Follow-ups.** `TextInput` could be extended with clipboard support,
+undo/redo, or selection ranges for richer editing. `GameClock` could gain
+fixed-timestep support (accumulating delta time and running multiple ticks
+when behind). `ColorPalette` could support runtime loading from config files
+(TOML/JSON) for player-customizable themes. The `Layers` system could gain
+z-index ranges or layer groups for more complex rendering hierarchies.
+
+## 2026-05-16 - engine primitives: animation sprites, sparkline, for_each3_mut, spatial hash, weighted RNG, ActionSource serialization
+
+**Goal.** Continue autonomous Verryte development with a second batch of
+reusable engine primitives focused on animation, data visualization, complete
+mutable iteration API, efficient spatial queries, weighted randomness, and
+action source serialization.
+
+**Changes.**
+- `crates/verryte-terminal/src/lib.rs:1083` - added `Frame`, `Sprite`, and
+  `SpriteSheet` types for frame-based terminal animation. `Sprite` tracks
+  playback state (current frame, elapsed ticks, paused) and loops by default.
+  `SpriteSheet` manages named sprites (idle, walk, attack, etc.) with
+  add/find/remove, `tick_all`, and `reset_all`. Tests at `:2117` covering
+  frame advancement, pause/resume, reset, set_frame clamping, sheet
+  replacement, and tick_all.
+- `crates/verryte-terminal/src/lib.rs:1265` - added `draw_sparkline()` for
+  rendering mini bar charts using Unicode block characters (▁▂▃▄▅▆▇█). Values
+  are normalized and mapped to 9 levels. Useful for inline stats in terminal
+  game UIs (health history, damage trends, turn counts). Tests at `:2232`.
+- `crates/verryte-core/src/world.rs:581` - added `World::for_each3_mut<A, B, C>()`
+  completing the mutable iteration API alongside `for_each_mut` and
+  `for_each2_mut`. Uses the same column-swap pattern for safe `Box<dyn Any>`
+  downcasting without `unsafe`. Returns `false` for duplicate types or missing
+  columns. Tests at `:1119` covering three-component mutation, duplicate type
+  rejection, missing column handling, and empty-match success.
+- `crates/verryte-map/src/lib.rs:1470` - added `SpatialHash<T>` for efficient
+  proximity queries on grid-based entities. Divides space into fixed-size
+  cells and stores entities by cell key. Methods: `insert`, `remove`,
+  `query` (Manhattan radius), `nearest` (custom comparator), `clear`, `len`.
+  Useful for AI targeting, collision detection, and interaction range queries
+  without scanning all entities. Tests at `:2373` covering insert/query,
+  remove, nearest finding, cell size grouping, empty query, clear, and length.
+- `crates/verryte-core/src/rng.rs:124` - added `Rng::weighted_pick(items, weights)`
+  for weighted random selection. Each element's probability is proportional to
+  its weight. Returns `None` for empty slices, mismatched lengths, or all-zero
+  weights. Tests at `:341` covering empty/mismatched/zero-weight edge cases,
+  weight distribution verification (>70% for 90/10 split), determinism, and
+  single-item case.
+- `crates/verryte-input/src/lib.rs:110` - added `Display` and `FromStr`
+  implementations for `ActionSource`. `Display` produces canonical names
+  ("Terminal", "Script", etc.). `FromStr` parses case-insensitively for
+  serialization, config files, and debug output. Tests at `:1670`.
+- `README.md` - updated all crate descriptions to document new capabilities.
+
+**Reasoning.** Animation is a gap that every terminal game eventually needs —
+character movement, attack effects, UI transitions. `Sprite`/`SpriteSheet`
+provide a lightweight frame-based system that integrates with the existing
+`Grid` abstraction. Sparklines are a compact data visualization primitive that
+terminal games can use for inline stat displays without needing a full chart
+library. `for_each3_mut` completes the mutable iteration API that was started
+with `for_each2_mut` — games with position/velocity/health or similar
+three-component patterns need this. `SpatialHash` is the standard solution for
+proximity queries in grid games; without it, games either scan all entities
+(O(n)) or build their own ad-hoc spatial structures. `weighted_pick` is
+fundamental for loot tables, encounter generation, and any game mechanic where
+outcomes should have different probabilities. `ActionSource` serialization
+enables config files, debug dumps, and agent protocols to reference sources
+by name.
+
+**Assumptions.** I assumed `Sprite` should use tick-based timing rather than
+real-time durations, since the engine's `GameClock` already tracks ticks and
+games control the tick cadence. I assumed `SpatialHash` should use Manhattan
+distance for query radius to match the rest of the engine's distance semantics.
+I assumed `weighted_pick` should use `u32` weights rather than `f64` to avoid
+floating-point precision issues and keep the API simple. I assumed
+`ActionSource::FromStr` should be case-insensitive to make config files and
+debug output more forgiving.
+
+**Gotchas.** The initial `SpatialHash` tests had multiple issues: `query`
+returns `&T` references, so tests needed `.copied()` to collect into `Vec<T>`.
+The `nearest` test used `&str` values which don't have `manhattan_distance`;
+switched to `Point` values. The cell_size test used a query radius that was
+too small to include nearby entities in the same cell — fixed by using a
+larger radius. The `spatial_hash_nearest_finds_closest` test had equidistant
+points (origin and near both at distance 1 from center), making the result
+non-deterministic — fixed by moving the center to (5,0) so near (2,0) is
+clearly closer than origin (0,0). Duplicate test definitions were introduced
+during editing and had to be cleaned up.
+
+**Follow-ups.** `Sprite` could gain easing/interpolation between frames for
+smoother animation. `SpatialHash` could support dynamic cell sizing or
+hierarchical grids for games with entities at vastly different scales.
+`draw_sparkline` could gain configurable block character sets or vertical
+orientation. `Rng::weighted_pick` could accept `f64` weights for finer
+probability control. The `Layers` system could gain z-index ranges for
+sub-layer ordering within a single layer.

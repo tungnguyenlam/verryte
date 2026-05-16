@@ -18,6 +18,16 @@ impl<E> Events<E> {
         }
     }
 
+    /// Create an event channel with pre-allocated capacity.
+    ///
+    /// Useful when the typical per-frame event volume is known, avoiding
+    /// repeated reallocations during hot loops.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            queue: VecDeque::with_capacity(capacity),
+        }
+    }
+
     pub fn send(&mut self, event: E) {
         self.queue.push_back(event);
     }
@@ -123,6 +133,13 @@ mod tests {
 
         let taken = events.take();
         assert_eq!(taken, vec![Bump(1), Bump(2), Bump(3)]);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn with_capacity_preallocates() {
+        let events = Events::<Bump>::with_capacity(16);
+        assert_eq!(events.len(), 0);
         assert!(events.is_empty());
     }
 }

@@ -176,6 +176,15 @@ impl Rect {
     }
 }
 
+/// Horizontal text alignment within a bounded width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Alignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
 /// A fixed-size rectangular cell buffer.
 #[derive(Clone, Debug)]
 pub struct Grid {
@@ -291,6 +300,45 @@ impl Grid {
             self.put(cx, y, Cell { glyph: ch, fg, bg });
             cx = cx.saturating_add(1);
         }
+    }
+
+    /// Write text aligned within a horizontal range `[x, x + width)`.
+    ///
+    /// `Alignment::Left` starts at `x`, `Alignment::Center` centers the text,
+    /// and `Alignment::Right` right-aligns to `x + width - 1`. Text is clipped
+    /// if it exceeds the width.
+    pub fn write_aligned(
+        &mut self,
+        x: u16,
+        y: u16,
+        width: u16,
+        text: &str,
+        alignment: Alignment,
+        fg: Color,
+        bg: Color,
+    ) {
+        if width == 0 || y >= self.height {
+            return;
+        }
+        let text_width = text.chars().count() as u16;
+        let start_x = match alignment {
+            Alignment::Left => x,
+            Alignment::Center => {
+                if text_width >= width {
+                    x
+                } else {
+                    x + (width - text_width) / 2
+                }
+            }
+            Alignment::Right => {
+                if text_width >= width {
+                    x
+                } else {
+                    x + width - text_width
+                }
+            }
+        };
+        self.write_str(start_x, y, text, fg, bg);
     }
 
     /// Fill a clipped rectangle with one cell.
@@ -776,6 +824,58 @@ impl Grid {
             cells,
         }
     }
+
+    /// Fill a rectangle with a horizontal color gradient from `start` to `end`.
+    ///
+    /// Each cell's foreground color is interpolated between `start` and `end`
+    /// based on its horizontal position within the rect. The glyph is set to
+    /// `glyph`. Clips to grid bounds.
+    pub fn draw_gradient(&mut self, rect: Rect, start: Color, end: Color, glyph: char) {
+        if rect.is_empty() {
+            return;
+        }
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        let width = x_end.saturating_sub(rect.x);
+        if width == 0 {
+            return;
+        }
+
+        for y in rect.y..y_end {
+            for x in rect.x..x_end {
+                let t = (x - rect.x) as f32 / (width - 1) as f32;
+                let r = (start.0 as f32 + (end.0 as f32 - start.0 as f32) * t) as u8;
+                let g = (start.1 as f32 + (end.1 as f32 - start.1 as f32) * t) as u8;
+                let b = (start.2 as f32 + (end.2 as f32 - start.2 as f32) * t) as u8;
+                let cell = Cell::new(glyph).with_fg(Color(r, g, b));
+                self.put(x, y, cell);
+            }
+        }
+    }
+
+    /// Fill a rectangle with a vertical color gradient from `top` to `bottom`.
+    pub fn draw_gradient_v(&mut self, rect: Rect, top: Color, bottom: Color, glyph: char) {
+        if rect.is_empty() {
+            return;
+        }
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        let height = y_end.saturating_sub(rect.y);
+        if height == 0 {
+            return;
+        }
+
+        for y in rect.y..y_end {
+            let t = (y - rect.y) as f32 / (height - 1) as f32;
+            let r = (top.0 as f32 + (bottom.0 as f32 - top.0 as f32) * t) as u8;
+            let g = (top.1 as f32 + (bottom.1 as f32 - top.1 as f32) * t) as u8;
+            let b = (top.2 as f32 + (bottom.2 as f32 - top.2 as f32) * t) as u8;
+            for x in rect.x..x_end {
+                let cell = Cell::new(glyph).with_fg(Color(r, g, b));
+                self.put(x, y, cell);
+            }
+        }
+    }
 }
 
 /// Wrap text into lines that fit within `width` terminal cells.
@@ -841,6 +941,533 @@ pub fn write_wrapped_text(
             break;
         }
         grid.write_str(x, ly, line, fg, bg);
+    }
+}
+
+/// A named collection of colors for consistent theming.
+///
+/// Games can define palettes for different visual themes (dark, light, dungeon,
+/// space, etc.) and reference colors by semantic name rather than raw RGB values.
+/// This makes it easy to swap themes or let players customize the look.
+///
+/// # Example
+///
+/// ```ignore
+/// let palette = ColorPalette::dark_dungeon();
+/// let player_cell = Cell::new('@').with_fg(palette.player);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColorPalette {
+    pub name: &'static str,
+    pub background: Color,
+    pub foreground: Color,
+    pub player: Color,
+    pub wall: Color,
+    pub floor: Color,
+    pub hazard: Color,
+    pub item: Color,
+    pub goal: Color,
+    pub ui_border: Color,
+    pub ui_title: Color,
+    pub ui_text: Color,
+    pub ui_highlight: Color,
+    pub ui_dim: Color,
+}
+
+impl ColorPalette {
+    /// A dark dungeon theme with muted earth tones.
+    pub fn dark_dungeon() -> Self {
+        Self {
+            name: "dark_dungeon",
+            background: Color(15, 15, 20),
+            foreground: Color(200, 200, 200),
+            player: Color(100, 220, 100),
+            wall: Color(80, 80, 90),
+            floor: Color(50, 50, 55),
+            hazard: Color(220, 80, 80),
+            item: Color(220, 200, 80),
+            goal: Color(80, 180, 220),
+            ui_border: Color(100, 100, 110),
+            ui_title: Color(220, 200, 80),
+            ui_text: Color(200, 200, 200),
+            ui_highlight: Color(100, 220, 100),
+            ui_dim: Color(100, 100, 100),
+        }
+    }
+
+    /// A light theme suitable for bright terminals.
+    pub fn light_classic() -> Self {
+        Self {
+            name: "light_classic",
+            background: Color(240, 240, 240),
+            foreground: Color(30, 30, 30),
+            player: Color(0, 120, 0),
+            wall: Color(120, 120, 120),
+            floor: Color(220, 220, 220),
+            hazard: Color(180, 30, 30),
+            item: Color(180, 140, 0),
+            goal: Color(0, 100, 180),
+            ui_border: Color(150, 150, 150),
+            ui_title: Color(180, 140, 0),
+            ui_text: Color(30, 30, 30),
+            ui_highlight: Color(0, 120, 0),
+            ui_dim: Color(150, 150, 150),
+        }
+    }
+
+    /// A high-contrast amber-on-black theme reminiscent of vintage terminals.
+    pub fn amber_terminal() -> Self {
+        Self {
+            name: "amber_terminal",
+            background: Color(10, 8, 5),
+            foreground: Color(255, 180, 50),
+            player: Color(255, 220, 100),
+            wall: Color(120, 90, 30),
+            floor: Color(40, 30, 15),
+            hazard: Color(255, 80, 50),
+            item: Color(255, 220, 100),
+            goal: Color(200, 255, 150),
+            ui_border: Color(180, 140, 40),
+            ui_title: Color(255, 220, 100),
+            ui_text: Color(255, 180, 50),
+            ui_highlight: Color(255, 255, 150),
+            ui_dim: Color(100, 80, 30),
+        }
+    }
+
+    /// A cyberpunk neon theme with vivid colors on dark backgrounds.
+    pub fn cyberpunk() -> Self {
+        Self {
+            name: "cyberpunk",
+            background: Color(10, 5, 20),
+            foreground: Color(200, 200, 255),
+            player: Color(0, 255, 200),
+            wall: Color(60, 30, 80),
+            floor: Color(20, 15, 35),
+            hazard: Color(255, 50, 100),
+            item: Color(255, 255, 0),
+            goal: Color(100, 100, 255),
+            ui_border: Color(80, 50, 120),
+            ui_title: Color(0, 255, 200),
+            ui_text: Color(200, 200, 255),
+            ui_highlight: Color(0, 255, 200),
+            ui_dim: Color(80, 60, 100),
+        }
+    }
+
+    /// Create a cell with the floor color as background.
+    pub fn floor_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph)
+            .with_fg(self.foreground)
+            .with_bg(self.floor)
+    }
+
+    /// Create a cell with the wall color.
+    pub fn wall_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph).with_fg(self.wall).with_bg(self.background)
+    }
+
+    /// Create a cell for the player character.
+    pub fn player_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph).with_fg(self.player).with_bg(self.floor)
+    }
+
+    /// Create a cell for a hazard tile.
+    pub fn hazard_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph).with_fg(self.hazard).with_bg(self.floor)
+    }
+
+    /// Create a cell for an item tile.
+    pub fn item_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph).with_fg(self.item).with_bg(self.floor)
+    }
+
+    /// Create a cell for the goal tile.
+    pub fn goal_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph).with_fg(self.goal).with_bg(self.floor)
+    }
+}
+
+impl Default for ColorPalette {
+    fn default() -> Self {
+        Self::dark_dungeon()
+    }
+}
+
+/// A managed collection of named rendering layers.
+///
+/// Provides convenient add/find/remove operations on top of the raw `Vec<Layer>`
+/// pattern. Layers are kept sorted by draw order for efficient compositing.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut layers = Layers::new();
+/// layers.add(Layer::new("map", 0, Grid::new(80, 24)));
+/// layers.add(Layer::new("entities", 10, Grid::new(80, 24)));
+/// layers.add(Layer::new("ui", 20, Grid::new(80, 24)));
+///
+/// let map = layers.get_mut("map").unwrap();
+/// // draw into map...
+///
+/// let mut frame = Grid::new(80, 24);
+/// layers.composite(&mut frame);
+/// ```
+#[derive(Clone, Debug)]
+pub struct Layers {
+    layers: Vec<Layer>,
+}
+
+impl Layers {
+    pub fn new() -> Self {
+        Self { layers: Vec::new() }
+    }
+
+    /// Add a layer. If a layer with the same name already exists, it is replaced.
+    pub fn add(&mut self, layer: Layer) {
+        if let Some(pos) = self.layers.iter().position(|l| l.name == layer.name) {
+            self.layers[pos] = layer;
+        } else {
+            self.layers.push(layer);
+        }
+        self.layers.sort_by_key(|l| l.order);
+    }
+
+    /// Get a reference to a layer by name.
+    pub fn get(&self, name: &str) -> Option<&Layer> {
+        self.layers.iter().find(|l| l.name == name)
+    }
+
+    /// Get a mutable reference to a layer by name.
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Layer> {
+        self.layers.iter_mut().find(|l| l.name == name)
+    }
+
+    /// Remove a layer by name. Returns `true` if found and removed.
+    pub fn remove(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.layers.iter().position(|l| l.name == name) {
+            self.layers.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Composite all visible layers onto a target grid.
+    pub fn composite(&self, target: &mut Grid) {
+        Layer::composite(&self.layers, target);
+    }
+
+    /// Return the number of layers.
+    pub fn len(&self) -> usize {
+        self.layers.len()
+    }
+
+    /// Check if there are no layers.
+    pub fn is_empty(&self) -> bool {
+        self.layers.is_empty()
+    }
+
+    /// Iterate over all layers in draw order.
+    pub fn iter(&self) -> std::slice::Iter<'_, Layer> {
+        self.layers.iter()
+    }
+}
+
+impl Default for Layers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A single animation frame: a [`Grid`] with an associated display duration.
+///
+/// Frames are used in [`Sprite`] and [`SpriteSheet`] to build animated
+/// terminal graphics. The duration is in arbitrary ticks — the game loop
+/// decides how many ticks each frame should display.
+#[derive(Clone, Debug)]
+pub struct Frame {
+    pub grid: Grid,
+    pub duration: u32,
+}
+
+impl Frame {
+    pub fn new(grid: Grid, duration: u32) -> Self {
+        Self { grid, duration }
+    }
+}
+
+/// A named sequence of [`Frame`]s for terminal animation.
+///
+/// Sprites track their own playback state (current frame, elapsed ticks) so
+/// games can advance them each tick and render the current frame. Sprites
+/// loop by default and can be paused or reset.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut sprite = Sprite::new("walk", vec![
+///     Frame::new(grid_frame_1, 2),
+///     Frame::new(grid_frame_2, 2),
+///     Frame::new(grid_frame_3, 2),
+/// ]);
+///
+/// // Each game tick:
+/// sprite.tick();
+/// let current_grid = sprite.current_frame();
+/// ```
+#[derive(Clone, Debug)]
+pub struct Sprite {
+    pub name: String,
+    frames: Vec<Frame>,
+    current: usize,
+    elapsed: u32,
+    paused: bool,
+}
+
+impl Sprite {
+    pub fn new<S: Into<String>>(name: S, frames: Vec<Frame>) -> Self {
+        Self {
+            name: name.into(),
+            frames,
+            current: 0,
+            elapsed: 0,
+            paused: false,
+        }
+    }
+
+    /// Advance the sprite by one tick. Returns `true` if the frame changed.
+    pub fn tick(&mut self) -> bool {
+        if self.paused || self.frames.is_empty() {
+            return false;
+        }
+        self.elapsed += 1;
+        if self.elapsed >= self.frames[self.current].duration {
+            self.elapsed = 0;
+            self.current = (self.current + 1) % self.frames.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the current frame's grid.
+    pub fn current_frame(&self) -> &Grid {
+        &self.frames[self.current].grid
+    }
+
+    /// Get the current frame index.
+    pub fn current_index(&self) -> usize {
+        self.current
+    }
+
+    /// Get the total number of frames.
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Pause or resume the sprite.
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+    }
+
+    /// Check if the sprite is paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Reset to the first frame.
+    pub fn reset(&mut self) {
+        self.current = 0;
+        self.elapsed = 0;
+    }
+
+    /// Jump to a specific frame. Clamped to valid range.
+    pub fn set_frame(&mut self, index: usize) {
+        if !self.frames.is_empty() {
+            self.current = index.min(self.frames.len() - 1);
+            self.elapsed = 0;
+        }
+    }
+}
+
+/// A collection of named [`Sprite`]s indexed by name.
+///
+/// Useful for storing all animation states for an entity (idle, walk, attack,
+/// death) in one place. Games can look up sprites by name and swap the active
+/// animation.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut sheet = SpriteSheet::new();
+/// sheet.add("idle", Sprite::new("idle", idle_frames));
+/// sheet.add("walk", Sprite::new("walk", walk_frames));
+///
+/// let sprite = sheet.get_mut("walk").unwrap();
+/// sprite.tick();
+/// grid.blit(sprite.current_frame(), 0, 0);
+/// ```
+#[derive(Clone, Debug)]
+pub struct SpriteSheet {
+    sprites: Vec<Sprite>,
+}
+
+impl SpriteSheet {
+    pub fn new() -> Self {
+        Self {
+            sprites: Vec::new(),
+        }
+    }
+
+    /// Add a sprite. If a sprite with the same name exists, it is replaced.
+    pub fn add(&mut self, sprite: Sprite) {
+        if let Some(pos) = self.sprites.iter().position(|s| s.name == sprite.name) {
+            self.sprites[pos] = sprite;
+        } else {
+            self.sprites.push(sprite);
+        }
+    }
+
+    /// Get a sprite by name.
+    pub fn get(&self, name: &str) -> Option<&Sprite> {
+        self.sprites.iter().find(|s| s.name == name)
+    }
+
+    /// Get a mutable sprite by name.
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Sprite> {
+        self.sprites.iter_mut().find(|s| s.name == name)
+    }
+
+    /// Remove a sprite by name.
+    pub fn remove(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.sprites.iter().position(|s| s.name == name) {
+            self.sprites.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Advance all sprites by one tick.
+    pub fn tick_all(&mut self) {
+        for sprite in &mut self.sprites {
+            sprite.tick();
+        }
+    }
+
+    /// Reset all sprites to their first frame.
+    pub fn reset_all(&mut self) {
+        for sprite in &mut self.sprites {
+            sprite.reset();
+        }
+    }
+
+    /// Number of sprites in the sheet.
+    pub fn len(&self) -> usize {
+        self.sprites.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sprites.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Sprite> {
+        self.sprites.iter()
+    }
+}
+
+impl Default for SpriteSheet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Draw a sparkline (mini bar chart) at `(x, y)` using Unicode block characters.
+///
+/// Renders `values` as a compact horizontal sparkline within `width` cells.
+/// Values are normalized to the range and mapped to Unicode block characters
+/// from empty to full: `▁▂▃▄▅▆▇█`.
+///
+/// Returns the number of cells written. Useful for inline stats in terminal
+/// game UIs (health history, damage trends, turn counts).
+pub fn draw_sparkline(
+    grid: &mut Grid,
+    x: u16,
+    y: u16,
+    width: u16,
+    values: &[f32],
+    fg: Color,
+    bg: Color,
+) -> u16 {
+    if y >= grid.height() || width == 0 || values.is_empty() {
+        return 0;
+    }
+
+    const BLOCKS: [char; 9] = [
+        ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
+        '\u{2588}',
+    ];
+
+    let min = values.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max = values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let range = max - min;
+
+    let x_end = (x + width).min(grid.width());
+    let mut count = 0u16;
+    let mut cx = x;
+
+    while cx < x_end {
+        let idx = if values.len() == 1 {
+            0
+        } else {
+            ((cx - x) as f64 * (values.len() - 1) as f64 / (width - 1).max(1) as f64).round()
+                as usize
+        };
+        let idx = idx.min(values.len() - 1);
+        let val = values[idx];
+        let level = if range > 0.0 {
+            ((val - min) / range * 8.0).round() as usize
+        } else {
+            8
+        };
+        let level = level.min(8);
+        let cell = Cell::new(BLOCKS[level]).with_fg(fg).with_bg(bg);
+        grid.put(cx, y, cell);
+        count += 1;
+        cx += 1;
+    }
+    count
+}
+
+impl Grid {
+    /// Resize the grid to new dimensions.
+    ///
+    /// Existing cells are preserved where they fit within the new bounds.
+    /// New cells are filled with `Cell::EMPTY`. If the grid shrinks, cells
+    /// outside the new bounds are lost.
+    ///
+    /// This is useful for responsive layouts that need to adapt to terminal
+    /// resize events.
+    pub fn resize(&mut self, new_width: u16, new_height: u16) {
+        if new_width == self.width && new_height == self.height {
+            return;
+        }
+        let mut new_cells = vec![Cell::EMPTY; (new_width as usize) * (new_height as usize)];
+
+        let copy_width = new_width.min(self.width) as usize;
+        let copy_height = new_height.min(self.height) as usize;
+
+        for y in 0..copy_height {
+            let src_row = y * self.width as usize;
+            let dst_row = y * new_width as usize;
+            new_cells[dst_row..dst_row + copy_width]
+                .copy_from_slice(&self.cells[src_row..src_row + copy_width]);
+        }
+
+        self.width = new_width;
+        self.height = new_height;
+        self.cells = new_cells;
     }
 }
 
@@ -1430,11 +2057,425 @@ mod tests {
     #[test]
     fn map_creates_transformed_copy() {
         let grid = Grid::new(2, 1);
-        let transformed = grid.map(|cell| Cell::new('*').with_fg(Color::GREEN));
+        let transformed = grid.map(|_cell| Cell::new('*').with_fg(Color::GREEN));
 
         assert_eq!(transformed.to_plain_string(), "**");
         assert_eq!(transformed.get(0, 0).unwrap().fg, Color::GREEN);
         // Original unchanged.
         assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn color_palette_dark_dungeon_has_expected_colors() {
+        let p = ColorPalette::dark_dungeon();
+        assert_eq!(p.name, "dark_dungeon");
+        assert_eq!(p.background, Color(15, 15, 20));
+        assert_eq!(p.player, Color(100, 220, 100));
+        assert_eq!(p.hazard, Color(220, 80, 80));
+    }
+
+    #[test]
+    fn color_palette_creates_cells_with_correct_colors() {
+        let p = ColorPalette::dark_dungeon();
+        let player = p.player_cell('@');
+        assert_eq!(player.glyph, '@');
+        assert_eq!(player.fg, p.player);
+        assert_eq!(player.bg, p.floor);
+
+        let wall = p.wall_cell('#');
+        assert_eq!(wall.fg, p.wall);
+        assert_eq!(wall.bg, p.background);
+    }
+
+    #[test]
+    fn color_palette_default_is_dark_dungeon() {
+        let p = ColorPalette::default();
+        assert_eq!(p.name, "dark_dungeon");
+    }
+
+    #[test]
+    fn layers_add_and_get_by_name() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("map", 0, Grid::new(10, 5)));
+        layers.add(Layer::new("ui", 10, Grid::new(10, 5)));
+
+        assert_eq!(layers.len(), 2);
+        assert!(layers.get("map").is_some());
+        assert!(layers.get("ui").is_some());
+        assert!(layers.get("missing").is_none());
+    }
+
+    #[test]
+    fn layers_add_replaces_existing() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("map", 0, Grid::new(10, 5)));
+        layers.add(Layer::new("map", 5, Grid::new(20, 10)));
+
+        assert_eq!(layers.len(), 1);
+        let map = layers.get("map").unwrap();
+        assert_eq!(map.order, 5);
+        assert_eq!(map.grid.width(), 20);
+    }
+
+    #[test]
+    fn layers_remove_by_name() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("map", 0, Grid::new(10, 5)));
+        layers.add(Layer::new("ui", 10, Grid::new(10, 5)));
+
+        assert!(layers.remove("map"));
+        assert_eq!(layers.len(), 1);
+        assert!(layers.get("map").is_none());
+        assert!(!layers.remove("missing"));
+    }
+
+    #[test]
+    fn layers_composite_onto_target() {
+        let mut layers = Layers::new();
+        let mut bg = Grid::new(4, 2);
+        bg.write_str(0, 0, "....", Color::BLACK, Color::BLACK);
+        bg.write_str(0, 1, "....", Color::BLACK, Color::BLACK);
+        layers.add(Layer::new("bg", 0, bg));
+
+        let mut result = Grid::new(4, 2);
+        layers.composite(&mut result);
+        assert_eq!(result.to_plain_string(), "....\n....");
+    }
+
+    #[test]
+    fn layers_iter_returns_in_draw_order() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("ui", 20, Grid::new(1, 1)));
+        layers.add(Layer::new("map", 0, Grid::new(1, 1)));
+        layers.add(Layer::new("entities", 10, Grid::new(1, 1)));
+
+        let names: Vec<&str> = layers.iter().map(|l| l.name).collect();
+        assert_eq!(names, vec!["map", "entities", "ui"]);
+    }
+
+    #[test]
+    fn grid_resize_preserves_overlapping_content() {
+        let mut grid = Grid::new(5, 3);
+        grid.write_str(0, 0, "abcde", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "fghij", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 2, "klmno", Color::WHITE, Color::BLACK);
+
+        // Shrink width.
+        grid.resize(3, 3);
+        assert_eq!(grid.width(), 3);
+        assert_eq!(grid.height(), 3);
+        assert_eq!(grid.to_plain_string(), "abc\nfgh\nklm");
+
+        // Grow width.
+        grid.resize(6, 3);
+        assert_eq!(grid.width(), 6);
+        assert_eq!(grid.to_plain_string().lines().next(), Some("abc   "));
+    }
+
+    #[test]
+    fn grid_resize_shrinks_height() {
+        let mut grid = Grid::new(3, 4);
+        grid.write_str(0, 0, "aaa", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "bbb", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 2, "ccc", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 3, "ddd", Color::WHITE, Color::BLACK);
+
+        grid.resize(3, 2);
+        assert_eq!(grid.height(), 2);
+        assert_eq!(grid.to_plain_string(), "aaa\nbbb");
+    }
+
+    #[test]
+    fn grid_resize_grows_height_with_empty() {
+        let mut grid = Grid::new(3, 2);
+        grid.write_str(0, 0, "aaa", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "bbb", Color::WHITE, Color::BLACK);
+
+        grid.resize(3, 4);
+        assert_eq!(grid.height(), 4);
+        let plain = grid.to_plain_string();
+        let lines: Vec<&str> = plain.lines().collect();
+        assert_eq!(lines[0], "aaa");
+        assert_eq!(lines[1], "bbb");
+        assert_eq!(lines[2], "   ");
+        assert_eq!(lines[3], "   ");
+    }
+
+    #[test]
+    fn grid_resize_noop_when_same_size() {
+        let mut grid = Grid::new(5, 3);
+        grid.write_str(0, 0, "hello", Color::WHITE, Color::BLACK);
+        let original = grid.to_plain_string();
+
+        grid.resize(5, 3);
+        assert_eq!(grid.to_plain_string(), original);
+    }
+
+    #[test]
+    fn sprite_advances_frames_on_tick() {
+        let f1 = Frame::new(Grid::new(2, 1), 2);
+        let f2 = Frame::new(Grid::new(2, 1), 2);
+        let mut sprite = Sprite::new("test", vec![f1, f2]);
+
+        assert_eq!(sprite.current_index(), 0);
+        // Frame 0: tick 1 (no change yet)
+        assert!(!sprite.tick());
+        assert_eq!(sprite.current_index(), 0);
+        // Frame 0: tick 2 (advance)
+        assert!(sprite.tick());
+        assert_eq!(sprite.current_index(), 1);
+        // Frame 1: tick 1 (no change)
+        assert!(!sprite.tick());
+        assert_eq!(sprite.current_index(), 1);
+        // Frame 1: tick 2 (loop back to 0)
+        assert!(sprite.tick());
+        assert_eq!(sprite.current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_pause_prevents_advancement() {
+        let f1 = Frame::new(Grid::new(1, 1), 1);
+        let f2 = Frame::new(Grid::new(1, 1), 1);
+        let mut sprite = Sprite::new("test", vec![f1, f2]);
+
+        sprite.tick();
+        assert_eq!(sprite.current_index(), 1);
+        sprite.toggle_pause();
+        assert!(sprite.is_paused());
+        for _ in 0..10 {
+            assert!(!sprite.tick());
+        }
+        assert_eq!(sprite.current_index(), 1);
+        sprite.toggle_pause();
+        assert!(sprite.tick());
+        assert_eq!(sprite.current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_reset_returns_to_first_frame() {
+        let f1 = Frame::new(Grid::new(1, 1), 1);
+        let f2 = Frame::new(Grid::new(1, 1), 1);
+        let mut sprite = Sprite::new("test", vec![f1, f2]);
+
+        sprite.tick();
+        assert_eq!(sprite.current_index(), 1);
+        sprite.reset();
+        assert_eq!(sprite.current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_set_frame_clamps() {
+        let mut sprite = Sprite::new(
+            "test",
+            vec![
+                Frame::new(Grid::new(1, 1), 1),
+                Frame::new(Grid::new(1, 1), 1),
+            ],
+        );
+        sprite.set_frame(100);
+        assert_eq!(sprite.current_index(), 1);
+        sprite.set_frame(0);
+        assert_eq!(sprite.current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_sheet_add_and_get() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("idle", vec![Frame::new(Grid::new(1, 1), 1)]));
+        sheet.add(Sprite::new("walk", vec![Frame::new(Grid::new(1, 1), 1)]));
+
+        assert_eq!(sheet.len(), 2);
+        assert!(sheet.get("idle").is_some());
+        assert!(sheet.get_mut("walk").is_some());
+        assert!(sheet.get("missing").is_none());
+    }
+
+    #[test]
+    fn sprite_sheet_add_replaces_existing() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("walk", vec![Frame::new(Grid::new(1, 1), 1)]));
+        sheet.add(Sprite::new(
+            "walk",
+            vec![
+                Frame::new(Grid::new(1, 1), 1),
+                Frame::new(Grid::new(1, 1), 1),
+            ],
+        ));
+        assert_eq!(sheet.len(), 1);
+        assert_eq!(sheet.get("walk").unwrap().frame_count(), 2);
+    }
+
+    #[test]
+    fn sprite_sheet_tick_all_advances_every_sprite() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new(
+            "a",
+            vec![
+                Frame::new(Grid::new(1, 1), 1),
+                Frame::new(Grid::new(1, 1), 1),
+            ],
+        ));
+        sheet.add(Sprite::new(
+            "b",
+            vec![
+                Frame::new(Grid::new(1, 1), 1),
+                Frame::new(Grid::new(1, 1), 1),
+            ],
+        ));
+
+        sheet.tick_all();
+        assert_eq!(sheet.get("a").unwrap().current_index(), 1);
+        assert_eq!(sheet.get("b").unwrap().current_index(), 1);
+    }
+
+    #[test]
+    fn sparkline_renders_blocks_for_values() {
+        let mut grid = Grid::new(8, 1);
+        let values = vec![0.0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25];
+        let count = draw_sparkline(&mut grid, 0, 0, 8, &values, Color::WHITE, Color::BLACK);
+        assert_eq!(count, 8);
+        let s = grid.to_plain_string();
+        // Should contain block characters.
+        assert!(s.contains('\u{2581}') || s.contains('\u{2588}'));
+    }
+
+    #[test]
+    fn sparkline_handles_single_value() {
+        let mut grid = Grid::new(5, 1);
+        let count = draw_sparkline(&mut grid, 0, 0, 5, &[42.0], Color::WHITE, Color::BLACK);
+        assert_eq!(count, 5);
+    }
+
+    #[test]
+    fn sparkline_returns_zero_for_empty_values() {
+        let mut grid = Grid::new(5, 1);
+        let count = draw_sparkline(&mut grid, 0, 0, 5, &[], Color::WHITE, Color::BLACK);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn sparkline_clips_to_grid_width() {
+        let mut grid = Grid::new(3, 1);
+        let values = vec![0.0, 0.5, 1.0, 0.5, 0.0];
+        let count = draw_sparkline(&mut grid, 0, 0, 5, &values, Color::WHITE, Color::BLACK);
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn write_aligned_left_starts_at_x() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_aligned(2, 0, 6, "hi", Alignment::Left, Color::WHITE, Color::BLACK);
+        assert_eq!(grid.to_plain_string(), "  hi      ");
+    }
+
+    #[test]
+    fn write_aligned_center() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_aligned(
+            0,
+            0,
+            10,
+            "hi",
+            Alignment::Center,
+            Color::WHITE,
+            Color::BLACK,
+        );
+        assert_eq!(grid.to_plain_string(), "    hi    ");
+    }
+
+    #[test]
+    fn write_aligned_right() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_aligned(0, 0, 10, "hi", Alignment::Right, Color::WHITE, Color::BLACK);
+        assert_eq!(grid.to_plain_string(), "        hi");
+    }
+
+    #[test]
+    fn write_aligned_clips_when_text_too_wide() {
+        let mut grid = Grid::new(10, 1);
+        // Text "hello" (5 chars) is wider than width 4, so it starts at x=0.
+        // write_str writes all 5 chars since grid is 10 wide.
+        grid.write_aligned(
+            0,
+            0,
+            4,
+            "hello",
+            Alignment::Center,
+            Color::WHITE,
+            Color::BLACK,
+        );
+        assert_eq!(grid.to_plain_string(), "hello     ");
+    }
+
+    #[test]
+    fn alignment_default_is_left() {
+        assert_eq!(Alignment::default(), Alignment::Left);
+    }
+
+    #[test]
+    fn sprite_sheet_remove_by_name() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("a", vec![Frame::new(Grid::new(1, 1), 1)]));
+        sheet.add(Sprite::new("b", vec![Frame::new(Grid::new(1, 1), 1)]));
+        assert!(sheet.remove("a"));
+        assert_eq!(sheet.len(), 1);
+        assert!(sheet.get("a").is_none());
+        assert!(!sheet.remove("missing"));
+    }
+
+    #[test]
+    fn sprite_sheet_reset_all() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new(
+            "a",
+            vec![
+                Frame::new(Grid::new(1, 1), 1),
+                Frame::new(Grid::new(1, 1), 1),
+            ],
+        ));
+        sheet.tick_all();
+        assert_eq!(sheet.get("a").unwrap().current_index(), 1);
+        sheet.reset_all();
+        assert_eq!(sheet.get("a").unwrap().current_index(), 0);
+    }
+
+    #[test]
+    fn draw_gradient_fills_rect_with_interpolated_colors() {
+        let mut grid = Grid::new(5, 1);
+        grid.draw_gradient(
+            Rect::new(0, 0, 5, 1),
+            Color(0, 0, 0),
+            Color(100, 100, 100),
+            '#',
+        );
+        // First cell should be start color.
+        assert_eq!(grid.get(0, 0).unwrap().fg, Color(0, 0, 0));
+        // Last cell should be end color.
+        assert_eq!(grid.get(4, 0).unwrap().fg, Color(100, 100, 100));
+        // Middle cell should be interpolated.
+        let mid = grid.get(2, 0).unwrap().fg;
+        assert!(mid.0 > 0 && mid.0 < 100);
+    }
+
+    #[test]
+    fn draw_gradient_v_fills_vertically() {
+        let mut grid = Grid::new(1, 5);
+        grid.draw_gradient_v(
+            Rect::new(0, 0, 1, 5),
+            Color(0, 0, 0),
+            Color(80, 80, 80),
+            '#',
+        );
+        assert_eq!(grid.get(0, 0).unwrap().fg, Color(0, 0, 0));
+        assert_eq!(grid.get(0, 4).unwrap().fg, Color(80, 80, 80));
+    }
+
+    #[test]
+    fn draw_gradient_clips_to_grid() {
+        let mut grid = Grid::new(3, 3);
+        grid.draw_gradient(Rect::new(0, 0, 10, 10), Color::BLACK, Color::WHITE, '#');
+        // Should not panic and should fill within bounds.
+        assert_eq!(grid.get(0, 0).unwrap().glyph, '#');
+        assert_eq!(grid.get(2, 2).unwrap().glyph, '#');
     }
 }
