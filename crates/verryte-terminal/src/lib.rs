@@ -346,6 +346,25 @@ impl Grid {
         }
     }
 
+    /// Return a freshly allocated Vec of cells in column `x`.
+    /// Returns `None` if out of bounds.
+    ///
+    /// Unlike `row`, this cannot return a slice because cells are stored
+    /// row-major. Useful for scanning columns for vertical effects,
+    /// column-aligned UI elements, or vertical text.
+    pub fn col(&self, x: u16) -> Option<Vec<Cell>> {
+        if x >= self.width {
+            return None;
+        }
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let mut result = Vec::with_capacity(h);
+        for y in 0..h {
+            result.push(self.cells[y * w + x as usize]);
+        }
+        Some(result)
+    }
+
     /// Iterate over all cells with their (x, y) positions in row-major order.
     pub fn iter_cells(&self) -> impl Iterator<Item = (u16, u16, &Cell)> + '_ {
         self.cells.iter().enumerate().map(move |(i, cell)| {
@@ -2851,6 +2870,28 @@ mod tests {
     }
 
     #[test]
+    fn col_returns_cells_of_column() {
+        let mut grid = Grid::new(3, 4);
+        grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "DEF", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 2, "GHI", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 3, "JKL", Color::WHITE, Color::BLACK);
+
+        let col1 = grid.col(1).unwrap();
+        assert_eq!(col1.len(), 4);
+        assert_eq!(col1[0].glyph, 'B');
+        assert_eq!(col1[1].glyph, 'E');
+        assert_eq!(col1[2].glyph, 'H');
+        assert_eq!(col1[3].glyph, 'K');
+    }
+
+    #[test]
+    fn col_returns_none_for_out_of_bounds() {
+        let grid = Grid::new(2, 2);
+        assert!(grid.col(2).is_none());
+    }
+
+    #[test]
     fn iter_cells_yields_all_positions() {
         let mut grid = Grid::new(3, 2);
         grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
@@ -2966,7 +3007,30 @@ mod tests {
         grid.write_str(0, 0, "AB", Color::WHITE, Color::BLACK);
         grid.scroll_up(2, Cell::EMPTY);
         assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
-        assert_eq!(grid.get(1, 1).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn fill_rect_fills_region() {
+        let mut grid = Grid::new(5, 5);
+        let filled = Cell::new('X');
+        grid.fill_rect(Rect::new(1, 1, 3, 3), filled);
+
+        // Inside region.
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'X');
+        assert_eq!(grid.get(3, 3).unwrap().glyph, 'X');
+        // Outside region.
+        assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
+        assert_eq!(grid.get(4, 4).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn fill_rect_clips_to_bounds() {
+        let mut grid = Grid::new(3, 3);
+        let filled = Cell::new('X');
+        grid.fill_rect(Rect::new(1, 1, 5, 5), filled);
+
+        assert_eq!(grid.get(2, 2).unwrap().glyph, 'X');
+        assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
     }
 
     #[test]

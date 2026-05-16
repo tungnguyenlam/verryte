@@ -28,6 +28,15 @@ impl Point {
         }
     }
 
+    /// Offset with saturation on overflow. Useful for clamping grid operations
+    /// without explicit bounds checks at each step.
+    pub fn saturating_offset(self, dx: i16, dy: i16) -> Self {
+        Self {
+            x: self.x.saturating_add(dx),
+            y: self.y.saturating_add(dy),
+        }
+    }
+
     pub fn step(self, direction: Direction) -> Self {
         let (dx, dy) = direction.delta();
         self.offset(dx, dy)
@@ -446,6 +455,17 @@ impl<T> TileGrid<T> {
 
     pub fn in_bounds(&self, point: Point) -> bool {
         self.size.contains(point)
+    }
+
+    /// Returns `true` if the point is in bounds and its tile matches the predicate.
+    ///
+    /// Combines bounds checking and tile inspection in one call. Useful for
+    /// guard clauses in movement or interaction logic.
+    pub fn contains_point<F>(&self, point: Point, matches: F) -> bool
+    where
+        F: Fn(&T) -> bool,
+    {
+        self.get(point).is_some_and(matches)
     }
 
     pub fn index(&self, point: Point) -> Option<usize> {
@@ -2111,6 +2131,20 @@ mod tests {
     }
 
     #[test]
+    fn point_saturating_offset_clamps_on_overflow() {
+        let p = Point::new(5, 3);
+        assert_eq!(p.saturating_offset(2, 1), Point::new(7, 4));
+
+        // Saturating at i16::MAX.
+        let p = Point::new(i16::MAX, i16::MAX);
+        assert_eq!(p.saturating_offset(1, 1), Point::new(i16::MAX, i16::MAX));
+
+        // Saturating at i16::MIN.
+        let p = Point::new(i16::MIN, i16::MIN);
+        assert_eq!(p.saturating_offset(-1, -1), Point::new(i16::MIN, i16::MIN));
+    }
+
+    #[test]
     fn direction_rotate_cw_cycles() {
         assert_eq!(Direction::North.rotate_cw(), Direction::East);
         assert_eq!(Direction::East.rotate_cw(), Direction::South);
@@ -2146,6 +2180,10 @@ mod tests {
     fn tile_grid_get_set_and_points_are_row_major() {
         let mut grid = TileGrid::new(3, 2, '.');
         assert_eq!(grid.len(), 6);
+        assert!(grid.in_bounds(Point::new(0, 0)));
+        assert!(!grid.in_bounds(Point::new(3, 0)));
+        assert!(!grid.in_bounds(Point::new(0, 2)));
+
         assert!(grid.set(Point::new(1, 1), '#'));
         assert_eq!(grid.get(Point::new(1, 1)), Some(&'#'));
         assert!(!grid.set(Point::new(3, 1), '!'));
@@ -2188,6 +2226,16 @@ mod tests {
                 actual: 3
             }
         );
+    }
+
+    #[test]
+    fn contains_point_checks_bounds_and_predicate() {
+        let grid = TileGrid::from_vec(3, 2, vec!['.', '#', '.', '.', '#', '.']).unwrap();
+
+        assert!(grid.contains_point(Point::new(0, 0), |&t| t == '.'));
+        assert!(grid.contains_point(Point::new(1, 0), |&t| t == '#'));
+        assert!(!grid.contains_point(Point::new(0, 0), |&t| t == '#'));
+        assert!(!grid.contains_point(Point::new(5, 0), |&t| t == '.'));
     }
 
     #[test]

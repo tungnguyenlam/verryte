@@ -48,6 +48,38 @@ pub enum Key {
     Insert,
     Delete,
     F(u8),
+    /// A character key with modifier flags.
+    ///
+    /// Use this for bindings like Ctrl+C, Alt+X, Shift+Tab, etc.
+    /// The plain `Char` variant is for unmodified character input.
+    Modified {
+        char: char,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+    },
+}
+
+impl Key {
+    /// Create a modified key with the given flags.
+    pub fn modified(ch: char, ctrl: bool, alt: bool, shift: bool) -> Self {
+        Key::Modified {
+            char: ch,
+            ctrl,
+            alt,
+            shift,
+        }
+    }
+
+    /// Returns `true` if this key has any modifier flags set.
+    pub fn is_modified(&self) -> bool {
+        match self {
+            Key::Modified {
+                ctrl, alt, shift, ..
+            } => *ctrl || *alt || *shift,
+            _ => false,
+        }
+    }
 }
 
 /// Mouse buttons in a terminal-friendly shape.
@@ -739,6 +771,14 @@ impl<A: Clone> InputRouter<A> {
         self.pending.is_empty()
     }
 
+    /// Returns `true` if there are no bindings and no pending actions.
+    ///
+    /// Useful for detecting a completely fresh router or one that has been
+    /// fully drained and unbound.
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty() && self.pending.is_empty()
+    }
+
     pub fn peek(&self) -> Option<&QueuedAction<A>> {
         self.pending.front()
     }
@@ -771,6 +811,27 @@ impl<A: Clone> InputRouter<A> {
         for action in queue {
             if predicate(&action) {
                 removed += 1;
+            } else {
+                self.pending.push_back(action);
+            }
+        }
+        removed
+    }
+
+    /// Remove pending actions matching a predicate, returning the removed items.
+    ///
+    /// Like [`Self::filter_pending`] but returns the drained actions instead of
+    /// just a count. Useful for logging canceled actions or re-routing them.
+    pub fn drain_filtered<F>(&mut self, mut predicate: F) -> Vec<QueuedAction<A>>
+    where
+        F: FnMut(&QueuedAction<A>) -> bool,
+    {
+        let mut queue = VecDeque::new();
+        std::mem::swap(&mut self.pending, &mut queue);
+        let mut removed = Vec::new();
+        for action in queue {
+            if predicate(&action) {
+                removed.push(action);
             } else {
                 self.pending.push_back(action);
             }
@@ -1156,6 +1217,25 @@ mod tests {
             height: 24
         }));
         assert!(router.is_idle());
+    }
+
+    #[test]
+    fn is_empty_checks_both_bindings_and_pending() {
+        let router: InputRouter<Move> = InputRouter::new(Bindings::new());
+        assert!(router.is_empty());
+
+        let mut router = bound_router();
+        assert!(!router.is_empty()); // has bindings
+
+        router.bindings_mut().unbind(Key::Up);
+        router.bindings_mut().unbind(Key::Down);
+        router.bindings_mut().unbind(Key::Left);
+        router.bindings_mut().unbind(Key::Right);
+        router.bindings_mut().unbind(Key::Char('.'));
+        assert!(router.is_empty()); // no bindings, no pending
+
+        router.inject(Move::Wait);
+        assert!(!router.is_empty()); // has pending
     }
 
     #[test]
