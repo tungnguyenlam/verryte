@@ -3,7 +3,7 @@
 //! Run with: `cargo run -p ash-courier --bin ash-courier-tty`
 
 use ash_courier::{Game, Outcome};
-use verryte_terminal::{Cell, Color, Grid, Rect};
+use verryte_terminal::{Alignment, ColorPalette, Grid, Rect};
 use verryte_tty as tty;
 
 fn main() {
@@ -52,18 +52,14 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) {
     let h = term_h.max(16);
 
     let mut root = Grid::new(w, h);
+    let palette = ColorPalette::dark_dungeon();
 
     // Derive layout from terminal size.
     // Viewport: left side, roughly half width, most of height.
     let vp_w = (w / 2).saturating_sub(2).max(10);
     let vp_h = (h - 2).max(5);
     let vp_rect = Rect::new(0, 0, vp_w + 2, vp_h + 2);
-    root.draw_panel(
-        vp_rect,
-        " VIEWPORT ",
-        Cell::new('#').with_fg(Color::DARK_GREY),
-        Color::CYAN,
-    );
+    root.draw_rounded_panel(vp_rect, " VIEWPORT ", palette.ui_border, palette.ui_title, palette.background);
     let viewport = game.render_viewport(vp_w, vp_h);
     root.blit(&viewport, 1, 1);
 
@@ -79,12 +75,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) {
 
     let log_h = (h / 2).saturating_sub(1).max(3);
     let log_rect = Rect::new(right_x, 0, right_w, log_h + 2);
-    root.draw_panel(
-        log_rect,
-        " LOG ",
-        Cell::new('#').with_fg(Color::DARK_GREY),
-        Color::YELLOW,
-    );
+    root.draw_rounded_panel(log_rect, " LOG ", palette.ui_border, palette.ui_title, palette.background);
     let msgs = game.messages();
     let max_log_lines = log_h.min(10) as usize;
     let display_msgs = if msgs.len() > max_log_lines {
@@ -93,7 +84,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) {
         &msgs[..]
     };
     for (i, msg) in display_msgs.iter().enumerate() {
-        root.write_str(right_x + 2, 1 + i as u16, msg, Color::GREY, Color::BLACK);
+        root.write_str(right_x + 2, 1 + i as u16, msg, palette.ui_text, palette.background);
     }
 
     // Status panel below log.
@@ -101,45 +92,48 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) {
     let status_h = h.saturating_sub(status_y);
     if status_h >= 3 {
         let status_rect = Rect::new(right_x, status_y, right_w, status_h);
-        root.draw_panel(
-            status_rect,
-            " STATUS ",
-            Cell::new('#').with_fg(Color::DARK_GREY),
-            Color::GREEN,
-        );
+        root.draw_rounded_panel(status_rect, " STATUS ", palette.ui_border, palette.ui_title, palette.background);
 
         let state = game.state();
         let snap = game.snapshot();
         let sy = status_y + 1;
-        root.write_str(
+        let inner_w = right_w.saturating_sub(4);
+        root.write_aligned(
             right_x + 2,
             sy,
+            inner_w,
             &format!("Turn:    {}", state.turn),
-            Color::WHITE,
-            Color::BLACK,
+            Alignment::Left,
+            palette.ui_text,
+            palette.background,
         );
         if sy + 1 < h {
-            root.write_str(
+            root.write_aligned(
                 right_x + 2,
                 sy + 1,
+                inner_w,
                 &format!("Package: {}", if state.has_package { "YES" } else { "NO" }),
-                Color::WHITE,
-                Color::BLACK,
+                Alignment::Left,
+                if state.has_package { palette.item } else { palette.ui_dim },
+                palette.background,
             );
         }
         if sy + 2 < h {
-            root.write_str(
+            root.write_aligned(
                 right_x + 2,
                 sy + 2,
+                inner_w,
                 &format!("Scans:   {}", state.scans),
-                Color::WHITE,
-                Color::BLACK,
+                Alignment::Left,
+                palette.ui_text,
+                palette.background,
             );
         }
         if sy + 3 < h {
-            root.write_str(
+            root.write_aligned(
                 right_x + 2,
                 sy + 3,
+                inner_w,
                 &format!(
                     "Dist P/G/H/C: {}/{}/{}/{}",
                     maybe_distance(snap.distance_to_nearest_package),
@@ -147,24 +141,27 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) {
                     maybe_distance(snap.distance_to_nearest_hazard),
                     maybe_distance(snap.distance_to_nearest_chaser)
                 ),
-                Color::WHITE,
-                Color::BLACK,
+                Alignment::Left,
+                palette.ui_text,
+                palette.background,
             );
         }
 
         let (outcome_str, outcome_color) = match state.outcome {
-            Outcome::Playing => ("Playing", Color::CYAN),
-            Outcome::Won => ("WON! Press Q to exit.", Color::GREEN),
-            Outcome::Lost => ("LOST! Press Q to exit.", Color::RED),
-            Outcome::Quit => ("Quit", Color::GREY),
+            Outcome::Playing => ("Playing", palette.ui_title),
+            Outcome::Won => ("WON! Press Q to exit.", palette.goal),
+            Outcome::Lost => ("LOST! Press Q to exit.", palette.hazard),
+            Outcome::Quit => ("Quit", palette.ui_dim),
         };
         if sy + 4 < h {
-            root.write_str(
+            root.write_aligned(
                 right_x + 2,
                 sy + 4,
+                inner_w,
                 &format!("Outcome: {}", outcome_str),
+                Alignment::Left,
                 outcome_color,
-                Color::BLACK,
+                palette.background,
             );
         }
     }
@@ -176,16 +173,16 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) {
             right_x + 2,
             hint_y,
             "Arrows/WASD: Move | SPACE: Wait | G: Pick | D: Drop | 1-5: ScanR",
-            Color::DARK_GREY,
-            Color::BLACK,
+            palette.ui_dim,
+            palette.background,
         );
         if hint_y + 1 < h {
             root.write_str(
                 right_x + 2,
                 hint_y + 1,
                 "X: Scan | R: Safety | P/O: Path steps | Q: Quit",
-                Color::DARK_GREY,
-                Color::BLACK,
+                palette.ui_dim,
+                palette.background,
             );
         }
     }

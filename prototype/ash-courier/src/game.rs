@@ -1,7 +1,7 @@
 use verryte_core::{Entity, Events, MessageLog, Schedule, World};
 use verryte_input::{ActionSource, Bindings, InputEvent, InputRouter};
 use verryte_map::Direction;
-use verryte_terminal::{Cell, Color, Grid, Rect};
+use verryte_terminal::{Cell, ColorPalette, Grid, Rect};
 
 use crate::action::{default_bindings, Action};
 use crate::components::{Chaser, GameEvent, GameState, Hazard, Outcome, Package, Player, Position};
@@ -100,12 +100,12 @@ impl Game {
         world.insert_resource(map);
         world.insert_resource(GameState::default());
         world.insert_resource(Events::<GameEvent>::new());
-        world.insert_resource(MessageLog::new());
+        world.insert_resource(MessageLog::with_max(50));
 
         let mut schedule = Schedule::new();
-        schedule.add(crate::systems::chaser_system);
-        schedule.add(resolve_tile_system);
-        schedule.add(crate::systems::message_system);
+        schedule.add_named("chaser", crate::systems::chaser_system);
+        schedule.add_named("resolve", resolve_tile_system);
+        schedule.add_named("messages", crate::systems::message_system);
 
         Ok(Self {
             world,
@@ -489,13 +489,14 @@ impl Game {
     /// Render the current state to a [`Grid`].
     pub fn render(&self) -> Grid {
         let map = self.map();
+        let palette = ColorPalette::dark_dungeon();
         let mut grid = Grid::new(map.width, map.height);
         for y in 0..map.height {
             for x in 0..map.width {
                 let cell = match map.tile(x as i16, y as i16) {
-                    Tile::Wall => Cell::new('#').with_fg(Color::DARK_GREY),
-                    Tile::Floor => Cell::new('.').with_fg(Color::GREY),
-                    Tile::Goal => Cell::new('G').with_fg(Color::GREEN),
+                    Tile::Wall => Cell::new('#').with_fg(palette.wall),
+                    Tile::Floor => Cell::new('.').with_fg(palette.floor),
+                    Tile::Goal => Cell::new('G').with_fg(palette.goal),
                 };
                 grid.put(x, y, cell);
             }
@@ -505,28 +506,28 @@ impl Game {
             grid.put(
                 pos.x as u16,
                 pos.y as u16,
-                Cell::new('h').with_fg(Color::RED),
+                Cell::new('h').with_fg(palette.hazard),
             );
         }
         for (_, pos, _) in self.world.query2::<Position, Chaser>() {
             grid.put(
                 pos.x as u16,
                 pos.y as u16,
-                Cell::new('c').with_fg(Color::MAGENTA),
+                Cell::new('c').with_fg(palette.player),
             );
         }
         for (_, pos, _) in self.world.query2::<Position, Package>() {
             grid.put(
                 pos.x as u16,
                 pos.y as u16,
-                Cell::new('p').with_fg(Color::YELLOW),
+                Cell::new('p').with_fg(palette.item),
             );
         }
         let player_pos = self.player_position();
         let player_color = if self.state().has_package {
-            Color::CYAN
+            palette.player
         } else {
-            Color::WHITE
+            palette.foreground
         };
         grid.put(
             player_pos.x as u16,

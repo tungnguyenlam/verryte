@@ -824,3 +824,16 @@ sub-layer ordering within a single layer.
 **Reasoning.** Direction rotation is fundamental for facing/turning. `iter_cells` avoids manual nested loops. `count_with` enables "how many enemies remain" queries without allocation. `Rect::translate` complements `intersect` and `union`. `map_in_place` enables position-aware tile transforms.
 
 **Gotchas.** The `map_in_place` test had wrong expected value for (2,0): should be 0+2+0=2, not 4.
+
+## 2026-05-16 - batch 8: area, replace_by_name, blit_region, swap, shuffle_range
+
+**Goal.** Add rect area calculation, system replacement, sub-region blitting, tile swapping, and partial range shuffling.
+
+**Changes.**
+- `crates/verryte-terminal/src/lib.rs:163-166` - `Rect::area` returns width * height as usize. Returns 0 for empty rects.
+- `crates/verryte-core/src/schedule.rs:163-173` - `Schedule::replace_by_name` replaces first system matching name, keeping same position. Returns false if not found.
+- `crates/verryte-terminal/src/lib.rs:654-688` - `Grid::blit_region` copies a sub-rectangle from source grid, clipping to both source and destination bounds. Skips transparent cells.
+- `crates/verryte-map/src/lib.rs:465-477` - `TileGrid::swap` exchanges two tiles by point using index-based Vec::swap. Returns false if either point is OOB.
+- `crates/verryte-core/src/rng.rs:178-192` - `Rng::shuffle_range` shuffles a sub-range [start, end) using Fisher-Yates. Clamps to valid bounds, no-op for ranges < 2 elements.
+
+**Reasoning.** `Rect::area` is a basic utility needed for sizing and capacity calculations. `replace_by_name` enables hot-reloading systems without rebuilding the schedule or changing execution order. `blit_region` is needed when games want to copy a specific viewport or sprite region rather than the entire source grid. `TileGrid::swap` supports puzzle mechanics and tile rearrangement. `shuffle_range` is useful when only part of a collection needs randomization (e.g., shuffling a deck's top N cards).
