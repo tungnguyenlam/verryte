@@ -12,11 +12,16 @@ path = "src/lib.rs"
 name = "ash-courier-script"
 path = "src/bin/script.rs"
 
+[[bin]]
+name = "ash-courier-tty"
+path = "src/bin/tty.rs"
+
 [dependencies]
 verryte-core = { path = "../../crates/verryte-core" }
 verryte-input = { path = "../../crates/verryte-input" }
 verryte-map = { path = "../../crates/verryte-map" }
 verryte-terminal = { path = "../../crates/verryte-terminal" }
+verryte-tty = { path = "../../crates/verryte-tty" }
 
 [lints]
 workspace = true

@@ -1,0 +1,678 @@
+use verryte_core::{Entity, Events, MessageLog, Schedule, World};
+use verryte_input::{ActionSource, Bindings, InputEvent, InputRouter};
+use verryte_map::Direction;
+use verryte_terminal::{Cell, Color, Grid, Rect};
+
+use crate::action::{default_bindings, Action};
+use crate::components::{Chaser, GameEvent, GameState, Hazard, Outcome, Package, Player, Position};
+use crate::map::{Map, Tile};
+use crate::snapshot::{ActionResult, Snapshot, StepReport};
+use crate::systems::resolve_tile_system;
+
+pub struct Game {
+    pub world: World,
+    pub schedule: Schedule,
+    pub router: InputRouter<Action>,
+    player: Entity,
+}
+
+impl Game {
+    /// Build a game using the default starting map and keymap.
+    pub fn new() -> Self {
+        Self::from_layout(DEFAULT_MAP, default_bindings()).expect("default map is well-formed")
+    }
+
+    /// Build a game from an ASCII map layout.
+    ///
+    /// Map symbols:
+    /// * `#` — wall
+    /// * `.` — floor
+    /// * `@` — player spawn (floor underneath)
+    /// * `p` — package on floor
+    /// * `h` — hazard on floor
+    /// * `G` — goal tile
+    pub fn from_layout(rows: &[&str], bindings: Bindings<Action>) -> Result<Self, MapError> {
+        let height = rows.len() as u16;
+        if height == 0 {
+            return Err(MapError::Empty);
+        }
+        let width = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
+        if width == 0 {
+            return Err(MapError::Empty);
+        }
+        let mut map = Map::new(width, height);
+
+        let mut world = World::new();
+        let mut player_spawn: Option<Position> = None;
+
+        for (y, row) in rows.iter().enumerate() {
+            for (x, ch) in row.chars().enumerate() {
+                let (tile, entity_kind) = match ch {
+                    '#' => (Tile::Wall, None),
+                    '.' => (Tile::Floor, None),
+                    '@' => (Tile::Floor, Some(SpawnKind::Player)),
+                    'p' => (Tile::Floor, Some(SpawnKind::Package)),
+                    'h' => (Tile::Floor, Some(SpawnKind::Hazard)),
+                    'c' => (Tile::Floor, Some(SpawnKind::Chaser)),
+                    'G' => (Tile::Goal, None),
+                    ' ' => (Tile::Wall, None), // treat padding as wall
+                    other => return Err(MapError::UnknownGlyph(other)),
+                };
+                map.set(x as u16, y as u16, tile);
+                if let Some(kind) = entity_kind {
+                    let pos = Position {
+                        x: x as i16,
+                        y: y as i16,
+                    };
+                    match kind {
+                        SpawnKind::Player => {
+                            if player_spawn.is_some() {
+                                return Err(MapError::DuplicatePlayer);
+                            }
+                            player_spawn = Some(pos);
+                        }
+                        SpawnKind::Package => {
+                            let e = world.spawn();
+                            world.insert(e, pos);
+                            world.insert(e, Package);
+                        }
+                        SpawnKind::Hazard => {
+                            let e = world.spawn();
+                            world.insert(e, pos);
+                            world.insert(e, Hazard);
+                        }
+                        SpawnKind::Chaser => {
+                            let e = world.spawn();
+                            world.insert(e, pos);
+                            world.insert(e, Hazard);
+                            world.insert(e, Chaser);
+                        }
+                    }
+                }
+            }
+        }
+
+        let player_spawn = player_spawn.ok_or(MapError::NoPlayer)?;
+        let player = world.spawn();
+        world.insert(player, player_spawn);
+        world.insert(player, Player);
+
+        world.insert_resource(map);
+        world.insert_resource(GameState::default());
+        world.insert_resource(Events::<GameEvent>::new());
+        world.insert_resource(MessageLog::new());
+
+        let mut schedule = Schedule::new();
+        schedule.add(crate::systems::chaser_system);
+        schedule.add(resolve_tile_system);
+        schedule.add(crate::systems::message_system);
+
+        Ok(Self {
+            world,
+            schedule,
+            router: InputRouter::new(bindings),
+            player,
+        })
+    }
+
+    pub fn player_entity(&self) -> Entity {
+        self.player
+    }
+
+    pub fn state(&self) -> &GameState {
+        self.world
+            .resource::<GameState>()
+            .expect("game state resource")
+    }
+
+    pub fn map(&self) -> &Map {
+        self.world.resource::<Map>().expect("map resource")
+    }
+
+    pub fn player_position(&self) -> Position {
+        *self
+            .world
+            .get::<Position>(self.player)
+            .expect("player has position")
+    }
+
+    pub fn outcome(&self) -> Outcome {
+        self.state().outcome
+    }
+
+    pub fn is_over(&self) -> bool {
+        !matches!(self.outcome(), Outcome::Playing)
+    }
+
+    /// Drain the router and apply each action. Stops if the game ends.
+    /// Returns the number of actions consumed.
+    pub fn run_pending(&mut self) -> usize {
+        self.run_pending_reports().len()
+    }
+
+    /// Drain pending actions and keep a report for each applied action.
+    pub fn run_pending_reports(&mut self) -> Vec<StepReport> {
+        if self.is_over() {
+            let queued_quit = matches!(
+                self.router.peek(),
+                Some(queued) if queued.action == Action::Quit
+            );
+            if queued_quit {
+                let queued = self.router.next_queued().expect("peek returned Some");
+                let report = self.step_from(queued.action, queued.source);
+                self.router.clear();
+                return vec![report];
+            }
+            self.router.clear();
+            return Vec::new();
+        }
+        let mut reports = Vec::new();
+        while let Some(queued) = self.router.next_queued() {
+            reports.push(self.step_from(queued.action, queued.source));
+            if self.is_over() {
+                self.router.clear();
+                break;
+            }
+        }
+        reports
+    }
+
+    /// Feed a terminal event in. Same downstream path as `inject`/scripts.
+    pub fn handle_event(&mut self, event: InputEvent) -> bool {
+        self.router.handle(event)
+    }
+
+    /// Inject one action and apply it immediately.
+    pub fn inject_apply(&mut self, action: Action) {
+        self.router.inject(action);
+        self.run_pending();
+    }
+
+    /// Apply one action and return the state delta an agent or script runner
+    /// can inspect.
+    pub fn step(&mut self, action: Action) -> StepReport {
+        self.step_from(action, ActionSource::Test)
+    }
+
+    /// Apply one sourced action and return the state delta an agent or script
+    /// runner can inspect. The source is report metadata only; behavior is
+    /// still entirely controlled by [`Self::apply`].
+    pub fn step_from(&mut self, action: Action, source: ActionSource) -> StepReport {
+        let before = self.snapshot();
+        let result = self.apply(action);
+        let events = self.drain_events();
+        let after = self.snapshot();
+        StepReport {
+            action,
+            source,
+            result,
+            changed: before != after,
+            turn_advanced: after.turn > before.turn,
+            before,
+            after,
+            events,
+        }
+    }
+
+    /// Apply a single action against the game state.
+    ///
+    /// This is the spine of `terminal event -> game action -> game system ->
+    /// observable state`. Interactive frontends, scripts, tests, and agents
+    /// all converge here.
+    pub fn apply(&mut self, action: Action) -> ActionResult {
+        self.clear_events();
+        let result = match action {
+            Action::Quit => {
+                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Quit;
+                self.send_event(GameEvent::OutcomeChanged(Outcome::Quit));
+                ActionResult::Ended(Outcome::Quit)
+            }
+            _ if self.is_over() => ActionResult::IgnoredGameOver,
+            Action::Wait => {
+                self.send_event(GameEvent::Waited {
+                    at: self.player_position(),
+                });
+                self.advance_turn();
+                ActionResult::Advanced
+            }
+            Action::Scan => {
+                let visible_tiles = self.visible_tiles();
+                let visible_hazards = self.visible_hazards_in(&visible_tiles);
+                self.world.resource_mut::<GameState>().unwrap().scans += 1;
+                self.send_event(GameEvent::Scanned {
+                    at: self.player_position(),
+                    visible_tiles: visible_tiles.len(),
+                    visible_hazards: visible_hazards.len(),
+                });
+                self.advance_turn();
+                ActionResult::Advanced
+            }
+            Action::ScanRadius(radius) => {
+                let visible_tiles = self.map().visible_from(self.player_position(), radius);
+                let visible_hazards = self.visible_hazards_in(&visible_tiles);
+                self.world.resource_mut::<GameState>().unwrap().scans += 1;
+                self.send_event(GameEvent::Scanned {
+                    at: self.player_position(),
+                    visible_tiles: visible_tiles.len(),
+                    visible_hazards: visible_hazards.len(),
+                });
+                self.advance_turn();
+                ActionResult::Advanced
+            }
+            Action::PickUp => {
+                if self.try_pick_up() {
+                    self.advance_turn();
+                    ActionResult::Advanced
+                } else {
+                    ActionResult::NoOp
+                }
+            }
+            Action::Drop => {
+                if self.try_drop_package() {
+                    self.advance_turn();
+                    ActionResult::Advanced
+                } else {
+                    ActionResult::NoOp
+                }
+            }
+            Action::StepToPackage => {
+                let packages = self
+                    .world
+                    .query2::<Position, Package>()
+                    .into_iter()
+                    .map(|(_, pos, _)| *pos)
+                    .collect::<Vec<_>>();
+                self.next_step_direction_toward_any(&packages).map_or(
+                    ActionResult::NoOp,
+                    |direction| {
+                        if self.try_move(direction) {
+                            self.advance_turn();
+                            ActionResult::Advanced
+                        } else {
+                            ActionResult::NoOp
+                        }
+                    },
+                )
+            }
+            Action::StepToGoal => self
+                .next_step_direction_toward_any(&self.goal_positions())
+                .map_or(ActionResult::NoOp, |direction| {
+                    if self.try_move(direction) {
+                        self.advance_turn();
+                        ActionResult::Advanced
+                    } else {
+                        ActionResult::NoOp
+                    }
+                }),
+            Action::StepToSafety => {
+                self.safety_step_direction()
+                    .map_or(ActionResult::NoOp, |direction| {
+                        if self.try_move(direction) {
+                            self.advance_turn();
+                            ActionResult::Advanced
+                        } else {
+                            ActionResult::NoOp
+                        }
+                    })
+            }
+            mv => mv.direction().map_or(ActionResult::NoOp, |direction| {
+                if self.try_move(direction) {
+                    self.advance_turn();
+                    ActionResult::Advanced
+                } else {
+                    ActionResult::NoOp
+                }
+            }),
+        };
+
+        if matches!(result, ActionResult::Advanced)
+            || matches!(result, ActionResult::Ended(_))
+            || matches!(
+                action,
+                Action::MoveNorth | Action::MoveSouth | Action::MoveEast | Action::MoveWest
+            )
+        {
+            self.schedule.run(&mut self.world);
+            if matches!(result, ActionResult::Advanced) && self.is_over() {
+                return ActionResult::Ended(self.outcome());
+            }
+        }
+
+        result
+    }
+
+    pub fn messages(&self) -> Vec<String> {
+        self.world
+            .resource::<MessageLog>()
+            .unwrap()
+            .messages()
+            .to_vec()
+    }
+
+    fn try_move(&mut self, direction: Direction) -> bool {
+        let current = self.player_position();
+        let target = current.step(direction);
+        match self.map().tile(target.x, target.y) {
+            Tile::Wall => {
+                self.send_event(GameEvent::Blocked {
+                    from: current,
+                    to: target,
+                });
+                false
+            }
+            Tile::Floor | Tile::Goal => {
+                *self.world.get_mut::<Position>(self.player).unwrap() = target;
+                self.send_event(GameEvent::Moved {
+                    from: current,
+                    to: target,
+                });
+                true
+            }
+        }
+    }
+
+    fn try_pick_up(&mut self) -> bool {
+        let pos = self.player_position();
+        let found = self
+            .world
+            .query2::<Position, Package>()
+            .into_iter()
+            .find_map(|(e, package_pos, _)| (*package_pos == pos).then_some(e));
+        if let Some(entity) = found {
+            self.world.despawn(entity);
+            self.world.resource_mut::<GameState>().unwrap().has_package = true;
+            self.send_event(GameEvent::PickedUp { at: pos });
+            true
+        } else {
+            false
+        }
+    }
+
+    fn try_drop_package(&mut self) -> bool {
+        if !self.state().has_package {
+            return false;
+        }
+
+        let pos = self.player_position();
+        let entity = self.world.spawn();
+        self.world.insert(entity, pos);
+        self.world.insert(entity, Package);
+        self.world.resource_mut::<GameState>().unwrap().has_package = false;
+        self.send_event(GameEvent::Dropped { at: pos });
+        true
+    }
+
+    fn advance_turn(&mut self) {
+        self.world.resource_mut::<GameState>().unwrap().turn += 1;
+    }
+
+    fn clear_events(&mut self) {
+        self.world
+            .resource_mut::<Events<GameEvent>>()
+            .expect("game event resource")
+            .clear();
+    }
+
+    fn send_event(&mut self, event: GameEvent) {
+        self.world
+            .resource_mut::<Events<GameEvent>>()
+            .expect("game event resource")
+            .send(event);
+    }
+
+    fn drain_events(&mut self) -> Vec<GameEvent> {
+        self.world
+            .resource_mut::<Events<GameEvent>>()
+            .expect("game event resource")
+            .drain()
+            .collect()
+    }
+
+    fn visible_tiles(&self) -> Vec<Position> {
+        self.map().visible_from(self.player_position(), 5)
+    }
+
+    fn visible_hazards_in(&self, visible_tiles: &[Position]) -> Vec<Position> {
+        self.world
+            .query2::<Position, Hazard>()
+            .into_iter()
+            .map(|(_, pos, _)| *pos)
+            .filter(|pos| visible_tiles.contains(pos))
+            .collect()
+    }
+
+    fn goal_positions(&self) -> Vec<Position> {
+        self.map()
+            .tiles
+            .points()
+            .filter(|point| matches!(self.map().tile(point.x, point.y), Tile::Goal))
+            .collect()
+    }
+
+    fn shortest_path_to_any(&self, from: Position, targets: &[Position]) -> Option<Vec<Position>> {
+        self.map()
+            .nearest_walkable_path(from, targets.iter().copied())
+    }
+
+    fn shortest_distance_to_any(&self, from: Position, targets: &[Position]) -> Option<u16> {
+        self.map()
+            .nearest_walkable_distance(from, targets.iter().copied())
+    }
+
+    fn next_step_direction_toward_any(&self, targets: &[Position]) -> Option<Direction> {
+        let from = self.player_position();
+        let path = self.shortest_path_to_any(from, targets)?;
+        let next = *path.get(1)?;
+        self.map().tiles.direction_to(from, next)
+    }
+
+    fn safety_step_direction(&self) -> Option<Direction> {
+        let player = self.player_position();
+        let hazards = self
+            .world
+            .query2::<Position, Hazard>()
+            .into_iter()
+            .map(|(_, pos, _)| *pos)
+            .collect::<Vec<_>>();
+        let next = *self.safer_neighbors_from(player, &hazards).first()?;
+        self.map().tiles.direction_to(player, next)
+    }
+
+    fn safer_neighbors_from(&self, from: Position, hazards: &[Position]) -> Vec<Position> {
+        self.map()
+            .tiles
+            .safer_neighbors4(from, hazards.iter().copied(), |_, tile| {
+                matches!(tile, Tile::Floor | Tile::Goal)
+            })
+    }
+
+    /// Render the current state to a [`Grid`].
+    pub fn render(&self) -> Grid {
+        let map = self.map();
+        let mut grid = Grid::new(map.width, map.height);
+        for y in 0..map.height {
+            for x in 0..map.width {
+                let cell = match map.tile(x as i16, y as i16) {
+                    Tile::Wall => Cell::new('#').with_fg(Color::DARK_GREY),
+                    Tile::Floor => Cell::new('.').with_fg(Color::GREY),
+                    Tile::Goal => Cell::new('G').with_fg(Color::GREEN),
+                };
+                grid.put(x, y, cell);
+            }
+        }
+        // Layer order: hazards, packages, player on top.
+        for (_, pos, _) in self.world.query2::<Position, Hazard>() {
+            grid.put(
+                pos.x as u16,
+                pos.y as u16,
+                Cell::new('h').with_fg(Color::RED),
+            );
+        }
+        for (_, pos, _) in self.world.query2::<Position, Chaser>() {
+            grid.put(
+                pos.x as u16,
+                pos.y as u16,
+                Cell::new('c').with_fg(Color::MAGENTA),
+            );
+        }
+        for (_, pos, _) in self.world.query2::<Position, Package>() {
+            grid.put(
+                pos.x as u16,
+                pos.y as u16,
+                Cell::new('p').with_fg(Color::YELLOW),
+            );
+        }
+        let player_pos = self.player_position();
+        let player_color = if self.state().has_package {
+            Color::CYAN
+        } else {
+            Color::WHITE
+        };
+        grid.put(
+            player_pos.x as u16,
+            player_pos.y as u16,
+            Cell::new('@').with_fg(player_color),
+        );
+        grid
+    }
+
+    /// Render a clipped viewport centered as closely as possible on the player.
+    pub fn render_viewport(&self, width: u16, height: u16) -> Grid {
+        let frame = self.render();
+        let player = self.player_position();
+        let x = centered_origin(player.x, width, frame.width());
+        let y = centered_origin(player.y, height, frame.height());
+        frame.viewport(Rect::new(
+            x,
+            y,
+            width.min(frame.width()),
+            height.min(frame.height()),
+        ))
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        let player = self.player_position();
+        let mut packages = self
+            .world
+            .query2::<Position, Package>()
+            .into_iter()
+            .map(|(_, pos, _)| *pos)
+            .collect::<Vec<_>>();
+        packages.sort_unstable();
+        let mut hazards = self
+            .world
+            .query2::<Position, Hazard>()
+            .into_iter()
+            .map(|(_, pos, _)| *pos)
+            .collect::<Vec<_>>();
+        hazards.sort_unstable();
+        let mut chasers = self
+            .world
+            .query2::<Position, Chaser>()
+            .into_iter()
+            .map(|(_, pos, _)| *pos)
+            .collect::<Vec<_>>();
+        chasers.sort_unstable();
+        let map = self.map();
+        let state = self.state();
+        let visible_tiles = self.visible_tiles();
+        let visible_hazards = self.visible_hazards_in(&visible_tiles);
+        let reachable_tiles = map.reachable_from(player);
+        let goals = self.goal_positions();
+        let path_to_nearest_package = self.shortest_path_to_any(player, &packages);
+        let path_to_goal = self.shortest_path_to_any(player, &goals);
+        let path_to_nearest_hazard = self.shortest_path_to_any(player, &hazards);
+        let path_to_nearest_chaser = self.shortest_path_to_any(player, &chasers);
+        let distance_to_nearest_package = self.shortest_distance_to_any(player, &packages);
+        let distance_to_goal = self.shortest_distance_to_any(player, &goals);
+        let distance_to_nearest_hazard = self.shortest_distance_to_any(player, &hazards);
+        let distance_to_nearest_chaser = self.shortest_distance_to_any(player, &chasers);
+        let safer_neighbors = self.safer_neighbors_from(player, &hazards);
+        Snapshot {
+            turn: state.turn,
+            outcome: state.outcome,
+            has_package: state.has_package,
+            scans: state.scans,
+            player,
+            packages,
+            hazards,
+            chasers,
+            visible_tiles,
+            visible_hazards,
+            reachable_tiles,
+            map_width: map.width,
+            map_height: map.height,
+            tile_under_player: map.tile(player.x, player.y),
+            walkable_neighbors: map.walkable_neighbors(player),
+            path_to_nearest_package,
+            path_to_goal,
+            path_to_nearest_hazard,
+            path_to_nearest_chaser,
+            distance_to_nearest_package,
+            distance_to_goal,
+            distance_to_nearest_hazard,
+            distance_to_nearest_chaser,
+            safer_neighbors,
+            frame: self.render().to_plain_string(),
+            local_frame: self.render_viewport(7, 7).to_plain_string(),
+        }
+    }
+}
+
+impl Default for Game {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+enum SpawnKind {
+    Player,
+    Package,
+    Hazard,
+    Chaser,
+}
+
+fn centered_origin(center: i16, span: u16, limit: u16) -> u16 {
+    if span >= limit {
+        return 0;
+    }
+    let half = (span / 2) as i16;
+    let max_origin = (limit - span) as i16;
+    center.saturating_sub(half).clamp(0, max_origin) as u16
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum MapError {
+    Empty,
+    NoPlayer,
+    DuplicatePlayer,
+    UnknownGlyph(char),
+}
+
+impl std::fmt::Display for MapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapError::Empty => write!(f, "map layout is empty"),
+            MapError::NoPlayer => write!(f, "map layout has no '@' player spawn"),
+            MapError::DuplicatePlayer => write!(f, "map layout has more than one '@'"),
+            MapError::UnknownGlyph(c) => write!(f, "map layout has unknown glyph '{c}'"),
+        }
+    }
+}
+
+impl std::error::Error for MapError {}
+
+/// The default map shipped with the prototype. Small, fits in a terminal, has
+/// every interesting tile: walls, floors, a goal, a package, and a hazard.
+pub const DEFAULT_MAP: &[&str] = &[
+    "##########",
+    "#@.......#",
+    "#.##.###.#",
+    "#.#....#.#",
+    "#.#.p..#.#",
+    "#.#....#.#",
+    "#.######.#",
+    "#..h.....#",
+    "#.......G#",
+    "##########",
+];

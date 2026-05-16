@@ -1,659 +1,25 @@
 //! Ash Courier — the proving game for the Verryte engine.
-//!
-//! The point of this crate is *not* to be a deep roguelike. It exists to put
-//! real pressure on the engine surface: an ECS world holds the player, packages,
-//! and hazards; the map lives as a resource; player intent flows from terminal
-//! events or scripted injections through the same [`InputRouter`] queue; a
-//! single `apply` function turns each action into observable state changes; and
-//! [`Snapshot`] is the structured view that tests, scripts, and agents read.
-//!
-//! If something in here had to reach behind the engine's back, that points at an
-//! engine gap, not a game requirement.
 
-use verryte_core::{Entity, World};
-use verryte_input::{ActionSource, Bindings, CommandBindings, InputEvent, InputRouter, Key};
-use verryte_map::{Direction, Point, TileGrid};
-use verryte_terminal::{Cell, Color, Grid};
+pub mod action;
+pub mod components;
+pub mod game;
+pub mod map;
+pub mod snapshot;
+pub mod systems;
+
+pub use action::{default_bindings, default_commands, resolve_command_token, Action};
+pub use components::{GameEvent, GameState, Hazard, Outcome, Package, Player, Position};
+pub use game::{Game, MapError, DEFAULT_MAP};
+pub use map::{Map, Tile};
+pub use snapshot::{ActionResult, Snapshot, StepReport};
 
 pub use verryte_input;
 pub use verryte_map;
 
-// ----------------------------------------------------------------------------
-// Actions — the action vocabulary Ash Courier exposes through the router.
-// ----------------------------------------------------------------------------
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Action {
-    MoveNorth,
-    MoveSouth,
-    MoveEast,
-    MoveWest,
-    Wait,
-    PickUp,
-    Quit,
-}
-
-impl Action {
-    /// Returns the (dx, dy) for movement actions; `None` for non-movement.
-    pub fn movement_delta(self) -> Option<(i16, i16)> {
-        self.direction().map(Direction::delta)
-    }
-
-    /// Returns the direction for movement actions; `None` for non-movement.
-    pub fn direction(self) -> Option<Direction> {
-        match self {
-            Action::MoveNorth => Some(Direction::North),
-            Action::MoveSouth => Some(Direction::South),
-            Action::MoveEast => Some(Direction::East),
-            Action::MoveWest => Some(Direction::West),
-            _ => None,
-        }
-    }
-}
-
-/// Default keymap. Games can rebuild this at will — the engine doesn't care.
-pub fn default_bindings() -> Bindings<Action> {
-    let mut b = Bindings::new();
-    b.bind(Key::Up, Action::MoveNorth);
-    b.bind(Key::Char('w'), Action::MoveNorth);
-    b.bind(Key::Char('k'), Action::MoveNorth);
-    b.bind(Key::Down, Action::MoveSouth);
-    b.bind(Key::Char('s'), Action::MoveSouth);
-    b.bind(Key::Char('j'), Action::MoveSouth);
-    b.bind(Key::Left, Action::MoveWest);
-    b.bind(Key::Char('a'), Action::MoveWest);
-    b.bind(Key::Char('h'), Action::MoveWest);
-    b.bind(Key::Right, Action::MoveEast);
-    b.bind(Key::Char('d'), Action::MoveEast);
-    b.bind(Key::Char('l'), Action::MoveEast);
-    b.bind(Key::Char('.'), Action::Wait);
-    b.bind(Key::Space, Action::Wait);
-    b.bind(Key::Char('g'), Action::PickUp);
-    b.bind(Key::Char(','), Action::PickUp);
-    b.bind(Key::Char('q'), Action::Quit);
-    b.bind(Key::Esc, Action::Quit);
-    b
-}
-
-/// Default script/agent command map. Parsed actions are still injected into the
-/// same [`InputRouter`] queue used by terminal events.
-pub fn default_commands() -> CommandBindings<Action> {
-    let mut c = CommandBindings::new();
-    c.bind_name("north", Action::MoveNorth);
-    c.bind_name("move_north", Action::MoveNorth);
-    c.bind_name("south", Action::MoveSouth);
-    c.bind_name("move_south", Action::MoveSouth);
-    c.bind_name("east", Action::MoveEast);
-    c.bind_name("move_east", Action::MoveEast);
-    c.bind_name("west", Action::MoveWest);
-    c.bind_name("move_west", Action::MoveWest);
-    c.bind_name("wait", Action::Wait);
-    c.bind_name("pickup", Action::PickUp);
-    c.bind_name("pick_up", Action::PickUp);
-    c.bind_name("quit", Action::Quit);
-
-    for glyph in ['n', 'N'] {
-        c.bind_glyph(glyph, Action::MoveNorth);
-    }
-    for glyph in ['s', 'S'] {
-        c.bind_glyph(glyph, Action::MoveSouth);
-    }
-    for glyph in ['e', 'E'] {
-        c.bind_glyph(glyph, Action::MoveEast);
-    }
-    for glyph in ['w', 'W'] {
-        c.bind_glyph(glyph, Action::MoveWest);
-    }
-    c.bind_glyph('.', Action::Wait);
-    c.bind_glyph(',', Action::PickUp);
-    for glyph in ['q', 'Q'] {
-        c.bind_glyph(glyph, Action::Quit);
-    }
-    c
-}
-
-// ----------------------------------------------------------------------------
-// Map — a tile resource. Walls and goals live here; entities live in the world.
-// ----------------------------------------------------------------------------
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Tile {
-    Floor,
-    Wall,
-    Goal,
-}
-
-#[derive(Clone, Debug)]
-pub struct Map {
-    pub width: u16,
-    pub height: u16,
-    tiles: TileGrid<Tile>,
-}
-
-impl Map {
-    pub fn tile(&self, x: i16, y: i16) -> Tile {
-        self.tiles
-            .get(Point { x, y })
-            .copied()
-            .unwrap_or(Tile::Wall)
-    }
-
-    pub fn is_walkable(&self, point: Point) -> bool {
-        matches!(self.tile(point.x, point.y), Tile::Floor | Tile::Goal)
-    }
-
-    pub fn walkable_neighbors(&self, point: Point) -> Vec<Point> {
-        self.tiles
-            .neighbors4(point)
-            .into_iter()
-            .filter_map(|(neighbor, tile)| {
-                matches!(tile, Tile::Floor | Tile::Goal).then_some(neighbor)
-            })
-            .collect()
-    }
-
-    fn set(&mut self, x: u16, y: u16, tile: Tile) {
-        self.tiles.set(Point::new(x as i16, y as i16), tile);
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Components — Position is the spatial anchor; the rest are marker tags.
-// ----------------------------------------------------------------------------
-
-pub type Position = Point;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Player;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Package;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Hazard;
-
-// ----------------------------------------------------------------------------
-// Resources — game-level state that systems read and write through the world.
-// ----------------------------------------------------------------------------
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    Playing,
-    Won,
-    Lost,
-    Quit,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct GameState {
-    pub turn: u32,
-    pub outcome: Outcome,
-    pub has_package: bool,
-}
-
-impl Default for GameState {
-    fn default() -> Self {
-        Self {
-            turn: 0,
-            outcome: Outcome::Playing,
-            has_package: false,
-        }
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Snapshot — the structured state surface tests / scripts / agents read.
-// ----------------------------------------------------------------------------
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Snapshot {
-    pub turn: u32,
-    pub outcome: Outcome,
-    pub has_package: bool,
-    pub player: Position,
-    pub packages: Vec<Position>,
-    pub hazards: Vec<Position>,
-    pub map_width: u16,
-    pub map_height: u16,
-    pub tile_under_player: Tile,
-    pub walkable_neighbors: Vec<Position>,
-    /// Plain-text rendering of the current frame.
-    pub frame: String,
-}
-
-/// One applied action and the observable state before/after it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StepReport {
-    pub action: Action,
-    pub source: ActionSource,
-    pub result: ActionResult,
-    pub before: Snapshot,
-    pub after: Snapshot,
-    pub changed: bool,
-    pub turn_advanced: bool,
-}
-
-/// The immediate game-level result of applying one action.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ActionResult {
-    NoOp,
-    Advanced,
-    Ended(Outcome),
-    IgnoredGameOver,
-}
-
-// ----------------------------------------------------------------------------
-// Game — composition root. Owns the world, map, and shared input router.
-// ----------------------------------------------------------------------------
-
-pub struct Game {
-    pub world: World,
-    pub router: InputRouter<Action>,
-    player: Entity,
-}
-
-impl Game {
-    /// Build a game using the default starting map and keymap.
-    pub fn new() -> Self {
-        Self::from_layout(DEFAULT_MAP, default_bindings()).expect("default map is well-formed")
-    }
-
-    /// Build a game from an ASCII map layout.
-    ///
-    /// Map symbols:
-    /// * `#` — wall
-    /// * `.` — floor
-    /// * `@` — player spawn (floor underneath)
-    /// * `p` — package on floor
-    /// * `h` — hazard on floor
-    /// * `G` — goal tile
-    pub fn from_layout(rows: &[&str], bindings: Bindings<Action>) -> Result<Self, MapError> {
-        let height = rows.len() as u16;
-        if height == 0 {
-            return Err(MapError::Empty);
-        }
-        let width = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
-        if width == 0 {
-            return Err(MapError::Empty);
-        }
-        let tiles = TileGrid::new(width, height, Tile::Wall);
-        let mut map = Map {
-            width,
-            height,
-            tiles,
-        };
-
-        let mut world = World::new();
-        let mut player_spawn: Option<Position> = None;
-
-        for (y, row) in rows.iter().enumerate() {
-            for (x, ch) in row.chars().enumerate() {
-                let (tile, entity_kind) = match ch {
-                    '#' => (Tile::Wall, None),
-                    '.' => (Tile::Floor, None),
-                    '@' => (Tile::Floor, Some(SpawnKind::Player)),
-                    'p' => (Tile::Floor, Some(SpawnKind::Package)),
-                    'h' => (Tile::Floor, Some(SpawnKind::Hazard)),
-                    'G' => (Tile::Goal, None),
-                    ' ' => (Tile::Wall, None), // treat padding as wall
-                    other => return Err(MapError::UnknownGlyph(other)),
-                };
-                map.set(x as u16, y as u16, tile);
-                if let Some(kind) = entity_kind {
-                    let pos = Position {
-                        x: x as i16,
-                        y: y as i16,
-                    };
-                    match kind {
-                        SpawnKind::Player => {
-                            if player_spawn.is_some() {
-                                return Err(MapError::DuplicatePlayer);
-                            }
-                            player_spawn = Some(pos);
-                        }
-                        SpawnKind::Package => {
-                            let e = world.spawn();
-                            world.insert(e, pos);
-                            world.insert(e, Package);
-                        }
-                        SpawnKind::Hazard => {
-                            let e = world.spawn();
-                            world.insert(e, pos);
-                            world.insert(e, Hazard);
-                        }
-                    }
-                }
-            }
-        }
-
-        let player_spawn = player_spawn.ok_or(MapError::NoPlayer)?;
-        let player = world.spawn();
-        world.insert(player, player_spawn);
-        world.insert(player, Player);
-
-        world.insert_resource(map);
-        world.insert_resource(GameState::default());
-
-        Ok(Self {
-            world,
-            router: InputRouter::new(bindings),
-            player,
-        })
-    }
-
-    pub fn player_entity(&self) -> Entity {
-        self.player
-    }
-
-    pub fn state(&self) -> &GameState {
-        self.world
-            .resource::<GameState>()
-            .expect("game state resource")
-    }
-
-    pub fn map(&self) -> &Map {
-        self.world.resource::<Map>().expect("map resource")
-    }
-
-    pub fn player_position(&self) -> Position {
-        *self
-            .world
-            .get::<Position>(self.player)
-            .expect("player has position")
-    }
-
-    pub fn outcome(&self) -> Outcome {
-        self.state().outcome
-    }
-
-    pub fn is_over(&self) -> bool {
-        !matches!(self.outcome(), Outcome::Playing)
-    }
-
-    /// Drain the router and apply each action. Stops if the game ends.
-    /// Returns the number of actions consumed.
-    pub fn run_pending(&mut self) -> usize {
-        self.run_pending_reports().len()
-    }
-
-    /// Drain pending actions and keep a report for each applied action.
-    pub fn run_pending_reports(&mut self) -> Vec<StepReport> {
-        if self.is_over() {
-            self.router.clear();
-            return Vec::new();
-        }
-        let mut reports = Vec::new();
-        while let Some(queued) = self.router.next_queued() {
-            reports.push(self.step_from(queued.action, queued.source));
-            if self.is_over() {
-                self.router.clear();
-                break;
-            }
-        }
-        reports
-    }
-
-    /// Feed a terminal event in. Same downstream path as `inject`/scripts.
-    pub fn handle_event(&mut self, event: InputEvent) -> bool {
-        self.router.handle(event)
-    }
-
-    /// Inject one action and apply it immediately.
-    pub fn inject_apply(&mut self, action: Action) {
-        self.router.inject(action);
-        self.run_pending();
-    }
-
-    /// Apply one action and return the state delta an agent or script runner
-    /// can inspect.
-    pub fn step(&mut self, action: Action) -> StepReport {
-        self.step_from(action, ActionSource::Test)
-    }
-
-    /// Apply one sourced action and return the state delta an agent or script
-    /// runner can inspect. The source is report metadata only; behavior is
-    /// still entirely controlled by [`Self::apply`].
-    pub fn step_from(&mut self, action: Action, source: ActionSource) -> StepReport {
-        let before = self.snapshot();
-        let result = self.apply(action);
-        let after = self.snapshot();
-        StepReport {
-            action,
-            source,
-            result,
-            changed: before != after,
-            turn_advanced: after.turn > before.turn,
-            before,
-            after,
-        }
-    }
-
-    /// Apply a single action against the game state.
-    ///
-    /// This is the spine of `terminal event -> game action -> game system ->
-    /// observable state`. Interactive frontends, scripts, tests, and agents
-    /// all converge here.
-    pub fn apply(&mut self, action: Action) -> ActionResult {
-        if self.is_over() {
-            return ActionResult::IgnoredGameOver;
-        }
-        match action {
-            Action::Quit => {
-                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Quit;
-                ActionResult::Ended(Outcome::Quit)
-            }
-            Action::Wait => {
-                self.advance_turn();
-                ActionResult::Advanced
-            }
-            Action::PickUp => {
-                if self.try_pick_up() {
-                    self.advance_turn();
-                    ActionResult::Advanced
-                } else {
-                    ActionResult::NoOp
-                }
-            }
-            mv => {
-                if let Some(direction) = mv.direction() {
-                    if self.try_move(direction) {
-                        self.advance_turn();
-                        self.resolve_tile();
-                        if self.is_over() {
-                            ActionResult::Ended(self.outcome())
-                        } else {
-                            ActionResult::Advanced
-                        }
-                    } else {
-                        ActionResult::NoOp
-                    }
-                } else {
-                    ActionResult::NoOp
-                }
-            }
-        }
-    }
-
-    fn try_move(&mut self, direction: Direction) -> bool {
-        let current = self.player_position();
-        let target = current.step(direction);
-        match self.map().tile(target.x, target.y) {
-            Tile::Wall => false,
-            Tile::Floor | Tile::Goal => {
-                *self.world.get_mut::<Position>(self.player).unwrap() = target;
-                true
-            }
-        }
-    }
-
-    fn try_pick_up(&mut self) -> bool {
-        let pos = self.player_position();
-        let found = self
-            .world
-            .query2::<Position, Package>()
-            .into_iter()
-            .find_map(|(e, package_pos, _)| (*package_pos == pos).then_some(e));
-        if let Some(entity) = found {
-            self.world.despawn(entity);
-            self.world.resource_mut::<GameState>().unwrap().has_package = true;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn resolve_tile(&mut self) {
-        let pos = self.player_position();
-        let on_hazard = self
-            .world
-            .query2::<Position, Hazard>()
-            .into_iter()
-            .any(|(_, hazard_pos, _)| *hazard_pos == pos);
-        if on_hazard {
-            self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Lost;
-            return;
-        }
-        let on_goal = matches!(self.map().tile(pos.x, pos.y), Tile::Goal);
-        let has_pkg = self.state().has_package;
-        if on_goal && has_pkg {
-            self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Won;
-        }
-    }
-
-    fn advance_turn(&mut self) {
-        self.world.resource_mut::<GameState>().unwrap().turn += 1;
-    }
-
-    /// Render the current state to a [`Grid`].
-    pub fn render(&self) -> Grid {
-        let map = self.map();
-        let mut grid = Grid::new(map.width, map.height);
-        for y in 0..map.height {
-            for x in 0..map.width {
-                let cell = match map.tile(x as i16, y as i16) {
-                    Tile::Wall => Cell::new('#').with_fg(Color::DARK_GREY),
-                    Tile::Floor => Cell::new('.').with_fg(Color::GREY),
-                    Tile::Goal => Cell::new('G').with_fg(Color::GREEN),
-                };
-                grid.put(x, y, cell);
-            }
-        }
-        // Layer order: hazards, packages, player on top.
-        for (_, pos, _) in self.world.query2::<Position, Hazard>() {
-            grid.put(
-                pos.x as u16,
-                pos.y as u16,
-                Cell::new('h').with_fg(Color::RED),
-            );
-        }
-        for (_, pos, _) in self.world.query2::<Position, Package>() {
-            grid.put(
-                pos.x as u16,
-                pos.y as u16,
-                Cell::new('p').with_fg(Color::YELLOW),
-            );
-        }
-        let player_pos = self.player_position();
-        let player_color = if self.state().has_package {
-            Color::CYAN
-        } else {
-            Color::WHITE
-        };
-        grid.put(
-            player_pos.x as u16,
-            player_pos.y as u16,
-            Cell::new('@').with_fg(player_color),
-        );
-        grid
-    }
-
-    pub fn snapshot(&self) -> Snapshot {
-        let player = self.player_position();
-        let packages = self
-            .world
-            .query2::<Position, Package>()
-            .into_iter()
-            .map(|(_, pos, _)| *pos)
-            .collect::<Vec<_>>();
-        let hazards = self
-            .world
-            .query2::<Position, Hazard>()
-            .into_iter()
-            .map(|(_, pos, _)| *pos)
-            .collect::<Vec<_>>();
-        let map = self.map();
-        let state = self.state();
-        Snapshot {
-            turn: state.turn,
-            outcome: state.outcome,
-            has_package: state.has_package,
-            player,
-            packages,
-            hazards,
-            map_width: map.width,
-            map_height: map.height,
-            tile_under_player: map.tile(player.x, player.y),
-            walkable_neighbors: map.walkable_neighbors(player),
-            frame: self.render().to_plain_string(),
-        }
-    }
-}
-
-impl Default for Game {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-enum SpawnKind {
-    Player,
-    Package,
-    Hazard,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum MapError {
-    Empty,
-    NoPlayer,
-    DuplicatePlayer,
-    UnknownGlyph(char),
-}
-
-impl std::fmt::Display for MapError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MapError::Empty => write!(f, "map layout is empty"),
-            MapError::NoPlayer => write!(f, "map layout has no '@' player spawn"),
-            MapError::DuplicatePlayer => write!(f, "map layout has more than one '@'"),
-            MapError::UnknownGlyph(c) => write!(f, "map layout has unknown glyph '{c}'"),
-        }
-    }
-}
-
-impl std::error::Error for MapError {}
-
-/// The default map shipped with the prototype. Small, fits in a terminal, has
-/// every interesting tile: walls, floors, a goal, a package, and a hazard.
-pub const DEFAULT_MAP: &[&str] = &[
-    "##########",
-    "#@.......#",
-    "#.##.###.#",
-    "#.#....#.#",
-    "#.#.p..#.#",
-    "#.#....#.#",
-    "#.######.#",
-    "#..h.....#",
-    "#.......G#",
-    "##########",
-];
-
-// ----------------------------------------------------------------------------
-// Tests — drive the game through the same path scripts/agents use.
-// ----------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use verryte_input::{ActionSource, InputEvent, Key, MouseButton};
 
     fn fresh() -> Game {
         Game::new()
@@ -681,17 +47,170 @@ mod tests {
     fn wait_advances_turn_without_moving() {
         let mut g = fresh();
         let pos_before = g.player_position();
-        g.inject_apply(Action::Wait);
+        let report = g.step(Action::Wait);
         assert_eq!(g.player_position(), pos_before);
         assert_eq!(g.state().turn, 1);
+        assert_eq!(report.events, vec![GameEvent::Waited { at: pos_before }]);
     }
 
     #[test]
     fn movement_advances_turn() {
         let mut g = fresh();
-        g.inject_apply(Action::MoveEast);
+        let report = g.step(Action::MoveEast);
         assert_eq!(g.player_position(), Position { x: 2, y: 1 });
         assert_eq!(g.state().turn, 1);
+        assert_eq!(
+            report.events,
+            vec![GameEvent::Moved {
+                from: Position { x: 1, y: 1 },
+                to: Position { x: 2, y: 1 },
+            }]
+        );
+    }
+
+    #[test]
+    fn step_to_package_uses_pathfinding_and_advances_turn() {
+        let layout = &["#####", "#@.p#", "#...#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        let report = g.step(Action::StepToPackage);
+        assert_eq!(report.result, ActionResult::Advanced);
+        assert_eq!(g.player_position(), Position { x: 2, y: 1 });
+        assert_eq!(g.state().turn, 1);
+    }
+
+    #[test]
+    fn step_to_goal_uses_pathfinding_and_advances_turn() {
+        let layout = &["#####", "#@..#", "#..G#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        let report = g.step(Action::StepToGoal);
+        assert_eq!(report.result, ActionResult::Advanced);
+        assert_eq!(g.player_position(), Position { x: 1, y: 2 });
+        assert_eq!(g.state().turn, 1);
+    }
+
+    #[test]
+    fn step_to_safety_moves_toward_a_safer_neighbor() {
+        let layout = &["#####", "#...#", "#@h.#", "#...#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        let report = g.step(Action::StepToSafety);
+        assert_eq!(report.result, ActionResult::Advanced);
+        assert_eq!(g.player_position(), Position { x: 1, y: 1 });
+        assert_eq!(g.state().turn, 1);
+    }
+
+    #[test]
+    fn step_to_safety_is_noop_when_no_neighbor_is_safer() {
+        let layout = &["#######", "#h.@.h#", "#######"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        let report = g.step(Action::StepToSafety);
+        assert_eq!(report.result, ActionResult::NoOp);
+        assert_eq!(g.player_position(), Position { x: 3, y: 1 });
+        assert_eq!(g.state().turn, 0);
+    }
+
+    #[test]
+    fn scan_advances_turn_and_reports_visible_state() {
+        let layout = &["#######", "#@..hG#", "#..#..#", "#######"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        let report = g.step(Action::Scan);
+        let snap = g.snapshot();
+
+        assert_eq!(g.state().turn, 1);
+        assert_eq!(g.state().scans, 1);
+        assert_eq!(report.result, ActionResult::Advanced);
+        assert!(snap.visible_tiles.contains(&Position { x: 1, y: 1 }));
+        assert!(snap.visible_hazards.contains(&Position { x: 4, y: 1 }));
+        assert_eq!(
+            report.events,
+            vec![GameEvent::Scanned {
+                at: Position { x: 1, y: 1 },
+                visible_tiles: report.after.visible_tiles.len(),
+                visible_hazards: report.after.visible_hazards.len(),
+            }]
+        );
+    }
+
+    #[test]
+    fn scan_radius_reports_limited_visibility() {
+        let layout = &["##########", "#@.......#", "##########"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        let report = g.step(Action::ScanRadius(2));
+        assert_eq!(g.state().scans, 1);
+        // Radius 2 from (1,1) should see (0,1), (1,1), (2,1), (3,1) and walls around it.
+        // Horizontal range: 1-2 to 1+2 -> -1 to 3. Map bounds are 0 to 9.
+        // So it sees x in [0, 3]. (0,1), (1,1), (2,1), (3,1) -> 4 floor/goal tiles.
+        // Wait, visible_from might be more restrictive.
+
+        if let GameEvent::Scanned { visible_tiles, .. } = report.events[0] {
+            assert!(visible_tiles > 0);
+            assert!(visible_tiles < 50); // Should be much less than the whole map
+        } else {
+            panic!("Expected Scanned event");
+        }
+    }
+
+    #[test]
+    fn scan_radius_shortcut_keys_follow_terminal_path() {
+        let mut g = fresh();
+
+        assert!(g.handle_event(InputEvent::Key(Key::Char('3'))));
+        let reports = g.run_pending_reports();
+
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].action, Action::ScanRadius(3));
+        assert_eq!(reports[0].source, ActionSource::Terminal);
+        assert_eq!(reports[0].result, ActionResult::Advanced);
+        assert_eq!(g.state().scans, 1);
+    }
+
+    #[test]
+    fn scan_radius_script_tokens_parse_through_shared_router() {
+        let mut g = fresh();
+        let count = g
+            .router
+            .inject_script_with(
+                &default_commands(),
+                "scan:2 x3 scan4",
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .expect("radius commands should parse");
+
+        let reports = g.run_pending_reports();
+        assert_eq!(count, 3);
+        assert_eq!(reports.len(), 3);
+        assert_eq!(reports[0].action, Action::ScanRadius(2));
+        assert_eq!(reports[1].action, Action::ScanRadius(3));
+        assert_eq!(reports[2].action, Action::ScanRadius(4));
+        assert!(reports
+            .iter()
+            .all(|report| report.source == ActionSource::Script));
+        assert_eq!(g.state().scans, 3);
+    }
+
+    #[test]
+    fn mouse_scan_uses_the_same_terminal_action_path() {
+        let mut g = fresh();
+
+        assert!(g.handle_event(InputEvent::Mouse {
+            x: 0,
+            y: 0,
+            button: MouseButton::Right,
+            pressed: true,
+        }));
+        let reports = g.run_pending_reports();
+
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].action, Action::Scan);
+        assert_eq!(reports[0].source, ActionSource::Terminal);
+        assert_eq!(reports[0].result, ActionResult::Advanced);
+        assert_eq!(g.state().scans, 1);
     }
 
     #[test]
@@ -707,6 +226,40 @@ mod tests {
     }
 
     #[test]
+    fn dropping_package_restores_package_entity_through_shared_action_path() {
+        let layout = &["#####", "#@p.#", "###G#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        g.router
+            .inject_script(&default_commands(), "east pickup drop", ActionSource::Agent)
+            .unwrap();
+        let reports = g.run_pending_reports();
+
+        assert_eq!(reports.len(), 3);
+        assert_eq!(reports[2].action, Action::Drop);
+        assert_eq!(reports[2].source, ActionSource::Agent);
+        assert_eq!(
+            reports[2].events,
+            vec![GameEvent::Dropped {
+                at: Position { x: 2, y: 1 },
+            }]
+        );
+        assert!(!g.state().has_package);
+        assert_eq!(g.snapshot().packages, vec![Position { x: 2, y: 1 }]);
+        assert_eq!(g.state().turn, 3);
+    }
+
+    #[test]
+    fn drop_without_package_is_noop() {
+        let mut g = fresh();
+        let report = g.step(Action::Drop);
+
+        assert_eq!(report.result, ActionResult::NoOp);
+        assert_eq!(g.state().turn, 0);
+        assert_eq!(report.events, Vec::<GameEvent>::new());
+    }
+
+    #[test]
     fn reaching_goal_with_package_wins() {
         let layout = &["#####", "#@p.#", "###G#", "#####"];
         let mut g = Game::from_layout(layout, default_bindings()).unwrap();
@@ -719,6 +272,34 @@ mod tests {
         g.run_pending();
         assert_eq!(g.outcome(), Outcome::Won);
         assert!(g.is_over());
+    }
+
+    #[test]
+    fn winning_step_reports_pickup_and_outcome_events() {
+        let layout = &["#####", "#@p.#", "###G#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        g.step(Action::MoveEast);
+        let pickup = g.step(Action::PickUp);
+        g.step(Action::MoveEast);
+        let win = g.step(Action::MoveSouth);
+
+        assert_eq!(
+            pickup.events,
+            vec![GameEvent::PickedUp {
+                at: Position { x: 2, y: 1 },
+            }]
+        );
+        assert_eq!(
+            win.events,
+            vec![
+                GameEvent::Moved {
+                    from: Position { x: 3, y: 1 },
+                    to: Position { x: 3, y: 2 },
+                },
+                GameEvent::OutcomeChanged(Outcome::Won),
+            ]
+        );
     }
 
     #[test]
@@ -739,6 +320,16 @@ mod tests {
         let report = g.step(Action::MoveEast);
         assert_eq!(g.outcome(), Outcome::Lost);
         assert_eq!(report.result, ActionResult::Ended(Outcome::Lost));
+        assert_eq!(
+            report.events,
+            vec![
+                GameEvent::Moved {
+                    from: Position { x: 1, y: 1 },
+                    to: Position { x: 2, y: 1 },
+                },
+                GameEvent::OutcomeChanged(Outcome::Lost),
+            ]
+        );
         assert!(g.is_over());
     }
 
@@ -771,6 +362,40 @@ mod tests {
     }
 
     #[test]
+    fn quit_is_allowed_after_game_over_to_exit_frontends() {
+        let layout = &["#####", "#@h.#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        g.inject_apply(Action::MoveEast); // lose first
+
+        g.handle_event(InputEvent::Key(Key::Char('q')));
+        let reports = g.run_pending_reports();
+
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].action, Action::Quit);
+        assert_eq!(reports[0].source, ActionSource::Terminal);
+        assert_eq!(reports[0].result, ActionResult::Ended(Outcome::Quit));
+        assert_eq!(
+            reports[0].events,
+            vec![GameEvent::OutcomeChanged(Outcome::Quit)]
+        );
+        assert_eq!(g.outcome(), Outcome::Quit);
+    }
+
+    #[test]
+    fn message_log_records_human_readable_events() {
+        let layout = &["#####", "#@p.#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        g.step(Action::MoveEast);
+        g.step(Action::PickUp);
+        g.step(Action::Wait);
+
+        let msgs = g.messages();
+        assert!(msgs.iter().any(|m| m.contains("Moved to 2,1")));
+        assert!(msgs.iter().any(|m| m.contains("Picked up a package!")));
+        assert!(msgs.iter().any(|m| m.contains("Waited...")));
+    }
+
+    #[test]
     fn terminal_event_and_script_share_the_same_path() {
         // Drive one move via a Key event, the next via an injected action,
         // and assert the world cannot tell them apart.
@@ -797,27 +422,41 @@ mod tests {
     #[test]
     fn script_commands_parse_and_drive_the_shared_router() {
         let mut g = fresh();
-        let actions = default_commands()
-            .parse_words("east east wait")
+        let count = g
+            .router
+            .inject_script(
+                &default_commands(),
+                "east step_package wait",
+                ActionSource::Script,
+            )
             .expect("known commands");
-        g.router.inject_all(actions);
         let reports = g.run_pending_reports();
 
+        assert_eq!(count, 3);
         assert_eq!(reports.len(), 3);
         assert_eq!(reports[0].action, Action::MoveEast);
         assert_eq!(reports[0].source, ActionSource::Script);
         assert!(reports[0].changed);
         assert!(reports[0].turn_advanced);
+        assert_eq!(reports[1].action, Action::StepToPackage);
         assert_eq!(g.player_position(), Position { x: 3, y: 1 });
         assert_eq!(g.state().turn, 3);
     }
 
     #[test]
     fn compact_glyph_scripts_use_engine_command_bindings() {
-        let parsed = default_commands().parse_glyphs("e . W").unwrap();
+        let parsed = default_commands().parse_glyphs("e . W p o v !").unwrap();
         assert_eq!(
             parsed,
-            vec![Action::MoveEast, Action::Wait, Action::MoveWest]
+            vec![
+                Action::MoveEast,
+                Action::Wait,
+                Action::MoveWest,
+                Action::StepToPackage,
+                Action::StepToGoal,
+                Action::StepToSafety,
+                Action::Drop
+            ]
         );
     }
 
@@ -856,21 +495,69 @@ mod tests {
         let mut g = fresh();
         let snap = g.snapshot();
         assert_eq!(snap.outcome, Outcome::Playing);
+        assert_eq!(snap.scans, 0);
         assert_eq!(snap.player, Position { x: 1, y: 1 });
         assert_eq!(snap.tile_under_player, Tile::Floor);
+        assert!(snap.visible_tiles.contains(&snap.player));
+        assert!(snap.reachable_tiles.contains(&snap.player));
+        assert!(snap.reachable_tiles.contains(&Position { x: 8, y: 8 }));
+        assert!(!snap.reachable_tiles.contains(&Position { x: 0, y: 0 }));
         assert_eq!(
             snap.walkable_neighbors,
             vec![Position { x: 1, y: 2 }, Position { x: 2, y: 1 }]
         );
+        assert_eq!(
+            snap.path_to_nearest_package.as_ref().unwrap().first(),
+            Some(&snap.player)
+        );
+        assert_eq!(
+            snap.path_to_nearest_package.as_ref().unwrap().last(),
+            Some(&Position { x: 4, y: 4 })
+        );
+        assert_eq!(
+            snap.path_to_goal.as_ref().unwrap().last(),
+            Some(&Position { x: 8, y: 8 })
+        );
+        assert_eq!(
+            snap.path_to_nearest_hazard.as_ref().unwrap().last(),
+            Some(&Position { x: 3, y: 7 })
+        );
+        assert!(snap.chasers.is_empty());
+        assert_eq!(snap.path_to_nearest_chaser, None);
+        assert_eq!(snap.distance_to_nearest_package, Some(6));
+        assert_eq!(snap.distance_to_goal, Some(14));
+        assert_eq!(snap.distance_to_nearest_hazard, Some(8));
+        assert_eq!(snap.distance_to_nearest_chaser, None);
+        assert_eq!(snap.safer_neighbors, vec![Position { x: 2, y: 1 }]);
         // Frame must contain a player glyph.
         assert!(snap.frame.contains('@'));
         // ...and have the right number of rows.
         assert_eq!(snap.frame.lines().count() as u16, snap.map_height);
+        assert!(snap.local_frame.contains('@'));
+        assert!(snap.local_frame.lines().count() <= 7);
         // Forward progress reflects in the snapshot.
         g.inject_apply(Action::MoveEast);
         let snap2 = g.snapshot();
         assert_eq!(snap2.player, Position { x: 2, y: 1 });
         assert_eq!(snap2.turn, 1);
+    }
+
+    #[test]
+    fn render_viewport_tracks_the_player_and_clips_to_map() {
+        let mut g = fresh();
+        let top_left = g.render_viewport(5, 5).to_plain_string();
+        assert_eq!(top_left.lines().count(), 5);
+        assert!(top_left.contains('@'));
+
+        g.router
+            .inject_script(&default_commands(), "eesss", ActionSource::Test)
+            .unwrap();
+        g.run_pending();
+        let near_package = g.render_viewport(5, 5).to_plain_string();
+
+        assert!(near_package.contains('@'));
+        assert!(near_package.contains('p'));
+        assert_ne!(top_left, near_package);
     }
 
     #[test]
@@ -901,5 +588,92 @@ mod tests {
         assert_eq!(reports[1].action, Action::Wait);
         assert_eq!(reports[1].source, ActionSource::Agent);
         assert_eq!(g.state().turn, 2);
+    }
+
+    #[test]
+    fn action_trace_replays_through_the_same_report_path() {
+        let mut g = fresh();
+        let trace = verryte_input::ActionTrace::from_actions(
+            [Action::MoveEast, Action::MoveEast, Action::Wait],
+            ActionSource::Replay,
+        );
+
+        trace.replay_into(&mut g.router);
+        let reports = g.run_pending_reports();
+
+        assert_eq!(reports.len(), 3);
+        assert!(reports
+            .iter()
+            .all(|report| report.source == ActionSource::Replay));
+        assert_eq!(g.player_position(), Position { x: 3, y: 1 });
+        assert_eq!(g.state().turn, 3);
+    }
+
+    #[test]
+    fn message_log_records_chaser_movement_events() {
+        let layout = &["#######", "#@...c#", "#######"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        g.step(Action::Wait);
+        let messages = g.messages();
+
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("A chaser moved from 5,1 to 4,1")));
+    }
+
+    #[test]
+    fn chasers_move_toward_player() {
+        let layout = &["#######", "#@...c#", "#######"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        let start_pos = g.player_position();
+        assert_eq!(start_pos, Position { x: 1, y: 1 });
+
+        // Let's find the chaser
+        let chasers: Vec<_> = g
+            .world
+            .query2::<Position, crate::components::Chaser>()
+            .into_iter()
+            .map(|(e, pos, _)| (e, *pos))
+            .collect();
+        assert_eq!(chasers.len(), 1);
+        let chaser_start = chasers[0].1;
+        assert_eq!(chaser_start, Position { x: 5, y: 1 });
+
+        // Player waits, chaser should move towards player (left by 1)
+        let report = g.step(Action::Wait);
+        assert!(report
+            .events
+            .iter()
+            .any(|event| matches!(event, GameEvent::Waited { .. })));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            GameEvent::ChaserMoved {
+                from: Position { x: 5, y: 1 },
+                to: Position { x: 4, y: 1 }
+            }
+        )));
+
+        let chaser_pos = *g.world.get::<Position>(chasers[0].0).unwrap();
+        assert_eq!(chaser_pos, Position { x: 4, y: 1 });
+        let snap = g.snapshot();
+        assert_eq!(snap.chasers, vec![Position { x: 4, y: 1 }]);
+        assert_eq!(snap.distance_to_nearest_chaser, Some(3));
+        assert_eq!(
+            snap.path_to_nearest_chaser,
+            Some(vec![
+                Position { x: 1, y: 1 },
+                Position { x: 2, y: 1 },
+                Position { x: 3, y: 1 },
+                Position { x: 4, y: 1 }
+            ])
+        );
+
+        // Wait again, chaser should move left again
+        g.step(Action::Wait);
+
+        let chaser_pos = *g.world.get::<Position>(chasers[0].0).unwrap();
+        assert_eq!(chaser_pos, Position { x: 3, y: 1 });
     }
 }

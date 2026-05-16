@@ -14,23 +14,34 @@ input/script path. Highlights:
 
 - An ASCII level loader (`Game::from_layout`) recognising `#` walls, `.` floor,
   `@` player spawn, `p` package, `h` hazard, `G` goal.
-- An `Action` enum covering `MoveNorth/South/East/West`, `Wait`, `PickUp`, and
-  `Quit`, bound to arrow keys, WASD, vi keys, plus `.` / `,` / `q` / `Esc`.
+- An `Action` enum covering `MoveNorth/South/East/West`, `StepToPackage`,
+  `StepToGoal`, `StepToSafety`, `Wait`, `Scan`, `ScanRadius(u16)`, `PickUp`,
+  `Drop`, and `Quit`,
+  bound to arrow keys, WASD, vi keys, plus `.` / `x` / `p` / `o` / `r` / `,` /
+  `D` / `q` / `Esc`, plus `1`-`5` for fixed-radius scans.
+  Right mouse press also maps to `Scan`, and middle mouse press maps to `Wait`
+  through the same router path.
 - A single `Game::apply(action)` spine. Terminal events, scripted injections,
   and tests all converge here — there is no separate test-only code path.
-- `GameState` resource (turn counter, outcome, package flag) and an entity for
-  the player, each package, and each hazard.
+- `GameState` resource (turn counter, outcome, package flag, scan count), a
+  per-action `Events<GameEvent>` resource, and an entity for the player, each
+  package, and each hazard.
 - A layered `render()` that walks the ECS to produce a `Grid` (walls / goal,
   then hazards, then packages, then player on top).
-- A structured `Snapshot { turn, outcome, has_package, player, packages,
-  hazards, map_width, map_height, tile_under_player, walkable_neighbors,
-  frame }` for tests and agents.
+- A structured `Snapshot { turn, outcome, has_package, scans, player,
+  packages, hazards, chasers, visible_tiles, visible_hazards, map_width,
+  map_height, reachable_tiles, tile_under_player, walkable_neighbors,
+  path_to_nearest_package, path_to_goal, path_to_nearest_hazard,
+  path_to_nearest_chaser, distance_to_nearest_package, distance_to_goal,
+  distance_to_nearest_hazard, distance_to_nearest_chaser, safer_neighbors,
+  frame, local_frame }` for tests and agents.
 - A scripted-run binary (`ash-courier-script`) and tests covering wall
   blocking, hazard loss, goal win, terminal-event parity, command parsing,
   step reports, and ignored post-game actions.
 - Per-step reports include the action source (`Terminal`, `Script`, `Agent`,
-  `Replay`, or `Test`) and an explicit action result (`NoOp`, `Advanced`,
-  `Ended`, or `IgnoredGameOver`).
+  `Replay`, or `Test`), an explicit action result (`NoOp`, `Advanced`,
+  `Ended`, or `IgnoredGameOver`), and the `GameEvent` list emitted by that
+  action.
 
 ## How to drive it
 
@@ -52,6 +63,17 @@ game.run_pending();
 assert_eq!(game.outcome(), Outcome::Won);
 ```
 
+Replay trace:
+
+```rust
+let trace = verryte_input::ActionTrace::from_actions(
+    [Action::MoveEast, Action::PickUp, Action::Drop],
+    verryte_input::ActionSource::Replay,
+);
+trace.replay_into(&mut game.router);
+let reports = game.run_pending_reports();
+```
+
 CLI smoke test:
 
 ```sh
@@ -60,7 +82,9 @@ cargo run -p ash-courier --bin ash-courier-script -- "eeesss,nnneeeesssssss"
 
 The script runner accepts named commands and compact glyphs in the same input.
 Named commands are useful for readable tests; glyph runs are useful for compact
-replay strings.
+replay strings. Scripts also accept `;` separators and `#` inline comments.
+Parameterized scan tokens are also supported (`scan:3`, `scan3`, `x3`) through
+the same shared `InputRouter` queue path.
 
 ## Why This Prototype Exists
 
@@ -119,11 +143,15 @@ Ash Courier currently exposes:
 - `default_bindings()` for terminal-style key input
 - `default_commands()` for named and compact script commands
 - `InputRouter<Action>` as the single queue for both paths
+- `InputRouter::inject_script` / `inject_script_with` for sourced
+  script/agent injection, including parameterized command tokens
+- `ActionTrace` replay for recorded or planned sourced action runs
 - `Game::run_pending_reports()` for per-action before/after snapshots
-- `Game::snapshot()` for agent/test-readable state, local map context, and a
-  plain rendered frame
+- `Game::snapshot()` for agent/test-readable state, local map context,
+  visibility, reachability, package/goal/hazard/chaser path hints, hazard-safe
+  neighboring moves, a plain rendered frame, and a local viewport frame
 
-The map uses `verryte-map` grid primitives and rendering uses
+The map uses `verryte-map` grid/path primitives and rendering uses
 `verryte-terminal` cell grids, keeping game rules in the prototype and reusable
 behavior in engine crates.
 
