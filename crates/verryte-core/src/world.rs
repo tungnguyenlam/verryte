@@ -20,6 +20,7 @@ trait Column: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn clear_index(&mut self, index: usize);
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
 }
 
 struct TypedColumn<T: 'static + Send + Sync> {
@@ -49,6 +50,9 @@ impl<T: 'static + Send + Sync> Column for TypedColumn<T> {
         if let Some(slot) = self.slots.get_mut(index) {
             *slot = None;
         }
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
     }
 }
 
@@ -115,8 +119,85 @@ impl World {
         true
     }
 
+    /// Despawn every live entity that has component `T`.
+    ///
+    /// Returns the number of entities removed. Useful for bulk cleanup of
+    /// temporary entities like projectiles, effects, or expired pickups.
+    pub fn despawn_with<T: 'static + Send + Sync>(&mut self) -> usize {
+        let entities: Vec<Entity> = self.query::<T>().into_iter().map(|(e, _)| e).collect();
+        let count = entities.len();
+        for entity in entities {
+            self.despawn(entity);
+        }
+        count
+    }
+
+    /// Keep only entities for which `predicate` returns `true`.
+    ///
+    /// Every live entity is tested; entities that fail the predicate are
+    /// despawned. Returns the number of entities removed.
+    pub fn retain<F>(&mut self, mut predicate: F) -> usize
+    where
+        F: FnMut(Entity) -> bool,
+    {
+        let to_remove: Vec<Entity> = self
+            .alive
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, &alive)| {
+                if !alive {
+                    return None;
+                }
+                let gen = self.generations[idx];
+                let entity = Entity {
+                    index: idx as u32,
+                    generation: gen,
+                };
+                (!predicate(entity)).then_some(entity)
+            })
+            .collect();
+        let count = to_remove.len();
+        for entity in to_remove {
+            self.despawn(entity);
+        }
+        count
+    }
+
     pub fn entity_count(&self) -> usize {
         self.alive.iter().filter(|a| **a).count()
+    }
+
+    /// Iterate over all live entities.
+    pub fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.alive.iter().enumerate().filter_map(|(idx, &alive)| {
+            if alive {
+                Some(Entity {
+                    index: idx as u32,
+                    generation: self.generations[idx],
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Despawn all live entities and clear their components, leaving resources intact.
+    pub fn clear_entities(&mut self) {
+        for idx in 0..self.alive.len() {
+            if self.alive[idx] {
+                self.alive[idx] = false;
+                for column in self.columns.values_mut() {
+                    column.clear_index(idx);
+                }
+                self.free.push(idx as u32);
+            }
+        }
+    }
+
+    /// Clear all state: entities, components, and resources. Returns to a fresh world.
+    pub fn clear(&mut self) {
+        self.clear_entities();
+        self.resources.clear();
     }
 
     /// Attach a component to an entity. Returns the previous value if one was
@@ -179,6 +260,43 @@ impl World {
         }
     }
 
+    /// Get a component, or insert a default value if the entity doesn't have it.
+    ///
+    /// Returns a mutable reference to the component. If the entity is stale,
+    /// returns `None`.
+    pub fn get_or_insert<T: 'static + Send + Sync + Default>(
+        &mut self,
+        entity: Entity,
+    ) -> Option<&mut T> {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        if self.get::<T>(entity).is_some() {
+            return self.get_mut::<T>(entity);
+        }
+        self.insert(entity, T::default());
+        self.get_mut::<T>(entity)
+    }
+
+    /// Get a component, or insert a provided value if the entity doesn't have it.
+    ///
+    /// Returns a mutable reference to the component. If the entity is stale,
+    /// returns `None`.
+    pub fn get_or_insert_with<T, F>(&mut self, entity: Entity, f: F) -> Option<&mut T>
+    where
+        T: 'static + Send + Sync,
+        F: FnOnce() -> T,
+    {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        if self.get::<T>(entity).is_some() {
+            return self.get_mut::<T>(entity);
+        }
+        self.insert(entity, f());
+        self.get_mut::<T>(entity)
+    }
+
     /// Collect every live `(entity, &component)` pair for a given component
     /// type. The result allocates so callers can hand the iterator off freely;
     /// the engine is not yet hot-loop oriented.
@@ -204,6 +322,36 @@ impl World {
             }
         }
         out
+    }
+
+    /// Query entities with a component, returning an iterator.
+    pub fn query_iter<T: 'static + Send + Sync>(&self) -> Query<'_, T> {
+        Query {
+            iter: self.query::<T>().into_iter(),
+        }
+    }
+
+    /// Query entities with two components, returning an iterator.
+    pub fn query2_iter<A, B>(&self) -> Query2<'_, A, B>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+    {
+        Query2 {
+            iter: self.query2::<A, B>().into_iter(),
+        }
+    }
+
+    /// Query entities with three components, returning an iterator.
+    pub fn query3_iter<A, B, C>(&self) -> Query3<'_, A, B, C>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+    {
+        Query3 {
+            iter: self.query3::<A, B, C>().into_iter(),
+        }
     }
 
     /// Collect every live entity that has both component types.
@@ -254,6 +402,72 @@ impl World {
         out
     }
 
+    /// Collect every live entity that has all three component types.
+    pub fn query3<A, B, C>(&self) -> Vec<(Entity, &A, &B, &C)>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+    {
+        let mut out = Vec::new();
+        if TypeId::of::<A>() == TypeId::of::<B>()
+            || TypeId::of::<A>() == TypeId::of::<C>()
+            || TypeId::of::<B>() == TypeId::of::<C>()
+        {
+            return out;
+        }
+
+        let Some(column_a) = self.columns.get(&TypeId::of::<A>()) else {
+            return out;
+        };
+        let Some(column_b) = self.columns.get(&TypeId::of::<B>()) else {
+            return out;
+        };
+        let Some(column_c) = self.columns.get(&TypeId::of::<C>()) else {
+            return out;
+        };
+        let Some(typed_a) = column_a.as_any().downcast_ref::<TypedColumn<A>>() else {
+            return out;
+        };
+        let Some(typed_b) = column_b.as_any().downcast_ref::<TypedColumn<B>>() else {
+            return out;
+        };
+        let Some(typed_c) = column_c.as_any().downcast_ref::<TypedColumn<C>>() else {
+            return out;
+        };
+
+        for (i, slot_a) in typed_a.slots.iter().enumerate() {
+            if i >= self.alive.len() || !self.alive[i] {
+                continue;
+            }
+            let Some((gen_a, value_a)) = slot_a else {
+                continue;
+            };
+            let Some((gen_b, value_b)) = typed_b.slots.get(i).and_then(|slot| slot.as_ref()) else {
+                continue;
+            };
+            if gen_a != gen_b {
+                continue;
+            }
+            let Some((gen_c, value_c)) = typed_c.slots.get(i).and_then(|slot| slot.as_ref()) else {
+                continue;
+            };
+            if gen_a != gen_c {
+                continue;
+            }
+            out.push((
+                Entity {
+                    index: i as u32,
+                    generation: *gen_a,
+                },
+                value_a,
+                value_b,
+                value_c,
+            ));
+        }
+        out
+    }
+
     /// Visit every live component of type `T` mutably.
     pub fn for_each_mut<T, F>(&mut self, mut f: F)
     where
@@ -282,6 +496,88 @@ impl World {
         }
     }
 
+    /// Visit every live entity that has both `A` and `B`, yielding mutable
+    /// references to both components.
+    ///
+    /// Returns `false` immediately if `A` and `B` are the same type, since
+    /// two simultaneous mutable borrows of the same column are not allowed.
+    pub fn for_each2_mut<A, B, F>(&mut self, mut f: F) -> bool
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        F: FnMut(Entity, &mut A, &mut B),
+    {
+        if TypeId::of::<A>() == TypeId::of::<B>() {
+            return false;
+        }
+        let id_a = TypeId::of::<A>();
+        let id_b = TypeId::of::<B>();
+
+        // Collect matching indices first (read-only).
+        let Some(col_a) = self.columns.get(&id_a) else {
+            return false;
+        };
+        let Some(col_b) = self.columns.get(&id_b) else {
+            return false;
+        };
+        let Some(typed_a) = col_a.as_any().downcast_ref::<TypedColumn<A>>() else {
+            return false;
+        };
+        let Some(typed_b) = col_b.as_any().downcast_ref::<TypedColumn<B>>() else {
+            return false;
+        };
+        let alive = &self.alive;
+        let len = typed_a
+            .slots
+            .len()
+            .min(typed_b.slots.len())
+            .min(alive.len());
+
+        let indices: Vec<usize> = (0..len)
+            .filter(|&i| {
+                if !alive[i] {
+                    return false;
+                }
+                typed_a.slots[i]
+                    .as_ref()
+                    .and_then(|(ga, _)| typed_b.slots[i].as_ref().map(|(gb, _)| ga == gb))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        if indices.is_empty() {
+            return true;
+        }
+
+        // Swap out the columns map to get owned access to both columns.
+        let mut columns = std::mem::take(&mut self.columns);
+        let col_a = columns.remove(&id_a).unwrap();
+        let col_b = columns.remove(&id_b).unwrap();
+
+        // Convert to Box<dyn Any> for safe downcast.
+        let any_a = col_a.into_any();
+        let any_b = col_b.into_any();
+        let mut typed_a = any_a.downcast::<TypedColumn<A>>().unwrap();
+        let mut typed_b = any_b.downcast::<TypedColumn<B>>().unwrap();
+
+        for i in indices {
+            let gen = typed_a.slots[i].as_ref().unwrap().0;
+            let (_, val_a) = typed_a.slots[i].as_mut().unwrap();
+            let (_, val_b) = typed_b.slots[i].as_mut().unwrap();
+            let entity = Entity {
+                index: i as u32,
+                generation: gen,
+            };
+            f(entity, val_a, val_b);
+        }
+
+        // Restore columns.
+        columns.insert(id_a, typed_a);
+        columns.insert(id_b, typed_b);
+        self.columns = columns;
+        true
+    }
+
     /// Install a resource of type `R`. Returns the previous value if present.
     pub fn insert_resource<R: 'static + Send + Sync>(&mut self, resource: R) -> Option<R> {
         let prev = self.resources.insert(TypeId::of::<R>(), Box::new(resource));
@@ -290,6 +586,10 @@ impl World {
 
     pub fn resource<R: 'static + Send + Sync>(&self) -> Option<&R> {
         self.resources.get(&TypeId::of::<R>())?.downcast_ref::<R>()
+    }
+
+    pub fn has_resource<R: 'static + Send + Sync>(&self) -> bool {
+        self.resources.contains_key(&TypeId::of::<R>())
     }
 
     pub fn resource_mut<R: 'static + Send + Sync>(&mut self) -> Option<&mut R> {
@@ -301,6 +601,42 @@ impl World {
     pub fn remove_resource<R: 'static + Send + Sync>(&mut self) -> Option<R> {
         let boxed = self.resources.remove(&TypeId::of::<R>())?;
         boxed.downcast::<R>().ok().map(|b| *b)
+    }
+}
+
+/// An iterator over query results.
+pub struct Query<'a, T> {
+    iter: std::vec::IntoIter<(Entity, &'a T)>,
+}
+
+impl<'a, T> Iterator for Query<'a, T> {
+    type Item = (Entity, &'a T);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+/// An iterator over two-component query results.
+pub struct Query2<'a, A, B> {
+    iter: std::vec::IntoIter<(Entity, &'a A, &'a B)>,
+}
+
+impl<'a, A, B> Iterator for Query2<'a, A, B> {
+    type Item = (Entity, &'a A, &'a B);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+/// An iterator over three-component query results.
+pub struct Query3<'a, A, B, C> {
+    iter: std::vec::IntoIter<(Entity, &'a A, &'a B, &'a C)>,
+}
+
+impl<'a, A, B, C> Iterator for Query3<'a, A, B, C> {
+    type Item = (Entity, &'a A, &'a B, &'a C);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
     }
 }
 
@@ -322,6 +658,12 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     struct Counter(u32);
+
+    impl Default for Counter {
+        fn default() -> Self {
+            Self(0)
+        }
+    }
 
     #[test]
     fn spawn_insert_get_roundtrip() {
@@ -377,6 +719,26 @@ mod tests {
     }
 
     #[test]
+    fn clear_entities_removes_all_entities_but_keeps_resources() {
+        let mut world = World::new();
+        let e1 = world.spawn();
+        world.insert(e1, Tag("one"));
+        let e2 = world.spawn();
+        world.insert(e2, Tag("two"));
+
+        world.insert_resource(Counter(42));
+
+        assert_eq!(world.entity_count(), 2);
+        world.clear_entities();
+
+        assert_eq!(world.entity_count(), 0);
+        assert!(!world.is_alive(e1));
+        assert!(!world.is_alive(e2));
+        assert!(world.query::<Tag>().is_empty());
+        assert_eq!(world.resource::<Counter>(), Some(&Counter(42)));
+    }
+
+    #[test]
     fn query2_only_returns_entities_with_both_components() {
         let mut world = World::new();
         let a = world.spawn();
@@ -420,6 +782,17 @@ mod tests {
     }
 
     #[test]
+    fn has_resource_checks_existence_without_borrowing() {
+        let mut world = World::new();
+        assert!(!world.has_resource::<Counter>());
+        world.insert_resource(Counter(42));
+        assert!(world.has_resource::<Counter>());
+        assert!(!world.has_resource::<Tag>());
+        world.remove_resource::<Counter>();
+        assert!(!world.has_resource::<Counter>());
+    }
+
+    #[test]
     fn remove_returns_value_and_clears_slot() {
         let mut world = World::new();
         let e = world.spawn();
@@ -427,5 +800,277 @@ mod tests {
         assert_eq!(world.remove::<Pos>(e), Some(Pos(7, 8)));
         assert_eq!(world.get::<Pos>(e), None);
         assert_eq!(world.remove::<Pos>(e), None);
+    }
+
+    #[test]
+    fn query3_only_returns_entities_with_all_three_components() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        let c = world.spawn();
+        let d = world.spawn();
+        world.insert(a, Pos(1, 1));
+        world.insert(a, Tag("alpha"));
+        world.insert(a, Counter(1));
+        world.insert(b, Pos(2, 2));
+        world.insert(b, Tag("beta"));
+        world.insert(c, Pos(3, 3));
+        world.insert(c, Counter(3));
+        world.insert(d, Tag("delta"));
+
+        let rows = world.query3::<Pos, Tag, Counter>();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, a);
+        assert_eq!(rows[0].1, &Pos(1, 1));
+        assert_eq!(rows[0].2, &Tag("alpha"));
+        assert_eq!(rows[0].3, &Counter(1));
+    }
+
+    #[test]
+    fn query3_returns_empty_when_no_entity_has_all_three() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.insert(a, Tag("only-two"));
+
+        assert!(world.query3::<Pos, Tag, Counter>().is_empty());
+    }
+
+    #[test]
+    fn despawn_with_removes_all_entities_having_component() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        let c = world.spawn();
+        world.insert(a, Pos(1, 1));
+        world.insert(a, Tag("player"));
+        world.insert(b, Pos(2, 2));
+        world.insert(b, Tag("enemy"));
+        world.insert(c, Pos(3, 3));
+
+        let removed = world.despawn_with::<Tag>();
+        assert_eq!(removed, 2);
+        assert_eq!(world.entity_count(), 1);
+        assert!(world.is_alive(c));
+        assert!(!world.is_alive(a));
+        assert!(!world.is_alive(b));
+    }
+
+    #[test]
+    fn despawn_with_returns_zero_when_none_match() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Pos(0, 0));
+
+        assert_eq!(world.despawn_with::<Tag>(), 0);
+        assert!(world.is_alive(a));
+    }
+
+    #[test]
+    fn retain_keeps_entities_matching_predicate() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        let c = world.spawn();
+        world.insert(a, Counter(1));
+        world.insert(b, Counter(5));
+        world.insert(c, Counter(10));
+
+        // Pre-collect the entities to keep.
+        let keep: Vec<Entity> = world
+            .query::<Counter>()
+            .into_iter()
+            .filter(|(_, c)| c.0 >= 5)
+            .map(|(e, _)| e)
+            .collect();
+        let removed = world.retain(|e| keep.contains(&e));
+        assert_eq!(removed, 1);
+        assert_eq!(world.entity_count(), 2);
+        assert!(!world.is_alive(a));
+        assert!(world.is_alive(b));
+        assert!(world.is_alive(c));
+    }
+
+    #[test]
+    fn retain_removes_all_when_none_match() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Counter(1));
+        world.insert(b, Counter(2));
+
+        let removed = world.retain(|_| false);
+        assert_eq!(removed, 2);
+        assert_eq!(world.entity_count(), 0);
+    }
+
+    #[test]
+    fn retain_keeps_all_when_all_match() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Counter(1));
+        world.insert(b, Counter(2));
+
+        let removed = world.retain(|_| true);
+        assert_eq!(removed, 0);
+        assert_eq!(world.entity_count(), 2);
+    }
+
+    #[test]
+    fn retain_does_not_affect_resources() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Counter(1));
+        world.insert_resource(Tag("keep"));
+
+        world.retain(|_| false);
+        assert_eq!(world.resource::<Tag>(), Some(&Tag("keep")));
+    }
+
+    #[test]
+    fn for_each2_mut_visits_entities_with_both_components() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        let c = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.insert(a, Counter(1));
+        world.insert(b, Pos(1, 1));
+        world.insert(b, Counter(2));
+        world.insert(c, Pos(2, 2));
+
+        world.for_each2_mut::<Pos, Counter, _>(|_, pos, counter| {
+            pos.0 += 10;
+            counter.0 += 100;
+        });
+
+        assert_eq!(world.get::<Pos>(a), Some(&Pos(10, 0)));
+        assert_eq!(world.get::<Counter>(a), Some(&Counter(101)));
+        assert_eq!(world.get::<Pos>(b), Some(&Pos(11, 1)));
+        assert_eq!(world.get::<Counter>(b), Some(&Counter(102)));
+        assert_eq!(world.get::<Counter>(c), None);
+    }
+
+    #[test]
+    fn for_each2_mut_returns_false_for_same_type() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Counter(5));
+
+        let result = world.for_each2_mut::<Counter, Counter, _>(|_, _, _| {});
+        assert!(!result);
+        assert_eq!(world.get::<Counter>(a), Some(&Counter(5)));
+    }
+
+    #[test]
+    fn for_each2_mut_returns_false_when_column_missing() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Pos(0, 0));
+
+        let result = world.for_each2_mut::<Pos, Counter, _>(|_, _, _| {});
+        assert!(!result);
+    }
+
+    #[test]
+    fn get_or_insert_returns_existing_component() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Counter(42));
+
+        let c = world.get_or_insert::<Counter>(e).unwrap();
+        assert_eq!(c.0, 42);
+        c.0 = 99;
+        assert_eq!(world.get::<Counter>(e), Some(&Counter(99)));
+    }
+
+    #[test]
+    fn get_or_insert_inserts_default_when_missing() {
+        let mut world = World::new();
+        let e = world.spawn();
+
+        let c = world.get_or_insert::<Counter>(e).unwrap();
+        assert_eq!(c.0, 0);
+        c.0 = 5;
+        assert_eq!(world.get::<Counter>(e), Some(&Counter(5)));
+    }
+
+    #[test]
+    fn get_or_insert_returns_none_for_stale_entity() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.despawn(e);
+
+        assert!(world.get_or_insert::<Counter>(e).is_none());
+    }
+
+    #[test]
+    fn get_or_insert_with_uses_closure() {
+        let mut world = World::new();
+        let e = world.spawn();
+
+        let c = world.get_or_insert_with(e, || Counter(77)).unwrap();
+        assert_eq!(c.0, 77);
+    }
+
+    #[test]
+    fn entities_iterates_all_live_entities() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        let c = world.spawn();
+        world.despawn(b);
+
+        let entities: Vec<Entity> = world.entities().collect();
+        assert_eq!(entities.len(), 2);
+        assert!(entities.contains(&a));
+        assert!(entities.contains(&c));
+        assert!(!entities.contains(&b));
+    }
+
+    #[test]
+    fn entities_is_empty_for_no_entities() {
+        let world = World::new();
+        assert_eq!(world.entities().count(), 0);
+    }
+
+    #[test]
+    fn query2_iter_yields_matching_entities() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        let c = world.spawn();
+        world.insert(a, Pos(1, 1));
+        world.insert(a, Tag("player"));
+        world.insert(b, Pos(2, 2));
+        world.insert(c, Tag("marker"));
+
+        let count = world.query2_iter::<Pos, Tag>().count();
+        assert_eq!(count, 1);
+
+        let results: Vec<_> = world.query2_iter::<Pos, Tag>().collect();
+        assert_eq!(results[0].0, a);
+        assert_eq!(results[0].1, &Pos(1, 1));
+        assert_eq!(results[0].2, &Tag("player"));
+    }
+
+    #[test]
+    fn query3_iter_yields_matching_entities() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Pos(1, 1));
+        world.insert(a, Tag("alpha"));
+        world.insert(a, Counter(1));
+        world.insert(b, Pos(2, 2));
+        world.insert(b, Tag("beta"));
+
+        let results: Vec<_> = world.query3_iter::<Pos, Tag, Counter>().collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, a);
+        assert_eq!(results[0].1, &Pos(1, 1));
+        assert_eq!(results[0].2, &Tag("alpha"));
+        assert_eq!(results[0].3, &Counter(1));
     }
 }

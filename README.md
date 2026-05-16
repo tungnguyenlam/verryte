@@ -8,16 +8,58 @@ those pieces as the first proving game.
 ## Workspace
 
 - `crates/verryte-core` - generational entities, component/resource storage,
-  event queues, and a minimal ordered schedule.
-- `crates/verryte-input` - terminal-neutral input events, key bindings, script
-  command bindings, sourced queued actions, and the shared action queue.
+  event queues, and a minimal ordered schedule. Includes `Query`, `Query2`,
+  and `Query3` iterators, `World::query2_iter` / `World::query3_iter` for
+  lazy multi-component iteration, `World::has_resource` for safe resource
+  existence checks, `World::for_each2_mut` for mutable two-component iteration,
+  `World::despawn_with` for bulk entity removal, `World::retain` for
+  predicate-based entity filtering, `World::query3` for three-component
+  queries, `World::get_or_insert` / `World::get_or_insert_with` for lazy
+  component initialization, `World::entities()` for iterating all live
+  entities, `Schedule::clear`, `Schedule::remove_by_name`, and
+  `Schedule::run_system_by_name` for runtime schedule management and selective
+  execution, `Schedule::add_conditional` for systems gated by a `RunCondition`
+  predicate, `Events::peek` / `Events::last` for non-consuming event inspection,
+  bounded `MessageLog::with_max`, and a `Tag` marker component for entity
+  grouping and filtering.
+- `crates/verryte-input` - terminal-neutral input events, key/mouse bindings,
+  script command bindings, sourced queued actions, replayable `ActionTrace`s,
+  router-level script injection, pending queue snapshots, the shared action
+  queue, input context switching via `set_bindings` and `bindings_guard`, batch
+  event processing (`handle_batch`), `Bindings::merge` for layering keymaps,
+  `CommandBindings::merge` for layering command sets, and
+  `InputRouter::total_actions_queued()` for lifetime action metrics.
 - `crates/verryte-map` - reusable grid/spatial primitives: `Point`,
-  `Direction`, `Size`, typed `TileGrid<T>`, cardinal neighbors, and distance
-  helpers.
+  `Direction`, `Direction8`, `Size`, typed `TileGrid<T>`, cardinal and
+  8-directional neighbors, line tracing (both `Vec`-returning `line_between`
+  and lazy `LineIter`), visibility queries, line-of-sight checks
+  (`is_line_of_sight_clear`), recursive shadowcasting field-of-view
+  (`TileGrid::field_of_view`), shortest/nearest cardinal and 8-directional
+  paths, reachable regions (4 and 8-directional), distance helpers (Manhattan,
+  Chebyshev), flood-fill for connected-component detection, region counting,
+  hazard-distance safety scoring (`safer_neighbors4`), random-walk dungeon
+  generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
+  (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching` and
+  `TileGrid::density` for map analysis, and `TileGrid::bounding_box_of` with
+  `Bounds` for spatial framing.
 - `crates/verryte-terminal` - terminal-cell data structures: colors, cells,
-  grids, clipping, borders, blitting, and plain-text snapshots.
+  grids, clipping, borders, line drawing, blitting, viewports, frame diffs,
+  plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string`), HTML
+  output (`Grid::to_html_string`) for web/debug viewing, circle drawing and
+  filling (`Grid::draw_circle`, `Grid::fill_circle`), diamond/rhombus shapes
+  (`Grid::draw_diamond`, `Grid::fill_diamond`), Unicode box-drawing borders
+  (`draw_border_rounded`, `draw_rounded_panel`), horizontal/vertical lines
+  (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
+  text wrapping utilities (`wrap_text`, `write_wrapped_text`), `Grid::transform`
+  and `Grid::map` for bulk cell modification, and a `Layer` system for
+  compositing named, ordered rendering layers (map, entities, UI).
+- `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
+  input polling, Grid rendering with ANSI colors, and `terminal_size()` for
+  querying the current terminal dimensions.
 - `prototype/ash-courier` - a small turn-based roguelike prototype that proves
   the engine path through movement, pickup, hazards, win/loss state, rendering,
+  scan/visibility state, event reports, package drop/re-pickup, path hints,
+  hazard-distance safety hints, reachable-state hints, local viewport snapshots,
   and observable snapshots.
 
 ## Control Model
@@ -33,24 +75,45 @@ In practice:
 
 - terminal frontends translate keys/mouse into `InputEvent` and call
   `InputRouter::handle`;
-- scripts and agents parse command text with `CommandBindings` and inject the
-  resulting actions into the same `InputRouter`;
+- games can bind simple mouse button transitions to actions, or intercept
+  position-aware mouse events before routing them;
+- scripts and agents can parse command text with `CommandBindings` or call
+  `InputRouter::inject_script` / `InputRouter::inject_script_with`, which
+  inject the resulting actions into the same queue with an explicit
+  `ActionSource`;
+- tests and replay tools can route neutral input events with
+  `InputRouter::handle_from`, or snapshot queued work with
+  `InputRouter::pending_trace`;
+- recorded or planned runs can be replayed with `ActionTrace`, preserving each
+  action's source while still using the same router queue;
 - games drain actions and apply normal systems;
-- snapshots and per-step reports expose observable state, action source, and
-  action result for tests, scripts, and future tooling.
+- snapshots and per-step reports expose observable state, action source, action
+  result, and game events for tests, scripts, and future tooling.
 
-## Ash Courier Script Runner
+## Ash Courier
 
-Ash Courier includes a tiny non-TTY runner:
+Ash Courier includes two runners:
 
+**Script runner** (non-TTY, for tests/CI):
 ```sh
 cargo run -p ash-courier --bin ash-courier-script -- "eeesss,nnneeeesssssss"
 ```
 
+**Interactive TTY** (real terminal):
+```sh
+cargo run -p ash-courier --bin ash-courier-tty
+```
+
 `verryte-input` command bindings accept both command words and compact glyphs:
-`north`, `south`, `east`, `west`, `wait`, `pickup`, `quit`, plus `n`, `s`, `e`,
-`w`, `.`, `,`, and `q`. The runner prints the rendered frame, state summary,
-source, and action result after each action.
+`north`, `south`, `east`, `west`, `wait`, `scan`, `step_package`, `step_goal`,
+`step_safety`, `pickup`, `drop`, `quit`, plus `n`, `s`, `e`, `w`, `.`, `x`, `p`,
+`o`, `v`, `,`, `!`, and `q`. Scripts can mix whitespace with `;` separators and
+`#` line comments. Ash Courier's script runner also accepts parameterized scan
+tokens (`scan:3`, `scan3`, `x3`) through `inject_script_with`.
+The script runner prints the rendered frame, local viewport, state summary,
+source, action result, event count, visible/reachable tile counts, path lengths,
+shortest distances to package/goal/hazards/chasers, and safer-neighbor counts
+after each action.
 
 ## Verification
 

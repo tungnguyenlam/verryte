@@ -16,10 +16,14 @@
 
 pub mod entity;
 pub mod event;
+pub mod log;
 pub mod schedule;
+pub mod tag;
 pub mod world;
 
 pub use entity::Entity;
 pub use event::Events;
-pub use schedule::{Schedule, System};
-pub use world::World;
+pub use log::MessageLog;
+pub use schedule::{NamedSystem, Schedule, System};
+pub use tag::Tag;
+pub use world::{Query, Query2, Query3, World};
