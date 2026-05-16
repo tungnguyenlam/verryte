@@ -12,6 +12,16 @@ pub struct Entity {
 }
 
 impl Entity {
+    /// A sentinel entity handle that will never resolve to a live entity.
+    ///
+    /// Use this as a placeholder in components or resources where an entity
+    /// reference is required but may not point to anything (for example,
+    /// "target" or "parent" fields that are initially unset).
+    pub const INVALID: Self = Self {
+        index: u32::MAX,
+        generation: u32::MAX,
+    };
+
     pub fn index(self) -> u32 {
         self.index
     }

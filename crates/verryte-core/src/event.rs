@@ -32,6 +32,16 @@ impl<E> Events<E> {
         self.queue.push_back(event);
     }
 
+    /// Send multiple events at once. Returns the count of events queued.
+    pub fn send_batch<I: IntoIterator<Item = E>>(&mut self, events: I) -> usize {
+        let mut count = 0;
+        for event in events {
+            self.queue.push_back(event);
+            count += 1;
+        }
+        count
+    }
+
     pub fn len(&self) -> usize {
         self.queue.len()
     }
@@ -184,6 +194,24 @@ mod tests {
         let mut events = Events::<Bump>::new();
         let result = events.drain_filter(|_| true);
         assert!(result.is_empty());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn send_batch_queues_multiple_events() {
+        let mut events = Events::<Bump>::new();
+        let count = events.send_batch([Bump(1), Bump(2), Bump(3)]);
+        assert_eq!(count, 3);
+        assert_eq!(events.len(), 3);
+        let drained: Vec<Bump> = events.drain().collect();
+        assert_eq!(drained, vec![Bump(1), Bump(2), Bump(3)]);
+    }
+
+    #[test]
+    fn send_batch_empty_returns_zero() {
+        let mut events = Events::<Bump>::new();
+        let count = events.send_batch(Vec::<Bump>::new());
+        assert_eq!(count, 0);
         assert!(events.is_empty());
     }
 }

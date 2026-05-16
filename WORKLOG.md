@@ -775,3 +775,20 @@ sub-layer ordering within a single layer.
 **Assumptions.** `drain_filter` and `filter_pending` both use the swap-and-partition pattern which temporarily allocates a new VecDeque. This is fine for occasional use but not for per-frame hot paths.
 
 **Follow-ups.** Consider adding `Grid::find_all_cells` returning an iterator for cases where multiple matches matter.
+
+## 2026-05-16 - batch 5: retain, union, swap_cells, insert_at, insert_str
+
+**Goal.** Add missing utility primitives across core, terminal, and input crates.
+
+**Changes.**
+- `crates/verryte-core/src/log.rs:73-81` - `MessageLog::retain` filters messages in-place by predicate. Delegates to `Vec::retain`. Useful for clearing specific message categories.
+- `crates/verryte-terminal/src/lib.rs:176-193` - `Rect::union` returns smallest rect containing both. Handles empty rects by returning the non-empty one. Useful for computing dirty regions.
+- `crates/verryte-terminal/src/lib.rs:303-314` - `Grid::swap_cells` exchanges two cells by position via `Vec::swap`. Returns false if either position is out of bounds.
+- `crates/verryte-core/src/schedule.rs:154-162` - `Schedule::insert_at` inserts a named system at a specific index. Delegates to `Vec::insert`. Panics if index > len (consistent with Vec behavior).
+- `crates/verryte-input/src/lib.rs:991-1011` - `TextInput::insert_str` inserts a string at cursor, respecting max length. Truncates inserted text if it would exceed the limit. Advances cursor by actual inserted character count.
+
+**Reasoning.** These are all "obvious missing methods" that games reach for. `retain` on MessageLog enables category-based filtering. `Rect::union` is the dual of `intersect` and useful for dirty-region tracking. `swap_cells` enables drag-and-drop and rearrangement. `insert_at` lets games inject systems before/after existing ones without rebuilding the schedule. `insert_str` on TextInput enables paste and programmatic text insertion beyond single-character input.
+
+**Gotchas.** The `rect_union_combines_two_rects` test had an incorrect expected value (bottom=7 instead of 8). The math: a=Rect(2,3,4,5) has bottom=8, b=Rect(5,1,3,6) has bottom=7, so union bottom=max(8,7)=8.
+
+**Follow-ups.** Consider adding `Rect::union_many` for combining more than two rects in one pass.

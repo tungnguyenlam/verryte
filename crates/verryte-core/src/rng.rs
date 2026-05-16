@@ -111,6 +111,27 @@ impl Rng {
         }
     }
 
+    /// Pick a random element from an iterator.
+    ///
+    /// Uses reservoir sampling (single item) so it works on any iterator
+    /// without collecting into a Vec first. Returns `None` if the iterator
+    /// is empty.
+    pub fn pick_range<T, I>(&mut self, iter: I) -> Option<T>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let mut iter = iter.into_iter();
+        let mut result = iter.next()?;
+        let mut count = 1;
+        for item in iter {
+            count += 1;
+            if self.next_u32(count) == 0 {
+                result = item;
+            }
+        }
+        Some(result)
+    }
+
     /// Pick a random index in the range `0..len`.
     ///
     /// Returns `None` if `len` is 0.
@@ -459,5 +480,41 @@ mod tests {
                 rng2.gaussian_int(10.0, 3.0, 0, 20)
             );
         }
+    }
+
+    #[test]
+    fn pick_range_returns_none_for_empty() {
+        let mut rng = Rng::seed(42);
+        let empty: std::ops::Range<i32> = 0..0;
+        assert!(rng.pick_range(empty).is_none());
+    }
+
+    #[test]
+    fn pick_range_returns_element_from_non_empty() {
+        let mut rng = Rng::seed(42);
+        let picked: Option<i32> = rng.pick_range(1..=5);
+        assert!(picked.is_some());
+        let val = picked.unwrap();
+        assert!(val >= 1 && val <= 5);
+    }
+
+    #[test]
+    fn pick_range_is_deterministic() {
+        let mut rng1 = Rng::seed(99);
+        let mut rng2 = Rng::seed(99);
+        for _ in 0..50 {
+            let a: Option<i32> = rng1.pick_range(1..=10);
+            let b: Option<i32> = rng2.pick_range(1..=10);
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn pick_range_works_with_vec_iter() {
+        let mut rng = Rng::seed(42);
+        let items: Vec<&str> = vec!["alpha", "beta", "gamma"];
+        let picked: Option<&&str> = rng.pick_range(items.iter());
+        assert!(picked.is_some());
+        assert!(*picked.unwrap() == "alpha" || *picked.unwrap() == "beta" || *picked.unwrap() == "gamma");
     }
 }

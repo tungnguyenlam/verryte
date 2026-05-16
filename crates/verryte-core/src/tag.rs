@@ -29,6 +29,14 @@ impl Tag {
     pub fn is(&self, name: &str) -> bool {
         self.0 == name
     }
+
+    /// Check if this tag matches any of the given names.
+    ///
+    /// Useful for checking entity membership in a group without multiple
+    /// `is` calls.
+    pub fn is_any(&self, names: &[&str]) -> bool {
+        names.iter().any(|&name| self.0 == name)
+    }
 }
 
 impl std::fmt::Display for Tag {
@@ -62,5 +70,13 @@ mod tests {
     #[test]
     fn tag_display() {
         assert_eq!(format!("{}", Tag::new("boss")), "boss");
+    }
+
+    #[test]
+    fn tag_is_any_matches_any_of_several() {
+        let tag = Tag::new("enemy");
+        assert!(tag.is_any(&["player", "enemy", "npc"]));
+        assert!(!tag.is_any(&["player", "npc"]));
+        assert!(!tag.is_any(&[]));
     }
 }

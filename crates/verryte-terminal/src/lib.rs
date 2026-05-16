@@ -233,6 +233,18 @@ impl Grid {
         &self.cells
     }
 
+    /// Return a shared slice of the cells in row `y`. Returns `None` if out of bounds.
+    ///
+    /// Useful for scanning a single row without iterating the full grid.
+    pub fn row(&self, y: u16) -> Option<&[Cell]> {
+        if y < self.height {
+            let start = (y as usize) * (self.width as usize);
+            Some(&self.cells[start..start + self.width as usize])
+        } else {
+            None
+        }
+    }
+
     /// Compare two grids cell-by-cell.
     ///
     /// Positions that exist in only one grid report `None` on the missing
@@ -2610,5 +2622,27 @@ mod tests {
         grid.write_str(0, 0, "AB", Color::WHITE, Color::BLACK);
         assert!(grid.swap_cells(0, 0, 0, 0));
         assert_eq!(grid.get(0, 0).unwrap().glyph, 'A');
+    }
+
+    #[test]
+    fn row_returns_slice_of_row() {
+        let mut grid = Grid::new(3, 2);
+        grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "DEF", Color::WHITE, Color::BLACK);
+
+        let row0 = grid.row(0).unwrap();
+        assert_eq!(row0.len(), 3);
+        assert_eq!(row0[0].glyph, 'A');
+        assert_eq!(row0[1].glyph, 'B');
+        assert_eq!(row0[2].glyph, 'C');
+
+        let row1 = grid.row(1).unwrap();
+        assert_eq!(row1[0].glyph, 'D');
+    }
+
+    #[test]
+    fn row_returns_none_for_out_of_bounds() {
+        let grid = Grid::new(2, 2);
+        assert!(grid.row(2).is_none());
     }
 }
