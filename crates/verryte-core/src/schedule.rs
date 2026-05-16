@@ -161,6 +161,19 @@ impl Schedule {
         self.systems.insert(index, NamedSystem::new(name, system));
     }
 
+    /// Replace the first system with the given name, returning `true` if found.
+    ///
+    /// The replacement keeps the same position in the schedule, preserving
+    /// execution order relative to other systems.
+    pub fn replace_by_name(&mut self, name: &str, new_name: &'static str, new_system: System) -> bool {
+        if let Some(pos) = self.systems.iter().position(|s| s.name == name) {
+            self.systems[pos] = NamedSystem::new(new_name, new_system);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Run the first system with the given name, if it exists.
     ///
     /// Returns `true` if a system was found and executed. Systems with
@@ -420,5 +433,39 @@ mod tests {
 
         schedule.run(&mut world);
         assert_eq!(world.resource::<Counter>().unwrap().0, 4);
+    }
+
+    #[test]
+    fn replace_by_name_swaps_system_at_same_position() {
+        let mut schedule = Schedule::new();
+        schedule.add_named("first", bump);
+        schedule.add_named("second", double);
+        schedule.add_named("third", bump);
+
+        assert!(schedule.replace_by_name("second", "replaced", debug_bump));
+        let systems = schedule.systems();
+        assert_eq!(systems[0].name, "first");
+        assert_eq!(systems[1].name, "replaced");
+        assert_eq!(systems[2].name, "third");
+    }
+
+    #[test]
+    fn replace_by_name_returns_false_for_unknown() {
+        let mut schedule = Schedule::new();
+        schedule.add_named("alpha", bump);
+        assert!(!schedule.replace_by_name("beta", "gamma", bump));
+    }
+
+    #[test]
+    fn replace_by_name_preserves_execution_order() {
+        let mut world = World::new();
+        world.insert_resource(Counter(1));
+        let mut schedule = Schedule::new();
+        schedule.add_named("double", double);
+        schedule.add_named("bump", bump);
+
+        schedule.replace_by_name("double", "bump2", bump);
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 3);
     }
 }

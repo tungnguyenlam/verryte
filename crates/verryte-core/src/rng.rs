@@ -176,6 +176,23 @@ impl Rng {
         }
     }
 
+    /// Shuffle a sub-range `[start, end)` of a slice in place using Fisher-Yates.
+    ///
+    /// Clamps `start` and `end` to valid bounds. Does nothing if the range
+    /// has fewer than 2 elements.
+    pub fn shuffle_range<T>(&mut self, slice: &mut [T], start: usize, end: usize) {
+        let len = slice.len();
+        if start >= end || end <= start + 1 {
+            return;
+        }
+        let lo = start.min(len);
+        let hi = end.min(len);
+        for i in (lo + 1..hi).rev() {
+            let j = self.next_u32((i - lo + 1) as u32) as usize + lo;
+            slice.swap(i, j);
+        }
+    }
+
     /// Generate a random `f64` in the range `0.0..1.0`.
     pub fn next_f64(&mut self) -> f64 {
         (self.next_u64() as f64) / (u64::MAX as f64)
@@ -516,5 +533,53 @@ mod tests {
         let picked: Option<&&str> = rng.pick_range(items.iter());
         assert!(picked.is_some());
         assert!(*picked.unwrap() == "alpha" || *picked.unwrap() == "beta" || *picked.unwrap() == "gamma");
+    }
+
+    #[test]
+    fn shuffle_range_shuffles_sub_range() {
+        let mut rng = Rng::seed(42);
+        let mut items: Vec<i32> = (0..10).collect();
+        rng.shuffle_range(&mut items, 2, 7);
+
+        // Elements outside range should be unchanged.
+        assert_eq!(items[0], 0);
+        assert_eq!(items[1], 1);
+        assert_eq!(items[8], 8);
+        assert_eq!(items[9], 9);
+
+        // Elements inside range should be a permutation.
+        let mut subrange: Vec<i32> = items[2..7].to_vec();
+        subrange.sort();
+        assert_eq!(subrange, vec![2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn shuffle_range_clamps_to_bounds() {
+        let mut rng = Rng::seed(42);
+        let mut items: Vec<i32> = (0..5).collect();
+        rng.shuffle_range(&mut items, 0, 100);
+
+        let mut sorted = items.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn shuffle_range_small_range_is_noop() {
+        let mut rng = Rng::seed(42);
+        let mut items = vec![1, 2, 3];
+        rng.shuffle_range(&mut items, 1, 1);
+        assert_eq!(items, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn shuffle_range_is_deterministic() {
+        let mut rng1 = Rng::seed(77);
+        let mut rng2 = Rng::seed(77);
+        let mut items1: Vec<i32> = (0..10).collect();
+        let mut items2: Vec<i32> = (0..10).collect();
+        rng1.shuffle_range(&mut items1, 2, 8);
+        rng2.shuffle_range(&mut items2, 2, 8);
+        assert_eq!(items1, items2);
     }
 }

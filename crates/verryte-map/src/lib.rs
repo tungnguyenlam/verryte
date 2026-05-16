@@ -463,6 +463,20 @@ impl<T> TileGrid<T> {
         }
     }
 
+    /// Swap the tiles at two points. Returns `false` if either point is out of bounds.
+    ///
+    /// Useful for puzzle mechanics, sliding tiles, or rearranging map content.
+    pub fn swap(&mut self, a: Point, b: Point) -> bool {
+        let Some(idx_a) = self.index(a) else {
+            return false;
+        };
+        let Some(idx_b) = self.index(b) else {
+            return false;
+        };
+        self.tiles.swap(idx_a, idx_b);
+        true
+    }
+
     pub fn tiles(&self) -> &[T] {
         &self.tiles
     }
@@ -2689,5 +2703,31 @@ mod tests {
         assert_eq!(*grid.get(Point::new(0, 1)).unwrap(), 1);
         assert_eq!(*grid.get(Point::new(1, 1)).unwrap(), 2);
         assert_eq!(*grid.get(Point::new(2, 1)).unwrap(), 6);
+    }
+
+    #[test]
+    fn swap_exchanges_two_tiles() {
+        let mut grid = TileGrid::new(3, 2, '.');
+        grid.set(Point::new(0, 0), 'A');
+        grid.set(Point::new(2, 1), 'B');
+
+        assert!(grid.swap(Point::new(0, 0), Point::new(2, 1)));
+        assert_eq!(*grid.get(Point::new(0, 0)).unwrap(), 'B');
+        assert_eq!(*grid.get(Point::new(2, 1)).unwrap(), 'A');
+    }
+
+    #[test]
+    fn swap_returns_false_for_out_of_bounds() {
+        let mut grid = TileGrid::new(2, 2, '.');
+        assert!(!grid.swap(Point::new(0, 0), Point::new(5, 0)));
+        assert!(!grid.swap(Point::new(5, 0), Point::new(0, 0)));
+    }
+
+    #[test]
+    fn swap_same_point_is_noop() {
+        let mut grid = TileGrid::new(2, 2, '.');
+        grid.set(Point::new(1, 1), 'X');
+        assert!(grid.swap(Point::new(1, 1), Point::new(1, 1)));
+        assert_eq!(*grid.get(Point::new(1, 1)).unwrap(), 'X');
     }
 }

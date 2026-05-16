@@ -159,6 +159,11 @@ impl Rect {
         self.width == 0 || self.height == 0
     }
 
+    /// Return the total number of cells in this rectangle.
+    pub fn area(self) -> usize {
+        (self.width as usize) * (self.height as usize)
+    }
+
     pub fn contains(self, x: u16, y: u16) -> bool {
         x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
     }
@@ -643,6 +648,42 @@ impl Grid {
                     continue;
                 }
                 self.put(dx, dy, src);
+            }
+        }
+    }
+
+    /// Copy a rectangular region from `other` into `self`.
+    ///
+    /// `src` defines the region to copy from the source grid. `dst_x` and
+    /// `dst_y` define the top-left destination in this grid. Transparent cells
+    /// (space glyph) are skipped. Out-of-bounds areas are clipped.
+    pub fn blit_region(
+        &mut self,
+        other: &Grid,
+        src: Rect,
+        dst_x: i32,
+        dst_y: i32,
+    ) {
+        let clipped = src.intersect(Rect::new(0, 0, other.width, other.height));
+        if clipped.is_empty() {
+            return;
+        }
+        for sy in clipped.y..clipped.bottom() {
+            for sx in clipped.x..clipped.right() {
+                let dx = dst_x + (sx - clipped.x) as i32;
+                let dy = dst_y + (sy - clipped.y) as i32;
+                if dx < 0 || dy < 0 {
+                    continue;
+                }
+                let (dx, dy) = (dx as u16, dy as u16);
+                if dx >= self.width || dy >= self.height {
+                    continue;
+                }
+                let src_cell = other.get(sx, sy).copied().unwrap_or(Cell::EMPTY);
+                if src_cell.is_transparent() {
+                    continue;
+                }
+                self.put(dx, dy, src_cell);
             }
         }
     }
@@ -2696,5 +2737,41 @@ mod tests {
         assert_eq!(t.y, 0);
         assert_eq!(t.width, 4);
         assert_eq!(t.height, 5);
+    }
+
+    #[test]
+    fn rect_area_computes_correctly() {
+        assert_eq!(Rect::new(0, 0, 3, 4).area(), 12);
+        assert_eq!(Rect::new(0, 0, 0, 5).area(), 0);
+        assert_eq!(Rect::new(0, 0, 1, 1).area(), 1);
+    }
+
+    #[test]
+    fn blit_region_copies_sub_rectangle() {
+        let mut src = Grid::new(4, 3);
+        src.write_str(0, 0, "ABCD", Color::WHITE, Color::BLACK);
+        src.write_str(0, 1, "EFGH", Color::WHITE, Color::BLACK);
+        src.write_str(0, 2, "IJKL", Color::WHITE, Color::BLACK);
+
+        let mut dst = Grid::new(3, 3);
+        dst.blit_region(&src, Rect::new(1, 1, 2, 2), 0, 0);
+
+        assert_eq!(dst.get(0, 0).unwrap().glyph, 'F');
+        assert_eq!(dst.get(1, 0).unwrap().glyph, 'G');
+        assert_eq!(dst.get(0, 1).unwrap().glyph, 'J');
+        assert_eq!(dst.get(1, 1).unwrap().glyph, 'K');
+    }
+
+    #[test]
+    fn blit_region_clips_to_source_bounds() {
+        let mut src = Grid::new(2, 2);
+        src.write_str(0, 0, "AB", Color::WHITE, Color::BLACK);
+        src.write_str(0, 1, "CD", Color::WHITE, Color::BLACK);
+
+        let mut dst = Grid::new(2, 2);
+        dst.blit_region(&src, Rect::new(0, 0, 5, 5), 0, 0);
+
+        assert_eq!(dst.get(0, 0).unwrap().glyph, 'A');
+        assert_eq!(dst.get(1, 1).unwrap().glyph, 'D');
     }
 }

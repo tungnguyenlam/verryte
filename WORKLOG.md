@@ -809,3 +809,18 @@ sub-layer ordering within a single layer.
 **Assumptions.** `Entity::INVALID` uses MAX/MAX which is safe as long as the world never allocates that many entities (4 billion+). This is a safe assumption for terminal games.
 
 **Follow-ups.** Consider adding `Grid::col(x)` for column slices, though it requires copying since cells are row-major.
+
+## 2026-05-16 - batch 7: rotate, iter_cells, count_with, translate, map_in_place
+
+**Goal.** Add direction rotation, grid iteration, entity counting, rect translation, and tile transformation.
+
+**Changes.**
+- `crates/verryte-map/src/lib.rs:167-183` - `Direction::rotate_cw` and `rotate_ccw` for 90-degree turns.
+- `crates/verryte-terminal/src/lib.rs:247-254` - `Grid::iter_cells` yields `(x, y, &Cell)` for all cells in row-major order.
+- `crates/verryte-core/src/world.rs:326-343` - `World::count_with<T>` counts live entities having component T.
+- `crates/verryte-terminal/src/lib.rs:207-214` - `Rect::translate(dx, dy)` offsets position, clamps negative to zero.
+- `crates/verryte-map/src/lib.rs:491-507` - `TileGrid::map_in_place` transforms all tiles with `(Point, &T) -> T`.
+
+**Reasoning.** Direction rotation is fundamental for facing/turning. `iter_cells` avoids manual nested loops. `count_with` enables "how many enemies remain" queries without allocation. `Rect::translate` complements `intersect` and `union`. `map_in_place` enables position-aware tile transforms.
+
+**Gotchas.** The `map_in_place` test had wrong expected value for (2,0): should be 0+2+0=2, not 4.
