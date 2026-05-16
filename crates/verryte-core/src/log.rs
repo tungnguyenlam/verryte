@@ -70,6 +70,17 @@ impl MessageLog {
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
+
+    /// Retain only messages matching a predicate.
+    ///
+    /// Useful for clearing specific message types (e.g., removing all combat
+    /// messages while keeping exploration messages).
+    pub fn retain<F>(&mut self, mut keep: F)
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.messages.retain(|msg| keep(msg));
+    }
 }
 
 #[cfg(test)]
@@ -116,5 +127,27 @@ mod tests {
         }
         assert_eq!(log.tail(2), &["m3", "m4"]);
         assert_eq!(log.tail(10), log.messages());
+    }
+
+    #[test]
+    fn retain_keeps_matching_messages() {
+        let mut log = MessageLog::new();
+        log.push("combat: hit for 5");
+        log.push("explore: entered room");
+        log.push("combat: missed");
+        log.push("explore: found item");
+
+        log.retain(|msg| msg.starts_with("combat"));
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.messages(), &["combat: hit for 5", "combat: missed"]);
+    }
+
+    #[test]
+    fn retain_can_clear_all() {
+        let mut log = MessageLog::new();
+        log.push("a");
+        log.push("b");
+        log.retain(|_| false);
+        assert!(log.is_empty());
     }
 }

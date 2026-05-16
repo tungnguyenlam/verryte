@@ -759,3 +759,19 @@ sub-layer ordering within a single layer.
 **Gotchas.** The `place_rooms` signature change from `<F, R>` to `<F1, F2, R>` is a breaking API change for any code using this method, but since it was just added in a previous uncommitted batch, this is fine.
 
 **Follow-ups.** Consider whether `InputRouter` should support a true priority queue (BinaryHeap) for more than two priority levels, or if the current front/back dichotomy is sufficient for Verryte's use cases.
+
+## 2026-05-16 - batch 4: drain_filter, filter_pending, fill_rect, find_cell
+
+**Goal.** Add selective event/action filtering and grid search primitives.
+
+**Changes.**
+- `crates/verryte-core/src/event.rs:58-74` - `Events::drain_filter` drains events matching a predicate and re-queues the rest. Uses swap-then-partition to avoid Clone requirement.
+- `crates/verryte-input/src/lib.rs:755-773` - `InputRouter::filter_pending` removes pending actions matching a predicate, preserving order of remaining actions. Returns count of removed actions.
+- `crates/verryte-map/src/lib.rs:475-492` - `TileGrid::fill_rect` fills a rectangular region with a tile, clipping to grid bounds. Accepts signed start coordinates for partial fills from edges.
+- `crates/verryte-terminal/src/lib.rs:282-301` - `Grid::find_cell` scans row-major for first cell matching a predicate, returning (x, y, &Cell).
+
+**Reasoning.** These are all "missing obvious primitives" that games keep needing. `drain_filter` lets systems extract specific event types from shared channels without consuming everything. `filter_pending` enables canceling queued actions when game state changes (e.g., entering a menu). `fill_rect` is the rectangular analog to `fill`. `find_cell` is useful for locating player characters, items, or specific glyphs without manual iteration.
+
+**Assumptions.** `drain_filter` and `filter_pending` both use the swap-and-partition pattern which temporarily allocates a new VecDeque. This is fine for occasional use but not for per-frame hot paths.
+
+**Follow-ups.** Consider adding `Grid::find_all_cells` returning an iterator for cases where multiple matches matter.

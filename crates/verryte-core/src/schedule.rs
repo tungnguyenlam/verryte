@@ -152,6 +152,15 @@ impl Schedule {
         }
     }
 
+    /// Insert a system at a specific position, shifting existing systems at
+    /// and after that position to the right.
+    ///
+    /// Panics if `index > self.len()`. Use `add` or `add_named` for appending
+    /// to the end.
+    pub fn insert_at(&mut self, index: usize, name: &'static str, system: System) {
+        self.systems.insert(index, NamedSystem::new(name, system));
+    }
+
     /// Run the first system with the given name, if it exists.
     ///
     /// Returns `true` if a system was found and executed. Systems with
@@ -386,5 +395,30 @@ mod tests {
         world.insert_resource(DebugMode(true));
         assert!(schedule.run_system_by_name("debug", &mut world));
         assert_eq!(world.resource::<Counter>().unwrap().0, 100);
+    }
+
+    #[test]
+    fn insert_at_places_system_at_position() {
+        let mut schedule = Schedule::new();
+        schedule.add_named("first", bump);
+        schedule.add_named("third", double);
+        schedule.insert_at(1, "second", bump);
+
+        let systems = schedule.systems();
+        assert_eq!(systems[0].name, "first");
+        assert_eq!(systems[1].name, "second");
+        assert_eq!(systems[2].name, "third");
+    }
+
+    #[test]
+    fn insert_at_affects_execution_order() {
+        let mut world = World::new();
+        world.insert_resource(Counter(1));
+        let mut schedule = Schedule::new();
+        schedule.add_named("double", double);
+        schedule.insert_at(0, "bump", bump);
+
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 4);
     }
 }

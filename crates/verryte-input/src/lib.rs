@@ -1015,6 +1015,29 @@ impl TextInput {
         self.dirty = true;
     }
 
+    /// Insert a string at the current cursor position.
+    ///
+    /// Truncates the inserted text if it would exceed the maximum length.
+    /// The cursor advances by the number of characters actually inserted.
+    pub fn insert_str(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let current_len = self.text.chars().count();
+        if current_len >= self.max_len {
+            return;
+        }
+        let available = self.max_len - current_len;
+        let to_insert: String = text.chars().take(available).collect();
+        if to_insert.is_empty() {
+            return;
+        }
+        let byte_pos = self.char_to_byte(self.cursor);
+        self.text.insert_str(byte_pos, &to_insert);
+        self.cursor += to_insert.chars().count();
+        self.dirty = true;
+    }
+
     /// Get the current cursor position (in character units, not bytes).
     pub fn cursor(&self) -> usize {
         self.cursor
@@ -1888,6 +1911,40 @@ mod tests {
         assert_eq!(input.history_len(), 1);
         input.clear_history();
         assert_eq!(input.history_len(), 0);
+    }
+
+    #[test]
+    fn text_input_insert_str_at_cursor() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Char('c'));
+        input.handle_key(Key::Left);
+        input.insert_str("b");
+        assert_eq!(input.text(), "abc");
+    }
+
+    #[test]
+    fn text_input_insert_str_respects_max_length() {
+        let mut input = TextInput::with_max(5);
+        input.set_text("hel".to_owned());
+        input.insert_str("lo world");
+        assert_eq!(input.text(), "hello");
+    }
+
+    #[test]
+    fn text_input_insert_str_empty_is_noop() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.insert_str("");
+        assert_eq!(input.text(), "a");
+    }
+
+    #[test]
+    fn text_input_insert_str_at_end() {
+        let mut input = TextInput::new();
+        input.set_text("hello".to_owned());
+        input.insert_str("!");
+        assert_eq!(input.text(), "hello!");
     }
 
     #[test]

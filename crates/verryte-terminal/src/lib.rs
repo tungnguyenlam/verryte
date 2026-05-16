@@ -174,6 +174,24 @@ impl Rect {
             Rect::new(0, 0, 0, 0)
         }
     }
+
+    /// Return the smallest rectangle containing both `self` and `other`.
+    ///
+    /// Useful for computing dirty regions when multiple screen areas change
+    /// in the same frame.
+    pub fn union(self, other: Rect) -> Rect {
+        if self.is_empty() {
+            return other;
+        }
+        if other.is_empty() {
+            return self;
+        }
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+        Rect::new(x, y, right - x, bottom - y)
+    }
 }
 
 /// Horizontal text alignment within a bounded width.
@@ -299,6 +317,20 @@ impl Grid {
             }
         }
         None
+    }
+
+    /// Swap two cells by position. Returns `false` if either position is out of bounds.
+    ///
+    /// Useful for animations, drag-and-drop UI, or rearranging grid content.
+    pub fn swap_cells(&mut self, x1: u16, y1: u16, x2: u16, y2: u16) -> bool {
+        let Some(i1) = self.index(x1, y1) else {
+            return false;
+        };
+        let Some(i2) = self.index(x2, y2) else {
+            return false;
+        };
+        self.cells.swap(i1, i2);
+        true
     }
 
     /// Write a cell at (x, y). Returns `false` if the position is out of bounds.
@@ -2533,5 +2565,50 @@ mod tests {
         // Should not panic and should fill within bounds.
         assert_eq!(grid.get(0, 0).unwrap().glyph, '#');
         assert_eq!(grid.get(2, 2).unwrap().glyph, '#');
+    }
+
+    #[test]
+    fn rect_union_combines_two_rects() {
+        let a = Rect::new(2, 3, 4, 5);
+        let b = Rect::new(5, 1, 3, 6);
+        let u = a.union(b);
+        assert_eq!(u.x, 2);
+        assert_eq!(u.y, 1);
+        assert_eq!(u.right(), 8);
+        assert_eq!(u.bottom(), 8);
+    }
+
+    #[test]
+    fn rect_union_with_empty_returns_other() {
+        let a = Rect::new(0, 0, 0, 0);
+        let b = Rect::new(1, 2, 3, 4);
+        assert_eq!(a.union(b), b);
+        assert_eq!(b.union(a), b);
+    }
+
+    #[test]
+    fn swap_cells_exchanges_positions() {
+        let mut grid = Grid::new(3, 2);
+        grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "DEF", Color::WHITE, Color::BLACK);
+
+        assert!(grid.swap_cells(0, 0, 2, 1));
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'F');
+        assert_eq!(grid.get(2, 1).unwrap().glyph, 'A');
+    }
+
+    #[test]
+    fn swap_cells_returns_false_for_out_of_bounds() {
+        let mut grid = Grid::new(2, 2);
+        assert!(!grid.swap_cells(0, 0, 5, 0));
+        assert!(!grid.swap_cells(0, 0, 0, 5));
+    }
+
+    #[test]
+    fn swap_cells_same_position_is_noop() {
+        let mut grid = Grid::new(2, 2);
+        grid.write_str(0, 0, "AB", Color::WHITE, Color::BLACK);
+        assert!(grid.swap_cells(0, 0, 0, 0));
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'A');
     }
 }
