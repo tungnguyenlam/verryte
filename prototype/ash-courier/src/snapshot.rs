@@ -29,6 +29,8 @@ pub struct Snapshot {
     pub distance_to_nearest_hazard: Option<u16>,
     pub distance_to_nearest_chaser: Option<u16>,
     pub safer_neighbors: Vec<Position>,
+    /// Count of live entities in the world.
+    pub entity_count: usize,
     /// Plain-text rendering of the current frame.
     pub frame: String,
     /// Plain-text camera-sized view centered near the player.

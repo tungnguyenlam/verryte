@@ -72,20 +72,13 @@ impl Game {
                             player_spawn = Some(pos);
                         }
                         SpawnKind::Package => {
-                            let e = world.spawn();
-                            world.insert(e, pos);
-                            world.insert(e, Package);
+                            world.builder().with(pos).with(Package).build();
                         }
                         SpawnKind::Hazard => {
-                            let e = world.spawn();
-                            world.insert(e, pos);
-                            world.insert(e, Hazard);
+                            world.builder().with(pos).with(Hazard).build();
                         }
                         SpawnKind::Chaser => {
-                            let e = world.spawn();
-                            world.insert(e, pos);
-                            world.insert(e, Hazard);
-                            world.insert(e, Chaser);
+                            world.builder().with(pos).with(Hazard).with(Chaser).build();
                         }
                     }
                 }
@@ -93,13 +86,11 @@ impl Game {
         }
 
         let player_spawn = player_spawn.ok_or(MapError::NoPlayer)?;
-        let player = world.spawn();
-        world.insert(player, player_spawn);
-        world.insert(player, Player);
+        let player = world.builder().with(player_spawn).with(Player).build();
 
         world.insert_resource(map);
         world.insert_resource(GameState::default());
-        world.insert_resource(Events::<GameEvent>::new());
+        world.insert_resource(Events::<GameEvent>::with_capacity(16));
         world.insert_resource(MessageLog::with_max(50));
 
         let mut schedule = Schedule::new();
@@ -614,6 +605,7 @@ impl Game {
             distance_to_nearest_hazard,
             distance_to_nearest_chaser,
             safer_neighbors,
+            entity_count: self.world.entity_count(),
             frame: self.render().to_plain_string(),
             local_frame: self.render_viewport(7, 7).to_plain_string(),
         }

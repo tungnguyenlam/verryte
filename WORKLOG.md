@@ -837,3 +837,21 @@ sub-layer ordering within a single layer.
 - `crates/verryte-core/src/rng.rs:178-192` - `Rng::shuffle_range` shuffles a sub-range [start, end) using Fisher-Yates. Clamps to valid bounds, no-op for ranges < 2 elements.
 
 **Reasoning.** `Rect::area` is a basic utility needed for sizing and capacity calculations. `replace_by_name` enables hot-reloading systems without rebuilding the schedule or changing execution order. `blit_region` is needed when games want to copy a specific viewport or sprite region rather than the entire source grid. `TileGrid::swap` supports puzzle mechanics and tile rearrangement. `shuffle_range` is useful when only part of a collection needs randomization (e.g., shuffling a deck's top N cards).
+
+## 2026-05-16 - batch 9: integrate engine features into Ash Courier prototype
+
+**Goal.** Use existing engine features in the prototype to validate the API shape and reduce hardcoded values.
+
+**Changes.**
+- `prototype/ash-courier/src/game.rs:103` - Changed `MessageLog::new()` to `MessageLog::with_max(50)` to bound memory for long sessions.
+- `prototype/ash-courier/src/game.rs:4` - Added `ColorPalette` import, removed unused `Color`.
+- `prototype/ash-courier/src/game.rs:105-108` - Changed `schedule.add()` to `schedule.add_named()` for "chaser", "resolve", "messages" systems. Enables debugging and runtime schedule introspection.
+- `prototype/ash-courier/src/game.rs:490-537` - Replaced hardcoded colors in `render()` with `ColorPalette::dark_dungeon()`. Wall/floor/goal/hazard/package/player colors now come from the theme.
+- `prototype/ash-courier/src/bin/tty.rs:6` - Added `Alignment` and `ColorPalette` imports, removed unused `Cell` and `Color`.
+- `prototype/ash-courier/src/bin/tty.rs:49-195` - Replaced `draw_panel` with `draw_rounded_panel` for all three UI panels. Replaced `write_str` with `write_aligned` for status panel text. All colors now come from `ColorPalette::dark_dungeon()`.
+
+**Reasoning.** The prototype is the proving ground for engine APIs. Using `MessageLog::with_max` validates the bounded log API in a real context. `ColorPalette` replaces scattered hardcoded colors with a single theme, making it trivial to swap themes later (e.g., amber_terminal or cyberpunk). `add_named` makes the schedule self-documenting — system names appear in logs and hooks. `draw_rounded_panel` and `write_aligned` validate the terminal rendering primitives in the only frontend that matters: the real TTY.
+
+**Assumptions.** The dark_dungeon palette is a good default. The bounded log at 50 messages is enough for typical play sessions. Named systems don't need conditions yet.
+
+**Follow-ups.** Consider exposing the palette as a configurable option in the TTY frontend. The `Game::render()` method could accept a palette parameter instead of hardcoding dark_dungeon.
