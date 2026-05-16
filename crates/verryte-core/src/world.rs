@@ -324,6 +324,29 @@ impl World {
         out
     }
 
+    /// Count how many live entities have a given component type.
+    pub fn count_with<T: 'static + Send + Sync>(&self) -> usize {
+        let Some(column) = self.columns.get(&TypeId::of::<T>()) else {
+            return 0;
+        };
+        let Some(typed) = column.as_any().downcast_ref::<TypedColumn<T>>() else {
+            return 0;
+        };
+        typed
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(i, slot)| {
+                slot.is_some()
+                    && i < &self.alive.len()
+                    && self.alive[*i]
+                    && slot.as_ref().is_some_and(|(gen, _)| {
+                        *gen == self.generations[*i]
+                    })
+            })
+            .count()
+    }
+
     /// Query entities with a component, returning an iterator.
     pub fn query_iter<T: 'static + Send + Sync>(&self) -> Query<'_, T> {
         Query {
@@ -1298,18 +1321,30 @@ mod tests {
     }
 
     #[test]
-    fn entity_builder_entity_is_alive() {
+    fn count_with_returns_correct_count() {
         let mut world = World::new();
-        let entity = world.builder().with(Counter(42)).build();
-        assert!(world.is_alive(entity));
-        assert_eq!(world.get::<Counter>(entity), Some(&Counter(42)));
+        let a = world.spawn();
+        let b = world.spawn();
+        let _c = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.insert(b, Pos(1, 1));
+        world.insert(b, Tag("player"));
+        // c has no components.
+
+        assert_eq!(world.count_with::<Pos>(), 2);
+        assert_eq!(world.count_with::<Tag>(), 1);
+        assert_eq!(world.count_with::<Counter>(), 0);
     }
 
     #[test]
-    fn entity_builder_entity_accessor() {
+    fn count_with_excludes_despawned_entities() {
         let mut world = World::new();
-        let entity = world.builder().with(Pos(0, 0)).with(Tag("temp")).build();
-        assert!(world.is_alive(entity));
-        assert_eq!(world.get::<Tag>(entity), Some(&Tag("temp")));
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.insert(b, Pos(1, 1));
+
+        world.despawn(b);
+        assert_eq!(world.count_with::<Pos>(), 1);
     }
 }

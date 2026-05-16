@@ -164,6 +164,30 @@ impl Direction {
             Direction::West => Direction::East,
         }
     }
+
+    /// Rotate this direction 90 degrees clockwise.
+    ///
+    /// North -> East -> South -> West -> North
+    pub fn rotate_cw(self) -> Self {
+        match self {
+            Direction::North => Direction::East,
+            Direction::East => Direction::South,
+            Direction::South => Direction::West,
+            Direction::West => Direction::North,
+        }
+    }
+
+    /// Rotate this direction 90 degrees counter-clockwise.
+    ///
+    /// North -> West -> South -> East -> North
+    pub fn rotate_ccw(self) -> Self {
+        match self {
+            Direction::North => Direction::West,
+            Direction::West => Direction::South,
+            Direction::South => Direction::East,
+            Direction::East => Direction::North,
+        }
+    }
 }
 
 /// Eight-directional movement on a 2D grid (cardinal + diagonal).
@@ -462,6 +486,24 @@ impl<T> TileGrid<T> {
         let height = self.size.height as i16;
         let points = (0..height).flat_map(move |y| (0..width).map(move |x| Point { x, y }));
         points.zip(self.tiles.iter_mut())
+    }
+
+    /// Transform all tiles in place using a function that receives each point and tile.
+    ///
+    /// Useful for applying terrain rules, erosion, or other cell-wise operations
+    /// that depend on position.
+    pub fn map_in_place<F>(&mut self, mut f: F)
+    where
+        F: FnMut(Point, &T) -> T,
+    {
+        let width = self.size.width as i16;
+        for y in 0..self.size.height as i16 {
+            for x in 0..width {
+                let p = Point::new(x, y);
+                let new_tile = f(p, &self.tiles[(y as usize) * (width as usize) + (x as usize)]);
+                self.tiles[(y as usize) * (width as usize) + (x as usize)] = new_tile;
+            }
+        }
     }
 
     pub fn fill(&mut self, tile: T)
@@ -1713,6 +1755,29 @@ mod tests {
     }
 
     #[test]
+    fn direction_rotate_cw_cycles() {
+        assert_eq!(Direction::North.rotate_cw(), Direction::East);
+        assert_eq!(Direction::East.rotate_cw(), Direction::South);
+        assert_eq!(Direction::South.rotate_cw(), Direction::West);
+        assert_eq!(Direction::West.rotate_cw(), Direction::North);
+    }
+
+    #[test]
+    fn direction_rotate_ccw_cycles() {
+        assert_eq!(Direction::North.rotate_ccw(), Direction::West);
+        assert_eq!(Direction::West.rotate_ccw(), Direction::South);
+        assert_eq!(Direction::South.rotate_ccw(), Direction::East);
+        assert_eq!(Direction::East.rotate_ccw(), Direction::North);
+    }
+
+    #[test]
+    fn direction_rotate_cw_four_times_is_identity() {
+        for d in Direction::ALL {
+            assert_eq!(d.rotate_cw().rotate_cw().rotate_cw().rotate_cw(), d);
+        }
+    }
+
+    #[test]
     fn size_contains_rejects_negative_and_edge_points() {
         let size = Size::new(3, 2);
         assert!(size.contains(Point::new(2, 1)));
@@ -2608,5 +2673,21 @@ mod tests {
                 assert_eq!(*grid.get(Point::new(x, y)).unwrap(), '#');
             }
         }
+    }
+
+    #[test]
+    fn map_in_place_transforms_all_tiles() {
+        let mut grid = TileGrid::new(3, 2, 0);
+        grid.set(Point::new(1, 0), 5);
+        grid.set(Point::new(2, 1), 3);
+
+        grid.map_in_place(|p, &tile| tile + p.x as i32 + p.y as i32);
+
+        assert_eq!(*grid.get(Point::new(0, 0)).unwrap(), 0);
+        assert_eq!(*grid.get(Point::new(1, 0)).unwrap(), 6);
+        assert_eq!(*grid.get(Point::new(2, 0)).unwrap(), 2);
+        assert_eq!(*grid.get(Point::new(0, 1)).unwrap(), 1);
+        assert_eq!(*grid.get(Point::new(1, 1)).unwrap(), 2);
+        assert_eq!(*grid.get(Point::new(2, 1)).unwrap(), 6);
     }
 }

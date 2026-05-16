@@ -792,3 +792,20 @@ sub-layer ordering within a single layer.
 **Gotchas.** The `rect_union_combines_two_rects` test had an incorrect expected value (bottom=7 instead of 8). The math: a=Rect(2,3,4,5) has bottom=8, b=Rect(5,1,3,6) has bottom=7, so union bottom=max(8,7)=8.
 
 **Follow-ups.** Consider adding `Rect::union_many` for combining more than two rects in one pass.
+
+## 2026-05-16 - batch 6: INVALID, is_any, row, pick_range, send_batch
+
+**Goal.** Add sentinel entity, tag convenience, grid row access, iterator-based random pick, and batch event sending.
+
+**Changes.**
+- `crates/verryte-core/src/entity.rs:17-21` - `Entity::INVALID` constant with `index: u32::MAX, generation: u32::MAX`. Will never resolve to a live entity since generations are reset on reuse and indices are allocated from a free list.
+- `crates/verryte-core/src/tag.rs:33-38` - `Tag::is_any(&[&str])` checks if tag matches any name in a slice. Delegates to iterator `any`.
+- `crates/verryte-terminal/src/lib.rs:235-244` - `Grid::row(y)` returns `Option<&[Cell]>` slice of a single row. Zero-copy, useful for scanning rows without full grid iteration.
+- `crates/verryte-core/src/rng.rs:113-128` - `Rng::pick_range` picks random element from any iterator using reservoir sampling (single-item variant). Works on iterators without collecting into Vec first. O(n) time, O(1) space.
+- `crates/verryte-core/src/event.rs:34-42` - `Events::send_batch` queues multiple events at once. Returns count of events queued.
+
+**Reasoning.** `Entity::INVALID` is a common pattern in ECS systems for optional entity references (parent, target, etc.) without using Option<Entity>. `Tag::is_any` reduces boilerplate for group membership checks. `Grid::row` enables efficient row scanning for text rendering or row-based effects. `Rng::pick_range` fills a gap where games need to pick from non-slice iterables (like filtered entity iterators). `Events::send_batch` mirrors `InputRouter::handle_batch` for the event side.
+
+**Assumptions.** `Entity::INVALID` uses MAX/MAX which is safe as long as the world never allocates that many entities (4 billion+). This is a safe assumption for terminal games.
+
+**Follow-ups.** Consider adding `Grid::col(x)` for column slices, though it requires copying since cells are row-major.

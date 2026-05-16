@@ -192,6 +192,15 @@ impl Rect {
         let bottom = self.bottom().max(other.bottom());
         Rect::new(x, y, right - x, bottom - y)
     }
+
+    /// Offset the rectangle by `(dx, dy)`. Negative offsets are clamped to zero.
+    ///
+    /// Useful for moving UI elements or adjusting rects for viewport offsets.
+    pub fn translate(self, dx: i16, dy: i16) -> Rect {
+        let x = (self.x as i16 + dx).max(0) as u16;
+        let y = (self.y as i16 + dy).max(0) as u16;
+        Rect::new(x, y, self.width, self.height)
+    }
 }
 
 /// Horizontal text alignment within a bounded width.
@@ -243,6 +252,15 @@ impl Grid {
         } else {
             None
         }
+    }
+
+    /// Iterate over all cells with their (x, y) positions in row-major order.
+    pub fn iter_cells(&self) -> impl Iterator<Item = (u16, u16, &Cell)> + '_ {
+        self.cells.iter().enumerate().map(move |(i, cell)| {
+            let x = (i % self.width as usize) as u16;
+            let y = (i / self.width as usize) as u16;
+            (x, y, cell)
+        })
     }
 
     /// Compare two grids cell-by-cell.
@@ -2644,5 +2662,39 @@ mod tests {
     fn row_returns_none_for_out_of_bounds() {
         let grid = Grid::new(2, 2);
         assert!(grid.row(2).is_none());
+    }
+
+    #[test]
+    fn iter_cells_yields_all_positions() {
+        let mut grid = Grid::new(3, 2);
+        grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, "DEF", Color::WHITE, Color::BLACK);
+
+        let cells: Vec<_> = grid.iter_cells().collect();
+        assert_eq!(cells.len(), 6);
+        assert_eq!(cells[0], (0, 0, &Cell::new('A')));
+        assert_eq!(cells[2], (2, 0, &Cell::new('C')));
+        assert_eq!(cells[3], (0, 1, &Cell::new('D')));
+        assert_eq!(cells[5], (2, 1, &Cell::new('F')));
+    }
+
+    #[test]
+    fn rect_translate_offsets_position() {
+        let r = Rect::new(5, 10, 3, 4);
+        let t = r.translate(2, -3);
+        assert_eq!(t.x, 7);
+        assert_eq!(t.y, 7);
+        assert_eq!(t.width, 3);
+        assert_eq!(t.height, 4);
+    }
+
+    #[test]
+    fn rect_translate_clamps_negative() {
+        let r = Rect::new(2, 3, 4, 5);
+        let t = r.translate(-10, -10);
+        assert_eq!(t.x, 0);
+        assert_eq!(t.y, 0);
+        assert_eq!(t.width, 4);
+        assert_eq!(t.height, 5);
     }
 }
