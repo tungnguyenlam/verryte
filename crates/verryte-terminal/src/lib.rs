@@ -280,6 +280,27 @@ impl Grid {
         out
     }
 
+    /// Find the first cell matching a predicate, returning its position and reference.
+    ///
+    /// Scans row-major (left-to-right, top-to-bottom). Useful for locating
+    /// specific glyphs, colored cells, or other visual markers without
+    /// manual iteration.
+    pub fn find_cell<F>(&self, mut predicate: F) -> Option<(u16, u16, &Cell)>
+    where
+        F: FnMut(&Cell) -> bool,
+    {
+        for y in 0..self.height {
+            let row_start = (y as usize) * (self.width as usize);
+            let row_end = row_start + self.width as usize;
+            for (offset, cell) in self.cells[row_start..row_end].iter().enumerate() {
+                if predicate(cell) {
+                    return Some((offset as u16, y, cell));
+                }
+            }
+        }
+        None
+    }
+
     /// Write a cell at (x, y). Returns `false` if the position is out of bounds.
     pub fn put(&mut self, x: u16, y: u16, cell: Cell) -> bool {
         if let Some(i) = self.index(x, y) {
@@ -1598,6 +1619,41 @@ mod tests {
             "fg\njk"
         );
         assert_eq!(grid.viewport(Rect::new(2, 2, 5, 5)).to_plain_string(), "kl");
+    }
+
+    #[test]
+    fn find_cell_locates_matching_glyph() {
+        let mut grid = Grid::new(4, 3);
+        grid.write_str(0, 0, "....", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, ".@..", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 2, "....", Color::WHITE, Color::BLACK);
+
+        let found = grid.find_cell(|c| c.glyph == '@');
+        assert!(found.is_some());
+        let (x, y, cell) = found.unwrap();
+        assert_eq!(x, 1);
+        assert_eq!(y, 1);
+        assert_eq!(cell.glyph, '@');
+    }
+
+    #[test]
+    fn find_cell_returns_none_when_no_match() {
+        let grid = Grid::new(2, 2);
+        let found = grid.find_cell(|c| c.glyph == 'X');
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_cell_returns_first_match_row_major() {
+        let mut grid = Grid::new(3, 2);
+        grid.write_str(0, 0, "X.X", Color::WHITE, Color::BLACK);
+        grid.write_str(0, 1, ".X.", Color::WHITE, Color::BLACK);
+
+        let found = grid.find_cell(|c| c.glyph == 'X');
+        assert!(found.is_some());
+        let (x, y, _) = found.unwrap();
+        assert_eq!(x, 0);
+        assert_eq!(y, 0);
     }
 
     #[test]

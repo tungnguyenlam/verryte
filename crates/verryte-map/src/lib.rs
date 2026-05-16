@@ -473,6 +473,25 @@ impl<T> TileGrid<T> {
         }
     }
 
+    /// Fill a rectangular region with a tile, clipped to grid bounds.
+    ///
+    /// The region is specified by its top-left corner `(x, y)` and dimensions.
+    /// Out-of-bounds areas are silently skipped.
+    pub fn fill_rect(&mut self, x: i16, y: i16, width: u16, height: u16, tile: T)
+    where
+        T: Clone,
+    {
+        let w = self.width() as i16;
+        let h = self.height() as i16;
+        let x_end = (x + width as i16).min(w);
+        let y_end = (y + height as i16).min(h);
+        for cy in y.max(0)..y_end {
+            for cx in x.max(0)..x_end {
+                self.set(Point::new(cx, cy), tile.clone());
+            }
+        }
+    }
+
     pub fn neighbors4(&self, point: Point) -> Vec<(Point, &T)> {
         point
             .neighbors4()
@@ -2564,5 +2583,30 @@ mod tests {
         let mut rng = Rng::seed(42);
         let centers = grid.place_rooms(3, 3, 5, || '#', || '.', &mut || rng.next_u64());
         assert!(centers.len() <= 3);
+    }
+
+    #[test]
+    fn fill_rect_clips_to_bounds() {
+        let mut grid = TileGrid::new(5, 5, '.');
+        grid.fill_rect(1, 1, 3, 3, '#');
+
+        assert_eq!(*grid.get(Point::new(0, 0)).unwrap(), '.');
+        assert_eq!(*grid.get(Point::new(1, 1)).unwrap(), '#');
+        assert_eq!(*grid.get(Point::new(3, 3)).unwrap(), '#');
+        assert_eq!(*grid.get(Point::new(4, 4)).unwrap(), '.');
+        assert_eq!(*grid.get(Point::new(2, 2)).unwrap(), '#');
+    }
+
+    #[test]
+    fn fill_rect_handles_negative_start() {
+        let mut grid = TileGrid::new(3, 3, '.');
+        grid.fill_rect(-1, -1, 4, 4, '#');
+
+        // Should fill the entire 3x3 grid.
+        for y in 0..3 {
+            for x in 0..3 {
+                assert_eq!(*grid.get(Point::new(x, y)).unwrap(), '#');
+            }
+        }
     }
 }

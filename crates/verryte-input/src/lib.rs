@@ -756,6 +756,28 @@ impl<A: Clone> InputRouter<A> {
         self.pending.clear();
     }
 
+    /// Remove pending actions matching a predicate, keeping the rest.
+    ///
+    /// Useful for canceling queued actions when game state changes (for
+    /// example, removing all movement actions when the player enters a menu).
+    /// Returns the count of removed actions.
+    pub fn filter_pending<F>(&mut self, mut predicate: F) -> usize
+    where
+        F: FnMut(&QueuedAction<A>) -> bool,
+    {
+        let mut queue = VecDeque::new();
+        std::mem::swap(&mut self.pending, &mut queue);
+        let mut removed = 0;
+        for action in queue {
+            if predicate(&action) {
+                removed += 1;
+            } else {
+                self.pending.push_back(action);
+            }
+        }
+        removed
+    }
+
     /// Total number of actions queued over the lifetime of this router.
     ///
     /// This counter never decreases, even when actions are drained. Useful
@@ -1903,5 +1925,39 @@ mod tests {
         router.inject(Move::North);
         router.inject_priority(Move::Wait);
         assert_eq!(router.total_actions_queued(), 2);
+    }
+
+    #[test]
+    fn filter_pending_removes_matching_actions() {
+        let mut router = bound_router();
+        router.inject(Move::North);
+        router.inject(Move::South);
+        router.inject(Move::East);
+
+        let removed = router.filter_pending(|qa| matches!(qa.action, Move::North | Move::South));
+        assert_eq!(removed, 2);
+        assert_eq!(router.pending(), 1);
+        assert_eq!(router.next_action(), Some(Move::East));
+    }
+
+    #[test]
+    fn filter_pending_preserves_order_of_remaining() {
+        let mut router = bound_router();
+        router.inject(Move::North);
+        router.inject(Move::South);
+        router.inject(Move::East);
+        router.inject(Move::West);
+
+        router.filter_pending(|qa| matches!(qa.action, Move::South));
+        let drained: Vec<Move> = router.drain().collect();
+        assert_eq!(drained, vec![Move::North, Move::East, Move::West]);
+    }
+
+    #[test]
+    fn filter_pending_empty_queue_returns_zero() {
+        let mut router = bound_router();
+        let removed = router.filter_pending(|_| true);
+        assert_eq!(removed, 0);
+        assert!(router.is_idle());
     }
 }

@@ -56,6 +56,27 @@ impl<E> Events<E> {
         self.queue.drain(..).collect()
     }
 
+    /// Drain and return only events matching a predicate, keeping the rest.
+    ///
+    /// Useful for extracting specific event types (like damage or movement)
+    /// from a shared channel without consuming unrelated events.
+    pub fn drain_filter<F>(&mut self, mut predicate: F) -> Vec<E>
+    where
+        F: FnMut(&E) -> bool,
+    {
+        let mut queue = VecDeque::new();
+        std::mem::swap(&mut self.queue, &mut queue);
+        let mut matched = Vec::new();
+        for event in queue {
+            if predicate(&event) {
+                matched.push(event);
+            } else {
+                self.queue.push_back(event);
+            }
+        }
+        matched
+    }
+
     pub fn iter(&self) -> std::collections::vec_deque::Iter<'_, E> {
         self.queue.iter()
     }
@@ -140,6 +161,29 @@ mod tests {
     fn with_capacity_preallocates() {
         let events = Events::<Bump>::with_capacity(16);
         assert_eq!(events.len(), 0);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn drain_filter_extracts_matching_keeps_rest() {
+        let mut events = Events::<Bump>::new();
+        events.send(Bump(1));
+        events.send(Bump(2));
+        events.send(Bump(3));
+        events.send(Bump(4));
+
+        let even = events.drain_filter(|e| e.0 % 2 == 0);
+        assert_eq!(even, vec![Bump(2), Bump(4)]);
+        assert_eq!(events.len(), 2);
+        let remaining: Vec<Bump> = events.drain().collect();
+        assert_eq!(remaining, vec![Bump(1), Bump(3)]);
+    }
+
+    #[test]
+    fn drain_filter_empty_returns_empty() {
+        let mut events = Events::<Bump>::new();
+        let result = events.drain_filter(|_| true);
+        assert!(result.is_empty());
         assert!(events.is_empty());
     }
 }

@@ -740,3 +740,22 @@ hierarchical grids for games with entities at vastly different scales.
 orientation. `Rng::weighted_pick` could accept `f64` weights for finer
 probability control. The `Layers` system could gain z-index ranges for
 sub-layer ordering within a single layer.
+
+## 2026-05-16 - priority action queue, Events::with_capacity, fix place_rooms tests
+
+**Goal.** Add priority action injection for urgent/interrupt actions, pre-allocated event channels, and fix compilation errors in place_rooms tests from a previous batch.
+
+**Changes.**
+- `crates/verryte-input/src/lib.rs:668-682` - Added `inject_priority` and `inject_priority_from` methods to `InputRouter` that use `push_front` on the pending VecDeque, placing actions ahead of all currently queued items.
+- `crates/verryte-core/src/event.rs:21-30` - Added `Events::with_capacity(capacity)` constructor that pre-allocates the internal VecDeque, useful when per-frame event volume is known.
+- `crates/verryte-map/src/lib.rs:1198-1209` - Changed `place_rooms` signature from `<F, R>` to `<F1, F2, R>` so `wall` and `floor` can be different closure types (each closure literal has a unique anonymous type in Rust).
+- `crates/verryte-map/Cargo.toml` - Added `verryte-core` as a dev-dependency so tests can use `Rng::seed`.
+- `crates/verryte-map/src/lib.rs:1674` - Added `use verryte_core::Rng;` in test module.
+
+**Reasoning.** Priority injection is a common game-dev need (interrupts, emergency actions, immediate responses) and fits naturally on VecDeque since it already supports O(1) push_front. `with_capacity` is a standard optimization for hot-path event channels. The `place_rooms` fix was necessary because Rust's type system treats each closure literal as a distinct type, so `wall: F, floor: F` cannot accept two different closures.
+
+**Assumptions.** Priority actions are rare enough that front-insertion overhead doesn't matter. Games that need multi-level priorities can layer their own ordering on top.
+
+**Gotchas.** The `place_rooms` signature change from `<F, R>` to `<F1, F2, R>` is a breaking API change for any code using this method, but since it was just added in a previous uncommitted batch, this is fine.
+
+**Follow-ups.** Consider whether `InputRouter` should support a true priority queue (BinaryHeap) for more than two priority levels, or if the current front/back dichotomy is sufficient for Verryte's use cases.
