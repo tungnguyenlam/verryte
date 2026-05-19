@@ -40,7 +40,8 @@ those pieces as the first proving game.
   layering keymaps, `CommandBindings::merge` for layering command sets,
   `InputRouter::total_actions_queued()` for lifetime action metrics,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
-  movement, insertion, deletion, max length, and dirty tracking, and
+  movement, insertion, deletion, max length, dirty tracking, and Ctrl shortcut
+  editing (A/E/B/F/U/W/K), and
   `ActionSource` with `Display`/`FromStr` for serialization and debugging.
 - `crates/verryte-map` - reusable grid/spatial primitives: `Point`,
   `Direction`, `Direction8`, `Size`, typed `TileGrid<T>`, cardinal and
@@ -54,9 +55,10 @@ those pieces as the first proving game.
   generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
   (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching`,
   `TileGrid::find_matching`, `TileGrid::points_matching`, and
-  `TileGrid::density` for map analysis, `TileGrid::bounding_box_of` with
-  `Bounds`/`Bounds::clamp_point` for spatial framing, `SpatialHash<T>` for
-  efficient proximity queries on grid-based entities, cellular automata cave
+  `TileGrid::density` for map analysis, `TileGrid::bounds` and
+  `TileGrid::bounding_box_of` with `Bounds`/`Bounds::clamp_point` for spatial
+  framing, `SpatialHash<T>` for efficient proximity queries on grid-based
+  entities, cellular automata cave
   generation
   (`TileGrid::cellular_automata_cave`) for organic procedural maps,
   `TileGrid::from_ascii` for constructing grids from multi-line string
@@ -70,14 +72,16 @@ those pieces as the first proving game.
   (`draw_border_rounded`, `draw_rounded_panel`), horizontal/vertical lines
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
   text wrapping utilities (`wrap_text`, `write_wrapped_text`), `Grid::transform`
-  and `Grid::map` for bulk cell modification, `Grid::resize` for dynamic grid
-  sizing on terminal resize, `Grid::scroll_up` and `Grid::scroll_down` for
-  scrolling content within a grid, a `Layer` system for compositing named,
-  ordered rendering layers (map, entities, UI), a `Layers` collection for
-  managed layer lifecycle, `ColorPalette` with built-in themes (dark dungeon,
-  light classic, amber terminal, cyberpunk) for consistent game theming,
-  `Sprite` and `SpriteSheet` for frame-based terminal animation, and
-  `draw_sparkline` for inline data visualization with Unicode block characters.
+  and `Grid::map` for bulk cell modification, row/column helpers
+  (`Grid::row_mut`, `Grid::fill_row`, `Grid::fill_col`), `Grid::resize` for
+  dynamic grid sizing on terminal resize, `Grid::scroll_up` and
+  `Grid::scroll_down` for scrolling content within a grid, a `Layer` system
+  for compositing named, ordered rendering layers (map, entities, UI), a
+  `Layers` collection for managed layer lifecycle, `ColorPalette` with built-in
+  themes (dark dungeon, light classic, amber terminal, cyberpunk) for consistent
+  game theming, `Sprite` and `SpriteSheet` for frame-based terminal animation,
+  and `draw_sparkline` for inline data visualization with Unicode block
+  characters.
   `CellAttrs` supports all attribute combinations (bold, dim, italic, underline,
   blink, reverse) with correct ANSI escape code generation.
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,

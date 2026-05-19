@@ -346,6 +346,17 @@ impl Grid {
         }
     }
 
+    /// Return a mutable slice of the cells in row `y`. Returns `None` if out of bounds.
+    pub fn row_mut(&mut self, y: u16) -> Option<&mut [Cell]> {
+        if y < self.height {
+            let start = (y as usize) * (self.width as usize);
+            let end = start + self.width as usize;
+            Some(&mut self.cells[start..end])
+        } else {
+            None
+        }
+    }
+
     /// Return a freshly allocated Vec of cells in column `x`.
     /// Returns `None` if out of bounds.
     ///
@@ -363,6 +374,28 @@ impl Grid {
             result.push(self.cells[y * w + x as usize]);
         }
         Some(result)
+    }
+
+    /// Fill a single row with the provided cell. Returns `false` if out of bounds.
+    pub fn fill_row(&mut self, y: u16, cell: Cell) -> bool {
+        if let Some(row) = self.row_mut(y) {
+            row.fill(cell);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Fill a single column with the provided cell. Returns `false` if out of bounds.
+    pub fn fill_col(&mut self, x: u16, cell: Cell) -> bool {
+        if x >= self.width {
+            return false;
+        }
+        let w = self.width as usize;
+        for y in 0..self.height as usize {
+            self.cells[y * w + x as usize] = cell;
+        }
+        true
     }
 
     /// Iterate over all cells with their (x, y) positions in row-major order.
@@ -2867,6 +2900,35 @@ mod tests {
     fn row_returns_none_for_out_of_bounds() {
         let grid = Grid::new(2, 2);
         assert!(grid.row(2).is_none());
+    }
+
+    #[test]
+    fn row_mut_returns_mutable_slice() {
+        let mut grid = Grid::new(3, 2);
+        grid.write_str(0, 0, "ABC", Color::WHITE, Color::BLACK);
+        if let Some(row) = grid.row_mut(1) {
+            row.fill(Cell::new('x'));
+        }
+        assert_eq!(grid.get(0, 1).unwrap().glyph, 'x');
+        assert_eq!(grid.get(2, 1).unwrap().glyph, 'x');
+    }
+
+    #[test]
+    fn fill_row_writes_full_row() {
+        let mut grid = Grid::new(3, 2);
+        assert!(grid.fill_row(1, Cell::new('x')));
+        assert_eq!(grid.get(0, 1).unwrap().glyph, 'x');
+        assert_eq!(grid.get(2, 1).unwrap().glyph, 'x');
+        assert!(!grid.fill_row(4, Cell::new('y')));
+    }
+
+    #[test]
+    fn fill_col_writes_full_column() {
+        let mut grid = Grid::new(2, 3);
+        assert!(grid.fill_col(1, Cell::new('y')));
+        assert_eq!(grid.get(1, 0).unwrap().glyph, 'y');
+        assert_eq!(grid.get(1, 2).unwrap().glyph, 'y');
+        assert!(!grid.fill_col(5, Cell::new('z')));
     }
 
     #[test]

@@ -445,6 +445,11 @@ impl<T> TileGrid<T> {
         self.size.height
     }
 
+    /// Return the full bounds of the grid (origin at 0,0).
+    pub fn bounds(&self) -> Bounds {
+        Bounds::new(0, 0, self.size.width, self.size.height)
+    }
+
     pub fn len(&self) -> usize {
         self.tiles.len()
     }
@@ -2235,6 +2240,12 @@ mod tests {
                 Point::new(2, 1),
             ]
         );
+    }
+
+    #[test]
+    fn tile_grid_bounds_matches_size() {
+        let grid = TileGrid::new(3, 2, '.');
+        assert_eq!(grid.bounds(), Bounds::new(0, 0, 3, 2));
     }
 
     #[test]

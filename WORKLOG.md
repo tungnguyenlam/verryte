@@ -1151,3 +1151,21 @@ TTY frontend to detect idle states for animation or timeout logic.
 **Gotchas.** The viewport may be larger than the map; the input mapper clamps to the actual map width/height to avoid out-of-bounds cursor targets. Since inspection does not run the full schedule, the message system is invoked directly to record the inspection event.
 
 **Follow-ups.** If inspection becomes a broader UI mode, consider adding a dedicated cursor overlay layer in `render()` and formalizing a stack of input contexts for nested UI states.
+
+## 2026-05-20 - add text-input shortcuts and grid/map helpers
+
+**Goal.** Improve the engine with additional input ergonomics and grid/map helpers while keeping the shared input path and docs/tests aligned.
+
+**Changes.**
+- `crates/verryte-input/src/lib.rs:893-1269,1939-1986` - added Ctrl shortcut handling for `TextInput` (A/E/B/F/U/W/K), plus helper deletions and tests for word/line edits.
+- `crates/verryte-terminal/src/lib.rs:350-401,2909-2932` - added `Grid::row_mut`, `Grid::fill_row`, and `Grid::fill_col` with focused tests for row/column edits.
+- `crates/verryte-map/src/lib.rs:449,2246` - added `TileGrid::bounds()` plus a size-aligned test for full-grid bounds.
+- `README.md:43,58,76` - documented the new TextInput shortcuts, grid bounds helper, and row/column utilities.
+
+**Reasoning.** Text entry is a core UX for terminal games, so basic Ctrl shortcuts make prompts and command entry more usable without forking the input path. Row/column grid helpers and full-grid bounds make rendering and map logic less error-prone while staying lightweight. These additions keep APIs inspectable and small, aligning with Verryte's modular goals.
+
+**Assumptions.** Ctrl shortcuts rely on frontends mapping modifiers to `Key::Modified`, and word deletion treats whitespace as the separator. `TileGrid::bounds()` is expected to use (0,0) as the origin and reflect the grid size directly.
+
+**Gotchas.** `TextInput` cursor math is character-count based, so deletion helpers compute char indices before byte ranges; this keeps multibyte safety but is still O(n) per edit. Column fill writes per row because the grid is row-major, so there is no mutable column slice.
+
+**Follow-ups.** Consider extending TextInput with word-right navigation if the key model adds Ctrl+arrow support, and evaluate whether a `Grid::col_mut` or column iterator would be worth the borrow complexity.

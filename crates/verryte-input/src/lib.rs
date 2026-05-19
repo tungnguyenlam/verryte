@@ -889,7 +889,8 @@ impl<A: Clone> InputRouter<A> {
 /// A text input buffer for terminal text entry (prompts, naming, chat, etc.).
 ///
 /// Handles key events and produces a plain-text string. Supports cursor
-/// movement, insertion, deletion, and a configurable max length.
+/// movement, insertion, deletion, and a configurable max length, plus common
+/// Ctrl shortcuts (A/E/B/F/U/W/K) for navigation and deletion.
 ///
 /// This is separate from the action router because text entry is a continuous
 /// editing state, not a discrete action. Games can render the buffer's current
@@ -970,6 +971,43 @@ impl TextInput {
                 self.text.insert_str(byte_pos, &ch.to_string());
                 self.cursor += 1;
                 self.dirty = true;
+                false
+            }
+            Key::Modified {
+                char, ctrl: true, ..
+            } => {
+                let ch = char.to_ascii_lowercase();
+                match ch {
+                    'a' => {
+                        if self.cursor != 0 {
+                            self.cursor = 0;
+                            self.dirty = true;
+                        }
+                    }
+                    'e' => {
+                        let len = self.text.chars().count();
+                        if self.cursor != len {
+                            self.cursor = len;
+                            self.dirty = true;
+                        }
+                    }
+                    'b' => {
+                        if self.cursor > 0 {
+                            self.cursor -= 1;
+                            self.dirty = true;
+                        }
+                    }
+                    'f' => {
+                        if self.cursor < self.text.chars().count() {
+                            self.cursor += 1;
+                            self.dirty = true;
+                        }
+                    }
+                    'u' => self.delete_to_start(),
+                    'k' => self.delete_to_end(),
+                    'w' => self.delete_word_left(),
+                    _ => {}
+                }
                 false
             }
             Key::Backspace => {
@@ -1189,6 +1227,60 @@ impl TextInput {
     pub fn clear_history(&mut self) {
         self.history.clear();
         self.history_index = None;
+    }
+
+    fn delete_range(&mut self, start: usize, end: usize) {
+        let len = self.text.chars().count();
+        let start = start.min(len);
+        let end = end.min(len);
+        if start >= end {
+            return;
+        }
+        let start_byte = self.char_to_byte(start);
+        let end_byte = self.char_to_byte(end);
+        self.text.drain(start_byte..end_byte);
+        if self.cursor >= end {
+            self.cursor -= end - start;
+        } else if self.cursor > start {
+            self.cursor = start;
+        }
+        self.dirty = true;
+    }
+
+    fn delete_to_start(&mut self) {
+        if self.cursor > 0 {
+            let cursor = self.cursor;
+            self.delete_range(0, cursor);
+        }
+    }
+
+    fn delete_to_end(&mut self) {
+        let len = self.text.chars().count();
+        if self.cursor < len {
+            let cursor = self.cursor;
+            self.delete_range(cursor, len);
+        }
+    }
+
+    fn delete_word_left(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = self.word_start_left();
+        let cursor = self.cursor;
+        self.delete_range(start, cursor);
+    }
+
+    fn word_start_left(&self) -> usize {
+        let chars: Vec<char> = self.text.chars().collect();
+        let mut idx = self.cursor.min(chars.len());
+        while idx > 0 && chars[idx - 1].is_whitespace() {
+            idx -= 1;
+        }
+        while idx > 0 && !chars[idx - 1].is_whitespace() {
+            idx -= 1;
+        }
+        idx
     }
 
     fn char_to_byte(&self, char_index: usize) -> usize {
@@ -1834,6 +1926,57 @@ mod tests {
 
         input.handle_key(Key::End);
         assert_eq!(input.cursor(), 3);
+    }
+
+    #[test]
+    fn text_input_ctrl_navigation_moves_cursor() {
+        let mut input = TextInput::new();
+        input.set_text("hello".to_owned());
+        assert_eq!(input.cursor(), 5);
+
+        input.handle_key(Key::modified('b', true, false, false));
+        assert_eq!(input.cursor(), 4);
+
+        input.handle_key(Key::modified('f', true, false, false));
+        assert_eq!(input.cursor(), 5);
+
+        input.handle_key(Key::modified('a', true, false, false));
+        assert_eq!(input.cursor(), 0);
+
+        input.handle_key(Key::modified('e', true, false, false));
+        assert_eq!(input.cursor(), 5);
+    }
+
+    #[test]
+    fn text_input_ctrl_w_deletes_word_left() {
+        let mut input = TextInput::new();
+        input.set_text("hello world".to_owned());
+
+        input.handle_key(Key::modified('w', true, false, false));
+        assert_eq!(input.text(), "hello ");
+        assert_eq!(input.cursor(), 6);
+    }
+
+    #[test]
+    fn text_input_ctrl_u_deletes_to_start() {
+        let mut input = TextInput::new();
+        input.set_text("hello world".to_owned());
+        input.set_cursor(5);
+
+        input.handle_key(Key::modified('u', true, false, false));
+        assert_eq!(input.text(), " world");
+        assert_eq!(input.cursor(), 0);
+    }
+
+    #[test]
+    fn text_input_ctrl_k_deletes_to_end() {
+        let mut input = TextInput::new();
+        input.set_text("hello world".to_owned());
+        input.set_cursor(6);
+
+        input.handle_key(Key::modified('k', true, false, false));
+        assert_eq!(input.text(), "hello ");
+        assert_eq!(input.cursor(), 6);
     }
 
     #[test]
