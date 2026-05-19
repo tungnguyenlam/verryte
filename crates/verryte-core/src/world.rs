@@ -12,6 +12,7 @@
 //! an exotic API.
 
 use std::any::{Any, TypeId};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use crate::entity::Entity;
@@ -777,6 +778,29 @@ impl World {
         prev.and_then(|boxed| boxed.downcast::<R>().ok().map(|b| *b))
     }
 
+    /// Fetch a mutable resource, inserting `Default` if missing.
+    pub fn resource_or_insert<R: 'static + Send + Sync + Default>(&mut self) -> &mut R {
+        self.resource_or_insert_with(R::default)
+    }
+
+    /// Fetch a mutable resource, inserting the closure result if missing.
+    pub fn resource_or_insert_with<R, F>(&mut self, f: F) -> &mut R
+    where
+        R: 'static + Send + Sync,
+        F: FnOnce() -> R,
+    {
+        match self.resources.entry(TypeId::of::<R>()) {
+            Entry::Vacant(entry) => {
+                entry.insert(Box::new(f()));
+            }
+            Entry::Occupied(_) => {}
+        }
+        self.resources
+            .get_mut(&TypeId::of::<R>())
+            .and_then(|boxed| boxed.downcast_mut::<R>())
+            .expect("resource entry missing or wrong type")
+    }
+
     pub fn resource<R: 'static + Send + Sync>(&self) -> Option<&R> {
         self.resources.get(&TypeId::of::<R>())?.downcast_ref::<R>()
     }
@@ -1063,6 +1087,30 @@ mod tests {
         assert_eq!(world.resource::<Counter>(), Some(&Counter(12)));
         assert_eq!(world.remove_resource::<Counter>(), Some(Counter(12)));
         assert_eq!(world.resource::<Counter>(), None);
+    }
+
+    #[test]
+    fn resource_or_insert_creates_default_once() {
+        let mut world = World::new();
+        let counter = world.resource_or_insert::<Counter>();
+        assert_eq!(counter, &Counter(0));
+        counter.0 = 7;
+        assert_eq!(world.resource::<Counter>(), Some(&Counter(7)));
+    }
+
+    #[test]
+    fn resource_or_insert_with_keeps_existing_resource() {
+        use std::cell::Cell;
+
+        let mut world = World::new();
+        world.insert_resource(Counter(5));
+        let called = Cell::new(false);
+        let counter = world.resource_or_insert_with(|| {
+            called.set(true);
+            Counter(99)
+        });
+        assert!(!called.get());
+        assert_eq!(counter, &Counter(5));
     }
 
     #[test]

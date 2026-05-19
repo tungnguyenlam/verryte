@@ -1710,6 +1710,24 @@ impl<T> TileGrid<T> {
         self.iter().filter(|(p, t)| predicate(*p, t)).count()
     }
 
+    /// Find the first point matching the predicate, scanning row-major.
+    pub fn find_matching<F>(&self, predicate: F) -> Option<Point>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        self.iter().find_map(|(p, t)| predicate(p, t).then_some(p))
+    }
+
+    /// Collect all points matching the predicate in row-major order.
+    pub fn points_matching<F>(&self, predicate: F) -> Vec<Point>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        self.iter()
+            .filter_map(|(p, t)| predicate(p, t).then_some(p))
+            .collect()
+    }
+
     /// Return the fraction of tiles that match the predicate, as a value
     /// between 0.0 and 1.0. Returns 0.0 for empty grids.
     pub fn density<F>(&self, predicate: F) -> f32
@@ -1953,6 +1971,23 @@ impl Bounds {
             && point.y >= self.y as i16
             && (point.x as u16) < self.right()
             && (point.y as u16) < self.bottom()
+    }
+
+    /// Clamp a point to the bounds rectangle.
+    ///
+    /// Returns `None` if the bounds are empty.
+    pub fn clamp_point(self, point: Point) -> Option<Point> {
+        if self.width == 0 || self.height == 0 {
+            return None;
+        }
+        let min_x = self.x as i16;
+        let min_y = self.y as i16;
+        let max_x = self.x.saturating_add(self.width.saturating_sub(1)) as i16;
+        let max_y = self.y.saturating_add(self.height.saturating_sub(1)) as i16;
+        Some(Point::new(
+            point.x.clamp(min_x, max_x),
+            point.y.clamp(min_y, max_y),
+        ))
     }
 
     pub fn center(self) -> Point {
@@ -2824,6 +2859,22 @@ mod tests {
     }
 
     #[test]
+    fn find_matching_returns_first_match() {
+        let grid = TileGrid::from_vec(3, 2, vec!['#', '.', '.', '#', '.', '#']).unwrap();
+        assert_eq!(grid.find_matching(|_, &t| t == '.'), Some(Point::new(1, 0)));
+        assert_eq!(grid.find_matching(|_, &t| t == 'x'), None);
+    }
+
+    #[test]
+    fn points_matching_collects_all_matches_in_order() {
+        let grid = TileGrid::from_vec(4, 1, vec!['#', '.', '#', '.']).unwrap();
+        assert_eq!(
+            grid.points_matching(|_, &t| t == '.'),
+            vec![Point::new(1, 0), Point::new(3, 0)]
+        );
+    }
+
+    #[test]
     fn count_matching_returns_correct_count() {
         let grid = TileGrid::from_vec(5, 1, vec!['.', '.', '#', '.', '#']).unwrap();
         assert_eq!(grid.count_matching(|_, &t| t == '.'), 3);
@@ -2877,6 +2928,19 @@ mod tests {
         assert!(!b.contains(Point::new(1, 3)));
         assert!(!b.contains(Point::new(7, 3)));
         assert_eq!(b.center(), Point::new(4, 6));
+    }
+
+    #[test]
+    fn bounds_clamp_point_handles_empty_and_out_of_range() {
+        let empty = Bounds::new(0, 0, 0, 5);
+        assert_eq!(empty.clamp_point(Point::new(3, 4)), None);
+
+        let bounds = Bounds::new(2, 3, 4, 2);
+        assert_eq!(bounds.clamp_point(Point::new(3, 4)), Some(Point::new(3, 4)));
+        assert_eq!(
+            bounds.clamp_point(Point::new(-5, 10)),
+            Some(Point::new(2, 4))
+        );
     }
 
     #[test]

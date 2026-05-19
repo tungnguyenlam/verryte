@@ -1057,3 +1057,76 @@ string) rather than `[]`; fixed with an explicit empty-check guard. The
 invalid input. `spawn_batch` could accept an iterator of components for
 heterogeneous bulk spawning. `scroll_up`/`scroll_down` could be integrated into
 the Ash Courier TTY runner's message log panel for smoother scrolling behavior.
+
+## 2026-05-17 - autonomous engine run: column slices, saturating math, contains_point, is_empty
+
+**Goal.** Continue autonomous Verryte development with a batch of small, focused
+engine primitives that fill genuine gaps identified through code inspection and
+worklog follow-up review.
+
+**Changes.**
+- `crates/verryte-terminal/src/lib.rs:349` - added `Grid::col(x)` returning
+  `Option<Vec<Cell>>` for column scanning. Unlike `row(y)` which returns a
+  zero-copy slice, columns require allocation because cells are stored row-major.
+  Tests at `:2872` and `:2889` verify correct column extraction and OOB handling.
+- `crates/verryte-map/src/lib.rs:31` - added `Point::saturating_offset(dx, dy)`
+  using `i16::saturating_add` to prevent overflow in grid math. Useful for
+  iterative grid operations where explicit bounds checks at each step would be
+  verbose. Test at `:2133` covers normal operation and saturation at both
+  `i16::MAX` and `i16::MIN`.
+- `crates/verryte-map/src/lib.rs:460` - added `TileGrid::contains_point(point, predicate)`
+  combining `in_bounds` and tile inspection in one call. Returns `true` only if
+  the point is in bounds AND its tile matches the predicate. Test at `:2231`
+  covers in-bounds match, in-bounds non-match, and out-of-bounds cases.
+- `crates/verryte-input/src/lib.rs:774` - added `InputRouter::is_empty()` checking
+  both `bindings.is_empty()` and `pending.is_empty()`. Useful for detecting a
+  completely fresh or fully drained router. Test at `:1222` verifies empty router,
+  router with bindings, router with no bindings, and router with pending actions.
+- `crates/verryte-terminal/src/lib.rs:3010` - added tests for existing
+  `Grid::fill_rect(Rect, Cell)` API to improve coverage.
+
+**Reasoning.** The codebase is already quite mature (566 tests, comprehensive
+API coverage across all crates). The worklog follow-ups mentioned `Grid::col(x)`
+as a natural complement to `row(y)`. The other additions are "obvious missing
+methods" that games reach for: saturating offset prevents panics in iterative
+grid algorithms, `contains_point` is a common guard clause pattern, and
+`is_empty` on the router provides a more complete idle check than `is_idle()`
+alone (which only checks the pending queue).
+
+**Assumptions.** `Grid::col` returns `Vec<Cell>` rather than a custom iterator
+because the allocation is small (grid height) and the simplicity outweighs the
+micro-optimization. `saturating_offset` uses `i16` saturation semantics which
+clamp to `i16::MIN`/`i16::MAX` rather than to grid bounds — callers still need
+`in_bounds` checks for grid access.
+
+**Gotchas.** `fill_rect` already existed with a `Rect` parameter signature, so
+my initial attempt to add a `(x, y, width, height, cell)` variant created a
+duplicate method name. Fixed by removing my variant and adding tests for the
+existing API instead. The `saturating_offset` test initially expected clamping
+to zero for negative offsets from (0,0), but `i16::saturating_add` clamps to
+`i16::MIN`, not zero — fixed the test to match actual semantics.
+
+**Follow-ups.** `Grid::col` could be extended with a mutable variant
+`col_mut(x)` for column editing, though it requires allocation and copy-back.
+`Point::clamp(rect)` would be a natural companion to `saturating_offset` for
+explicit bounds clamping. `InputRouter::is_empty` could be used in Ash Courier's
+TTY frontend to detect idle states for animation or timeout logic.
+
+## 2026-05-19 - add lazy resources, input drain traces, map match helpers
+
+**Goal.** Deliver another autonomous engine batch with small, reusable primitives that tighten ECS/resource ergonomics, action routing observability, and map query helpers without splitting the shared control path.
+
+**Changes.**
+- `crates/verryte-core/src/world.rs:778` - added `World::resource_or_insert` and `World::resource_or_insert_with` plus tests so resources can be created lazily without boilerplate checks.
+- `crates/verryte-input/src/lib.rs:763` - added `InputRouter::drain_trace` plus a test to drain pending actions into an `ActionTrace` while preserving sources.
+- `crates/verryte-map/src/lib.rs:1710` - added `TileGrid::find_matching` and `TileGrid::points_matching` plus tests for row-major match discovery.
+- `crates/verryte-map/src/lib.rs:1973` - added `Bounds::clamp_point` plus tests to clamp points safely inside a bounds rectangle.
+- `README.md` - documented the new resource helpers, drain traces, and map match/clamp APIs in the workspace summary.
+
+**Reasoning.** Resource setup is a common ECS task; adding lazy insertion keeps systems terse while preserving the explicit resource model. Action traces already exist but there was no direct way to drain pending actions while keeping source metadata; a dedicated drain API improves observability for scripts and replays. The map helpers add focused query primitives that games repeatedly need, and `Bounds::clamp_point` is a direct companion to the existing bounds utilities.
+
+**Assumptions.** `find_matching` and `points_matching` should respect the row-major ordering implied by `TileGrid::iter`. `Bounds::clamp_point` returning `None` for empty bounds is preferable to inventing a sentinel point. Resource lazy insertion should never override an existing resource.
+
+**Gotchas.** `Bounds::clamp_point` uses saturating math for the max edge; callers still need to ensure bounds represent a real rectangle (non-zero width/height) or handle the `None` case.
+
+**Follow-ups.** Consider using `points_matching` in Ash Courier layout parsing to reduce manual tile scans, and expose similar row-major helpers for `TileGrid::iter_mut` if future systems need bulk edits.

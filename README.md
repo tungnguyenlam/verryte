@@ -17,6 +17,8 @@ those pieces as the first proving game.
   entity removal, `World::retain` for predicate-based entity filtering,
   `World::query3` for three-component queries, `World::get_or_insert` /
   `World::get_or_insert_with` for lazy component initialization,
+  `World::resource_or_insert` / `World::resource_or_insert_with` for lazy
+  resource setup,
   `World::entities()` for iterating all live entities, `World::spawn_batch` for
   bulk entity creation with shared components, `Schedule::clear`,
   `Schedule::remove_by_name`, and `Schedule::run_system_by_name` for runtime
@@ -31,10 +33,10 @@ those pieces as the first proving game.
   pause state, and real-time duration.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse bindings,
   script command bindings, sourced queued actions, replayable `ActionTrace`s,
-  router-level script injection, pending queue snapshots, the shared action
-  queue, input context switching via `set_bindings` and `bindings_guard`, batch
-  event processing (`handle_batch`), `Bindings::merge` for layering keymaps,
-  `CommandBindings::merge` for layering command sets,
+  router-level script injection, pending queue snapshots and drain traces, the
+  shared action queue, input context switching via `set_bindings` and
+  `bindings_guard`, batch event processing (`handle_batch`), `Bindings::merge`
+  for layering keymaps, `CommandBindings::merge` for layering command sets,
   `InputRouter::total_actions_queued()` for lifetime action metrics,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
   movement, insertion, deletion, max length, and dirty tracking, and
@@ -49,10 +51,12 @@ those pieces as the first proving game.
   Chebyshev), flood-fill for connected-component detection, region counting,
   hazard-distance safety scoring (`safer_neighbors4`), random-walk dungeon
   generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
-  (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching` and
+  (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching`,
+  `TileGrid::find_matching`, `TileGrid::points_matching`, and
   `TileGrid::density` for map analysis, `TileGrid::bounding_box_of` with
-  `Bounds` for spatial framing, `SpatialHash<T>` for efficient proximity
-  queries on grid-based entities, cellular automata cave generation
+  `Bounds`/`Bounds::clamp_point` for spatial framing, `SpatialHash<T>` for
+  efficient proximity queries on grid-based entities, cellular automata cave
+  generation
   (`TileGrid::cellular_automata_cave`) for organic procedural maps,
   `TileGrid::from_ascii` for constructing grids from multi-line string
   literals, and `TileGrid::map_tiles` for transforming tile types.

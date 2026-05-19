@@ -763,6 +763,11 @@ impl<A: Clone> InputRouter<A> {
         self.pending.drain(..)
     }
 
+    /// Drain the pending queue into a replayable trace, preserving sources.
+    pub fn drain_trace(&mut self) -> ActionTrace<A> {
+        ActionTrace::from_steps(self.pending.drain(..))
+    }
+
     pub fn pending(&self) -> usize {
         self.pending.len()
     }
@@ -1292,6 +1297,27 @@ mod tests {
                 QueuedAction::new(Move::Wait, ActionSource::Agent),
                 QueuedAction::new(Move::East, ActionSource::Replay),
                 QueuedAction::new(Move::South, ActionSource::Replay),
+            ]
+        );
+    }
+
+    #[test]
+    fn drain_trace_preserves_sources_and_clears_queue() {
+        let mut router = bound_router();
+        router.handle(InputEvent::Key(Key::Up));
+        router.inject_from(Move::Wait, ActionSource::Agent);
+        router.handle_from(InputEvent::Key(Key::Right), ActionSource::Replay);
+
+        let trace = router.drain_trace();
+        assert!(router.is_idle());
+
+        let steps = trace.into_steps();
+        assert_eq!(
+            steps,
+            vec![
+                QueuedAction::new(Move::North, ActionSource::Terminal),
+                QueuedAction::new(Move::Wait, ActionSource::Agent),
+                QueuedAction::new(Move::East, ActionSource::Replay),
             ]
         );
     }
