@@ -15,20 +15,22 @@ input/script path. Highlights:
 - An ASCII level loader (`Game::from_layout`) recognising `#` walls, `.` floor,
   `@` player spawn, `p` package, `h` hazard, `G` goal.
 - An `Action` enum covering `MoveNorth/South/East/West`, `StepToPackage`,
-  `StepToGoal`, `StepToSafety`, `Wait`, `Scan`, `ScanRadius(u16)`, `PickUp`,
-  `Drop`, and `Quit`,
+  `StepToGoal`, `StepToSafety`, `Wait`, `Scan`, `ScanRadius(u16)`,
+  `Inspect(Point)`, `PickUp`, `Drop`, and `Quit`,
   bound to arrow keys, WASD, vi keys, plus `.` / `x` / `p` / `o` / `r` / `,` /
   `D` / `q` / `Esc`, plus `1`-`5` for fixed-radius scans.
-  Right mouse press also maps to `Scan`, and middle mouse press maps to `Wait`
-  through the same router path.
+  Left mouse press sets an inspection cursor, right mouse press maps to `Scan`,
+  and middle mouse press maps to `Wait` through the same router path.
 - A single `Game::apply(action)` spine. Terminal events, scripted injections,
   and tests all converge here — there is no separate test-only code path.
-- `GameState` resource (turn counter, outcome, package flag, scan count), a
+- `GameState` resource (turn counter, outcome, package flag, scan count,
+  inspection cursor), a
   per-action `Events<GameEvent>` resource, and an entity for the player, each
   package, and each hazard.
 - A layered `render()` that walks the ECS to produce a `Grid` (walls / goal,
   then hazards, then packages, then player on top).
-- A structured `Snapshot { turn, outcome, has_package, scans, player,
+- A structured `Snapshot { turn, outcome, has_package, scans, player, cursor,
+  cursor_tile, path_to_cursor, distance_to_cursor,
   packages, hazards, chasers, visible_tiles, visible_hazards, map_width,
   map_height, reachable_tiles, tile_under_player, walkable_neighbors,
   path_to_nearest_package, path_to_goal, path_to_nearest_hazard,
@@ -39,9 +41,9 @@ input/script path. Highlights:
   blocking, hazard loss, goal win, terminal-event parity, command parsing,
   step reports, and ignored post-game actions.
 - Per-step reports include the action source (`Terminal`, `Script`, `Agent`,
-  `Replay`, or `Test`), an explicit action result (`NoOp`, `Advanced`,
-  `Ended`, or `IgnoredGameOver`), and the `GameEvent` list emitted by that
-  action.
+  `Replay`, or `Test`), an explicit action result (`NoOp`, `Updated`,
+  `Advanced`, `Ended`, or `IgnoredGameOver`), and the `GameEvent` list emitted
+  by that action.
 
 ## How to drive it
 
@@ -83,8 +85,9 @@ cargo run -p ash-courier --bin ash-courier-script -- "eeesss,nnneeeesssssss"
 The script runner accepts named commands and compact glyphs in the same input.
 Named commands are useful for readable tests; glyph runs are useful for compact
 replay strings. Scripts also accept `;` separators and `#` inline comments.
-Parameterized scan tokens are also supported (`scan:3`, `scan3`, `x3`) through
-the same shared `InputRouter` queue path.
+Parameterized scan tokens (`scan:3`, `scan3`, `x3`) and inspect tokens
+(`inspect:3,4`, `look:3,4`) are supported through the same shared
+`InputRouter` queue path.
 
 ## Why This Prototype Exists
 
@@ -143,6 +146,8 @@ Ash Courier currently exposes:
 - `default_bindings()` for terminal-style key input
 - `default_commands()` for named and compact script commands
 - `InputRouter<Action>` as the single queue for both paths
+- `InputRouter::handle_with` / `Game::handle_event_with` for custom
+  position-aware input translation
 - `InputRouter::inject_script` / `inject_script_with` for sourced
   script/agent injection, including parameterized command tokens
 - `ActionTrace` replay for recorded or planned sourced action runs

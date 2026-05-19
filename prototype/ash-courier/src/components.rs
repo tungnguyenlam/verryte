@@ -32,6 +32,7 @@ pub struct GameState {
     pub outcome: Outcome,
     pub has_package: bool,
     pub scans: u32,
+    pub cursor: Option<Position>,
 }
 
 impl Default for GameState {
@@ -41,6 +42,7 @@ impl Default for GameState {
             outcome: Outcome::Playing,
             has_package: false,
             scans: 0,
+            cursor: None,
         }
     }
 }
@@ -68,6 +70,10 @@ pub enum GameEvent {
         at: Position,
         visible_tiles: usize,
         visible_hazards: usize,
+    },
+    Inspected {
+        at: Position,
+        tile: crate::map::Tile,
     },
     ChaserMoved {
         from: Position,

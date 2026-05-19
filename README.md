@@ -35,8 +35,9 @@ those pieces as the first proving game.
   script command bindings, sourced queued actions, replayable `ActionTrace`s,
   router-level script injection, pending queue snapshots and drain traces, the
   shared action queue, input context switching via `set_bindings` and
-  `bindings_guard`, batch event processing (`handle_batch`), `Bindings::merge`
-  for layering keymaps, `CommandBindings::merge` for layering command sets,
+  `bindings_guard`, batch event processing (`handle_batch`), custom event
+  translation (`handle_with`) for position-aware inputs, `Bindings::merge` for
+  layering keymaps, `CommandBindings::merge` for layering command sets,
   `InputRouter::total_actions_queued()` for lifetime action metrics,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
   movement, insertion, deletion, max length, and dirty tracking, and
@@ -86,9 +87,10 @@ those pieces as the first proving game.
   `terminal_size()` for querying the current terminal dimensions.
 - `prototype/ash-courier` - a small turn-based roguelike prototype that proves
   the engine path through movement, pickup, hazards, win/loss state, rendering,
-  scan/visibility state (using recursive shadowcasting FOV), event reports,
-  package drop/re-pickup, path hints, hazard-distance safety hints,
-  reachable-state hints, local viewport snapshots, observable snapshots,
+  scan/visibility state (using recursive shadowcasting FOV), inspection cursor
+  state, event reports, package drop/re-pickup, path hints, hazard-distance
+  safety hints, reachable-state hints, local viewport snapshots, observable
+  snapshots,
   `GameClock` for turn tracking, `Rng` for reproducible chaser AI,
   diff-based TTY rendering, procedural cave map generation via
   `Game::from_cave` using cellular automata, and `Map::from_ascii` for
@@ -107,8 +109,8 @@ In practice:
 
 - terminal frontends translate keys/mouse into `InputEvent` and call
   `InputRouter::handle`;
-- games can bind simple mouse button transitions to actions, or intercept
-  position-aware mouse events before routing them;
+- games can bind simple mouse button transitions to actions, or translate
+  position-aware mouse events via `InputRouter::handle_with` before routing;
 - scripts and agents can parse command text with `CommandBindings` or call
   `InputRouter::inject_script` / `InputRouter::inject_script_with`, which
   inject the resulting actions into the same queue with an explicit
@@ -140,12 +142,13 @@ cargo run -p ash-courier --bin ash-courier-tty
 `north`, `south`, `east`, `west`, `wait`, `scan`, `step_package`, `step_goal`,
 `step_safety`, `pickup`, `drop`, `quit`, plus `n`, `s`, `e`, `w`, `.`, `x`, `p`,
 `o`, `v`, `,`, `!`, and `q`. Scripts can mix whitespace with `;` separators and
-`#` line comments. Ash Courier's script runner also accepts parameterized scan
-tokens (`scan:3`, `scan3`, `x3`) through `inject_script_with`.
+#` line comments. Ash Courier's script runner also accepts parameterized scan
+tokens (`scan:3`, `scan3`, `x3`) and inspect tokens (`inspect:3,4`, `look:3,4`)
+through `inject_script_with`.
 The script runner prints the rendered frame, local viewport, state summary,
 source, action result, event count, visible/reachable tile counts, path lengths,
 shortest distances to package/goal/hazards/chasers, and safer-neighbor counts
-after each action.
+after each action, plus cursor state when inspection is used.
 
 ## Verification
 

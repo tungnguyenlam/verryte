@@ -635,6 +635,18 @@ impl<A: Clone> InputRouter<A> {
         self.handle_from(event, ActionSource::Terminal)
     }
 
+    /// Translate a terminal event into a game action using a custom translator
+    /// before falling back to the current bindings.
+    ///
+    /// This is useful for position-aware mouse actions or other bespoke logic
+    /// while still keeping the shared action queue.
+    pub fn handle_with<F>(&mut self, event: InputEvent, translate: F) -> bool
+    where
+        F: FnOnce(InputEvent) -> Option<A>,
+    {
+        self.handle_with_from(event, ActionSource::Terminal, translate)
+    }
+
     /// Translate an input event into a game action and queue it with explicit
     /// provenance. This keeps replayed or synthetic input events on the same
     /// path as real terminal input while preserving useful report metadata.
@@ -645,6 +657,26 @@ impl<A: Clone> InputRouter<A> {
             true
         } else {
             false
+        }
+    }
+
+    /// Translate an input event with a custom translator, falling back to
+    /// bindings if the translator returns `None`.
+    pub fn handle_with_from<F>(
+        &mut self,
+        event: InputEvent,
+        source: ActionSource,
+        translate: F,
+    ) -> bool
+    where
+        F: FnOnce(InputEvent) -> Option<A>,
+    {
+        if let Some(action) = translate(event) {
+            self.pending.push_back(QueuedAction::new(action, source));
+            self.total_queued += 1;
+            true
+        } else {
+            self.handle_from(event, source)
         }
     }
 
@@ -1259,6 +1291,28 @@ mod tests {
         assert_eq!(
             router.next_queued(),
             Some(QueuedAction::new(Move::Wait, ActionSource::Terminal))
+        );
+    }
+
+    #[test]
+    fn handle_with_prefers_custom_translation() {
+        let mut router = bound_router();
+        let handled = router.handle_with(InputEvent::Key(Key::Up), |_| Some(Move::Scan(2)));
+        assert!(handled);
+        assert_eq!(
+            router.next_queued(),
+            Some(QueuedAction::new(Move::Scan(2), ActionSource::Terminal))
+        );
+    }
+
+    #[test]
+    fn handle_with_falls_back_to_bindings() {
+        let mut router = bound_router();
+        let handled = router.handle_with(InputEvent::Key(Key::Right), |_| None);
+        assert!(handled);
+        assert_eq!(
+            router.next_queued(),
+            Some(QueuedAction::new(Move::East, ActionSource::Terminal))
         );
     }
 

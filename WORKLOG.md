@@ -1130,3 +1130,24 @@ TTY frontend to detect idle states for animation or timeout logic.
 **Gotchas.** `Bounds::clamp_point` uses saturating math for the max edge; callers still need to ensure bounds represent a real rectangle (non-zero width/height) or handle the `None` case.
 
 **Follow-ups.** Consider using `points_matching` in Ash Courier layout parsing to reduce manual tile scans, and expose similar row-major helpers for `TileGrid::iter_mut` if future systems need bulk edits.
+
+## 2026-05-20 - inspection cursor and position-aware input
+
+**Goal.** Add a position-aware inspection action that keeps the shared input path intact, surface cursor state in snapshots and runners, and wire mouse clicks in the TTY frontend without breaking turn logic.
+
+**Changes.**
+- `crates/verryte-input/src/lib.rs` - added `InputRouter::handle_with` / `handle_with_from` plus tests to support custom event translation (position-aware input) before bindings.
+- `prototype/ash-courier/src/action.rs` - introduced `Action::Inspect(Point)` and parameterized `inspect:`/`look:`/`cursor:` token parsing to drive cursor updates through scripts.
+- `prototype/ash-courier/src/components.rs` / `src/snapshot.rs` - added cursor state and an `ActionResult::Updated` outcome; snapshots now include cursor tile, path, and distance.
+- `prototype/ash-courier/src/game.rs` - applied inspection actions without advancing turns, ran message logging explicitly, and exposed `viewport_origin` for frontends; snapshot builder now includes cursor metadata.
+- `prototype/ash-courier/src/bin/tty.rs` - mapped left mouse clicks inside the viewport to inspection actions and displayed cursor status in the UI.
+- `prototype/ash-courier/src/bin/script.rs` - documented inspect tokens and printed cursor state in step summaries.
+- `README.md` and `prototype/ash-courier/README.md` - documented the new input hook, inspect tokens, cursor fields, and the updated action result.
+
+**Reasoning.** The inspection cursor is a low-risk vertical slice that stresses the shared input→action→state path while adding useful observability for agents and scripts. Using `handle_with` keeps position-aware translation in the same queue as terminal and script input without inventing a new path. Limiting inspection to state updates (no turn advance or system tick) keeps chaser and hazard logic deterministic while still logging inspection events.
+
+**Assumptions.** Inspection should not advance the turn or trigger movement systems; it only updates cursor state and emits an event. Mouse coordinates in the TTY map directly to the viewport's inner rect, so mapping through the viewport origin is sufficient.
+
+**Gotchas.** The viewport may be larger than the map; the input mapper clamps to the actual map width/height to avoid out-of-bounds cursor targets. Since inspection does not run the full schedule, the message system is invoked directly to record the inspection event.
+
+**Follow-ups.** If inspection becomes a broader UI mode, consider adding a dedicated cursor overlay layer in `render()` and formalizing a stack of input contexts for nested UI states.

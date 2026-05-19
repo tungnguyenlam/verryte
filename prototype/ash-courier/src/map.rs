@@ -46,6 +46,10 @@ impl Map {
             .unwrap_or(Tile::Wall)
     }
 
+    pub fn in_bounds(&self, point: Point) -> bool {
+        self.tiles.in_bounds(point)
+    }
+
     pub fn is_walkable(&self, point: Point) -> bool {
         matches!(self.tile(point.x, point.y), Tile::Floor | Tile::Goal)
     }

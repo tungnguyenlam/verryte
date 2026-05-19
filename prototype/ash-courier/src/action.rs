@@ -1,5 +1,5 @@
 use verryte_input::{Bindings, CommandBindings, Key, MouseButton};
-use verryte_map::Direction;
+use verryte_map::{Direction, Point};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
@@ -13,6 +13,7 @@ pub enum Action {
     Wait,
     Scan,
     ScanRadius(u16),
+    Inspect(Point),
     PickUp,
     Drop,
     Quit,
@@ -123,7 +124,19 @@ pub fn default_commands() -> CommandBindings<Action> {
 /// * `scan:<radius>` (for example `scan:3`)
 /// * `scan<radius>` (for example `scan5`)
 /// * `x<radius>` (for example `x2`)
+/// * `inspect:<x>,<y>` (for example `inspect:3,4`)
+/// * `look:<x>,<y>` (for example `look:3,4`)
+/// * `cursor:<x>,<y>` (for example `cursor:3,4`)
 pub fn resolve_command_token(token: &str) -> Option<Action> {
+    let inspect = token
+        .strip_prefix("inspect:")
+        .or_else(|| token.strip_prefix("look:"))
+        .or_else(|| token.strip_prefix("cursor:"))
+        .and_then(parse_point);
+    if let Some(point) = inspect {
+        return Some(Action::Inspect(point));
+    }
+
     let radius = token
         .strip_prefix("scan:")
         .or_else(|| token.strip_prefix("scan"))
@@ -132,4 +145,11 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
         .and_then(|digits| digits.parse::<u16>().ok())
         .filter(|radius| *radius > 0)?;
     Some(Action::ScanRadius(radius))
+}
+
+fn parse_point(raw: &str) -> Option<Point> {
+    let (x, y) = raw.split_once(',')?;
+    let x = x.trim().parse::<i16>().ok()?;
+    let y = y.trim().parse::<i16>().ok()?;
+    Some(Point::new(x, y))
 }

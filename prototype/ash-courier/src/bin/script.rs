@@ -10,6 +10,7 @@
 //! * `.` — wait
 //! * `x` — scan visible tiles
 //! * `scan:3`, `scan3`, `x3` — scan with explicit radius
+//! * `inspect:3,4` / `look:3,4` — inspect a tile and update the cursor
 //! * `p` — step one tile toward nearest package
 //! * `o` — step one tile toward nearest goal
 //! * `v` — step one tile toward the safest neighbor away from hazards
@@ -20,7 +21,7 @@
 //! Whitespace is ignored. `;` can separate commands, and `#` starts a comment
 //! that runs to end-of-line.
 
-use ash_courier::{default_commands, resolve_command_token, Game, Outcome};
+use ash_courier::{default_commands, resolve_command_token, Game, Outcome, Position, Tile};
 use verryte_input::ActionSource;
 
 fn main() {
@@ -63,7 +64,7 @@ fn main() {
         );
         println!("{}", snap.frame);
         println!(
-            "turn={} outcome={:?} package={} scans={} visible_tiles={} visible_hazards={} reachable_tiles={} chasers={} safer_neighbors={} path_to_package={} path_to_goal={} path_to_hazard={} path_to_chaser={} distance_to_package={} distance_to_goal={} distance_to_hazard={} distance_to_chaser={}",
+            "turn={} outcome={:?} package={} scans={} visible_tiles={} visible_hazards={} reachable_tiles={} chasers={} safer_neighbors={} cursor={} cursor_tile={} path_to_cursor={} distance_to_cursor={} path_to_package={} path_to_goal={} path_to_hazard={} path_to_chaser={} distance_to_package={} distance_to_goal={} distance_to_hazard={} distance_to_chaser={}",
             snap.turn,
             snap.outcome,
             snap.has_package,
@@ -73,6 +74,10 @@ fn main() {
             snap.reachable_tiles.len(),
             snap.chasers.len(),
             snap.safer_neighbors.len(),
+            maybe_point(snap.cursor),
+            maybe_tile(snap.cursor_tile),
+            path_len(&snap.path_to_cursor),
+            maybe_distance(snap.distance_to_cursor),
             path_len(&snap.path_to_nearest_package),
             path_len(&snap.path_to_goal),
             path_len(&snap.path_to_nearest_hazard),
@@ -98,7 +103,7 @@ fn print_frame(game: &Game) {
     let snap = game.snapshot();
     println!("{}", snap.frame);
     println!(
-        "turn={} outcome={:?} package={} scans={} visible_tiles={} visible_hazards={} reachable_tiles={} chasers={} safer_neighbors={} path_to_package={} path_to_goal={} path_to_hazard={} path_to_chaser={} distance_to_package={} distance_to_goal={} distance_to_hazard={} distance_to_chaser={}",
+        "turn={} outcome={:?} package={} scans={} visible_tiles={} visible_hazards={} reachable_tiles={} chasers={} safer_neighbors={} cursor={} cursor_tile={} path_to_cursor={} distance_to_cursor={} path_to_package={} path_to_goal={} path_to_hazard={} path_to_chaser={} distance_to_package={} distance_to_goal={} distance_to_hazard={} distance_to_chaser={}",
         snap.turn,
         snap.outcome,
         snap.has_package,
@@ -108,6 +113,10 @@ fn print_frame(game: &Game) {
         snap.reachable_tiles.len(),
         snap.chasers.len(),
         snap.safer_neighbors.len(),
+        maybe_point(snap.cursor),
+        maybe_tile(snap.cursor_tile),
+        path_len(&snap.path_to_cursor),
+        maybe_distance(snap.distance_to_cursor),
         path_len(&snap.path_to_nearest_package),
         path_len(&snap.path_to_goal),
         path_len(&snap.path_to_nearest_hazard),
@@ -123,6 +132,17 @@ fn print_frame(game: &Game) {
 fn path_len(path: &Option<Vec<ash_courier::Position>>) -> String {
     path.as_ref()
         .map(|path| path.len().to_string())
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+fn maybe_point(point: Option<Position>) -> String {
+    point
+        .map(|point| format!("{},{}", point.x, point.y))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+fn maybe_tile(tile: Option<Tile>) -> String {
+    tile.map(|tile| format!("{tile:?}"))
         .unwrap_or_else(|| "-".to_owned())
 }
 

@@ -1,6 +1,6 @@
-use verryte_core::{Entity, Events, MessageLog, Schedule, World};
+use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, Schedule, World};
 use verryte_input::{ActionSource, Bindings, InputEvent, InputRouter};
-use verryte_map::Direction;
+use verryte_map::{Direction, Point, TileGrid};
 use verryte_terminal::{Cell, ColorPalette, Grid, Rect};
 
 use crate::action::{default_bindings, Action};
@@ -22,6 +22,12 @@ impl Game {
         Self::from_layout(DEFAULT_MAP, default_bindings()).expect("default map is well-formed")
     }
 
+    /// Build a game with a specific RNG seed for reproducible behavior.
+    pub fn with_seed(seed: u64) -> Self {
+        Self::from_layout_with_seed(DEFAULT_MAP, default_bindings(), seed)
+            .expect("default map is well-formed")
+    }
+
     /// Build a game from an ASCII map layout.
     ///
     /// Map symbols:
@@ -32,6 +38,15 @@ impl Game {
     /// * `h` — hazard on floor
     /// * `G` — goal tile
     pub fn from_layout(rows: &[&str], bindings: Bindings<Action>) -> Result<Self, MapError> {
+        Self::from_layout_with_seed(rows, bindings, 1)
+    }
+
+    /// Build a game from an ASCII map layout with a specific RNG seed.
+    pub fn from_layout_with_seed(
+        rows: &[&str],
+        bindings: Bindings<Action>,
+        seed: u64,
+    ) -> Result<Self, MapError> {
         let height = rows.len() as u16;
         if height == 0 {
             return Err(MapError::Empty);
@@ -90,6 +105,8 @@ impl Game {
 
         world.insert_resource(map);
         world.insert_resource(GameState::default());
+        world.insert_resource(GameClock::new());
+        world.insert_resource(Rng::seed(seed));
         world.insert_resource(Events::<GameEvent>::with_capacity(16));
         world.insert_resource(MessageLog::with_max(50));
 
@@ -106,6 +123,111 @@ impl Game {
         })
     }
 
+    /// Build a game on a procedurally generated cave map.
+    ///
+    /// Uses cellular automata to carve an organic cave, then places the player,
+    /// a package, a goal, and hazards at reachable positions. The `seed`
+    /// controls map generation and RNG; the `width`/`height` set the grid
+    /// dimensions (minimum 10×10).
+    pub fn from_cave(width: u16, height: u16, seed: u64) -> Self {
+        let width = width.max(10);
+        let height = height.max(10);
+        let mut grid = TileGrid::new(width, height, crate::map::Tile::Wall);
+        grid.cellular_automata_cave(
+            crate::map::Tile::Wall,
+            crate::map::Tile::Floor,
+            0.42,
+            5,
+            4,
+            seed,
+        );
+
+        // Collect walkable tiles (floor only, not wall or goal).
+        let walkable: Vec<Point> = grid
+            .iter()
+            .filter(|(_, tile)| matches!(tile, crate::map::Tile::Floor))
+            .map(|(p, _)| p)
+            .collect();
+        assert!(
+            walkable.len() >= 4,
+            "cave must have at least 4 walkable tiles"
+        );
+
+        let mut rng = Rng::seed(seed.wrapping_add(1));
+        let mut remaining = walkable.clone();
+
+        // Pick player spawn.
+        let player_idx = rng.pick_index(remaining.len()).unwrap();
+        let player_pt = remaining.remove(player_idx);
+
+        // Pick goal (far from player if possible).
+        let goal_idx = rng.pick_index(remaining.len()).unwrap();
+        let goal_pt = remaining.remove(goal_idx);
+        grid.set(goal_pt, crate::map::Tile::Goal);
+
+        // Pick package.
+        let pkg_idx = rng.pick_index(remaining.len()).unwrap();
+        let pkg_pt = remaining.remove(pkg_idx);
+
+        // Pick hazard.
+        let haz_idx = rng.pick_index(remaining.len()).unwrap();
+        let haz_pt = remaining.remove(haz_idx);
+
+        let map = crate::map::Map {
+            width,
+            height,
+            tiles: grid,
+        };
+
+        let mut world = World::new();
+
+        let player = world
+            .builder()
+            .with(Position {
+                x: player_pt.x,
+                y: player_pt.y,
+            })
+            .with(Player)
+            .build();
+
+        world
+            .builder()
+            .with(Position {
+                x: pkg_pt.x,
+                y: pkg_pt.y,
+            })
+            .with(Package)
+            .build();
+
+        world
+            .builder()
+            .with(Position {
+                x: haz_pt.x,
+                y: haz_pt.y,
+            })
+            .with(Hazard)
+            .build();
+
+        world.insert_resource(map);
+        world.insert_resource(GameState::default());
+        world.insert_resource(GameClock::new());
+        world.insert_resource(Rng::seed(seed));
+        world.insert_resource(Events::<GameEvent>::with_capacity(16));
+        world.insert_resource(MessageLog::with_max(50));
+
+        let mut schedule = Schedule::new();
+        schedule.add_named("chaser", crate::systems::chaser_system);
+        schedule.add_named("resolve", resolve_tile_system);
+        schedule.add_named("messages", crate::systems::message_system);
+
+        Self {
+            world,
+            schedule,
+            router: InputRouter::new(default_bindings()),
+            player,
+        }
+    }
+
     pub fn player_entity(&self) -> Entity {
         self.player
     }
@@ -114,6 +236,12 @@ impl Game {
         self.world
             .resource::<GameState>()
             .expect("game state resource")
+    }
+
+    pub fn clock(&self) -> &GameClock {
+        self.world
+            .resource::<GameClock>()
+            .expect("game clock resource")
     }
 
     pub fn map(&self) -> &Map {
@@ -171,6 +299,15 @@ impl Game {
     /// Feed a terminal event in. Same downstream path as `inject`/scripts.
     pub fn handle_event(&mut self, event: InputEvent) -> bool {
         self.router.handle(event)
+    }
+
+    /// Feed a terminal event in with a custom translation hook, falling back to
+    /// bindings when the hook returns `None`.
+    pub fn handle_event_with<F>(&mut self, event: InputEvent, translate: F) -> bool
+    where
+        F: FnOnce(InputEvent) -> Option<Action>,
+    {
+        self.router.handle_with(event, translate)
     }
 
     /// Inject one action and apply it immediately.
@@ -249,6 +386,18 @@ impl Game {
                 });
                 self.advance_turn();
                 ActionResult::Advanced
+            }
+            Action::Inspect(point) => {
+                if !self.map().in_bounds(point) {
+                    ActionResult::NoOp
+                } else {
+                    let tile = self.map().tile(point.x, point.y);
+                    self.world.resource_mut::<GameState>().unwrap().cursor = Some(point);
+                    self.send_event(GameEvent::Inspected { at: point, tile });
+                    self.schedule
+                        .run_system_by_name("messages", &mut self.world);
+                    ActionResult::Updated
+                }
             }
             Action::PickUp => {
                 if self.try_pick_up() {
@@ -394,6 +543,7 @@ impl Game {
     }
 
     fn advance_turn(&mut self) {
+        self.world.resource_mut::<GameClock>().unwrap().tick();
         self.world.resource_mut::<GameState>().unwrap().turn += 1;
     }
 
@@ -531,15 +681,25 @@ impl Game {
     /// Render a clipped viewport centered as closely as possible on the player.
     pub fn render_viewport(&self, width: u16, height: u16) -> Grid {
         let frame = self.render();
-        let player = self.player_position();
-        let x = centered_origin(player.x, width, frame.width());
-        let y = centered_origin(player.y, height, frame.height());
+        let origin = self.viewport_origin(width, height);
+        let x = origin.x.max(0) as u16;
+        let y = origin.y.max(0) as u16;
         frame.viewport(Rect::new(
             x,
             y,
             width.min(frame.width()),
             height.min(frame.height()),
         ))
+    }
+
+    /// Top-left map coordinate for a viewport centered on the player.
+    pub fn viewport_origin(&self, width: u16, height: u16) -> Position {
+        let map = self.map();
+        let player = self.player_position();
+        Position {
+            x: centered_origin(player.x, width, map.width) as i16,
+            y: centered_origin(player.y, height, map.height) as i16,
+        }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -571,6 +731,11 @@ impl Game {
         let visible_hazards = self.visible_hazards_in(&visible_tiles);
         let reachable_tiles = map.reachable_from(player);
         let goals = self.goal_positions();
+        let cursor = state.cursor.filter(|point| map.in_bounds(*point));
+        let cursor_tile = cursor.map(|point| map.tile(point.x, point.y));
+        let path_to_cursor = cursor.and_then(|point| map.shortest_walkable_path(player, point));
+        let distance_to_cursor =
+            cursor.and_then(|point| map.nearest_walkable_distance(player, std::iter::once(point)));
         let path_to_nearest_package = self.shortest_path_to_any(player, &packages);
         let path_to_goal = self.shortest_path_to_any(player, &goals);
         let path_to_nearest_hazard = self.shortest_path_to_any(player, &hazards);
@@ -596,6 +761,10 @@ impl Game {
             map_height: map.height,
             tile_under_player: map.tile(player.x, player.y),
             walkable_neighbors: map.walkable_neighbors(player),
+            cursor,
+            cursor_tile,
+            path_to_cursor,
+            distance_to_cursor,
             path_to_nearest_package,
             path_to_goal,
             path_to_nearest_hazard,

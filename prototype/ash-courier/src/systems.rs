@@ -1,6 +1,6 @@
 use crate::components::{Chaser, GameEvent, GameState, Hazard, Outcome, Player, Position};
 use crate::map::{Map, Tile};
-use verryte_core::{Entity, Events, MessageLog, World};
+use verryte_core::{Entity, Events, MessageLog, Rng, World};
 
 pub fn chaser_system(world: &mut World) {
     let state = world.resource::<GameState>().unwrap();
@@ -17,11 +17,17 @@ pub fn chaser_system(world: &mut World) {
         }
     };
 
-    let chasers: Vec<Entity> = world
+    let mut chasers: Vec<Entity> = world
         .query2::<Position, Chaser>()
         .into_iter()
         .map(|(e, _, _)| e)
         .collect();
+
+    // Shuffle chaser order each tick so movement priority is not biased by
+    // entity allocation order. Uses the seeded RNG for reproducibility.
+    if let Some(rng) = world.resource_mut::<Rng>() {
+        rng.shuffle(&mut chasers);
+    }
 
     let mut moves = Vec::new();
     {
@@ -130,6 +136,9 @@ pub fn message_system(world: &mut World) {
                         "Scanned area: {} tiles, {} hazards detected.",
                         visible_tiles, visible_hazards
                     )
+                }
+                GameEvent::Inspected { at, tile } => {
+                    format!("Inspected {},{} ({:?}).", at.x, at.y, tile)
                 }
                 GameEvent::ChaserMoved { from, to } => {
                     format!(

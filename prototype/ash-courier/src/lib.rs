@@ -170,6 +170,33 @@ mod tests {
     }
 
     #[test]
+    fn inspect_action_updates_cursor_without_advancing_turn() {
+        let mut g = fresh();
+        let report = g.step(Action::Inspect(Position { x: 2, y: 1 }));
+
+        assert_eq!(report.result, ActionResult::Updated);
+        assert_eq!(g.state().turn, 0);
+        assert_eq!(g.state().cursor, Some(Position { x: 2, y: 1 }));
+        assert_eq!(
+            report.events,
+            vec![GameEvent::Inspected {
+                at: Position { x: 2, y: 1 },
+                tile: Tile::Floor,
+            }]
+        );
+    }
+
+    #[test]
+    fn inspect_out_of_bounds_is_noop() {
+        let mut g = fresh();
+        let report = g.step(Action::Inspect(Position { x: -5, y: 100 }));
+
+        assert_eq!(report.result, ActionResult::NoOp);
+        assert_eq!(g.state().cursor, None);
+        assert_eq!(g.state().turn, 0);
+    }
+
+    #[test]
     fn scan_radius_script_tokens_parse_through_shared_router() {
         let mut g = fresh();
         let count = g
@@ -195,6 +222,31 @@ mod tests {
     }
 
     #[test]
+    fn inspect_script_tokens_parse_through_shared_router() {
+        let mut g = fresh();
+        let count = g
+            .router
+            .inject_script_with(
+                &default_commands(),
+                "inspect:2,1 look:3,1",
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .expect("inspect commands should parse");
+
+        let reports = g.run_pending_reports();
+        assert_eq!(count, 2);
+        assert_eq!(reports.len(), 2);
+        assert_eq!(reports[0].action, Action::Inspect(Position { x: 2, y: 1 }));
+        assert_eq!(reports[0].result, ActionResult::Updated);
+        assert_eq!(reports[1].action, Action::Inspect(Position { x: 3, y: 1 }));
+        assert!(reports
+            .iter()
+            .all(|report| report.source == ActionSource::Script));
+        assert_eq!(g.state().cursor, Some(Position { x: 3, y: 1 }));
+    }
+
+    #[test]
     fn mouse_scan_uses_the_same_terminal_action_path() {
         let mut g = fresh();
 
@@ -211,6 +263,32 @@ mod tests {
         assert_eq!(reports[0].source, ActionSource::Terminal);
         assert_eq!(reports[0].result, ActionResult::Advanced);
         assert_eq!(g.state().scans, 1);
+    }
+
+    #[test]
+    fn mouse_inspect_can_be_routed_through_custom_handler() {
+        let mut g = fresh();
+        let event = InputEvent::Mouse {
+            x: 2,
+            y: 1,
+            button: MouseButton::Left,
+            pressed: true,
+        };
+
+        assert!(g.handle_event_with(event, |event| match event {
+            InputEvent::Mouse { x, y, .. } => Some(Action::Inspect(Position {
+                x: x as i16,
+                y: y as i16,
+            })),
+            _ => None,
+        }));
+
+        let reports = g.run_pending_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].action, Action::Inspect(Position { x: 2, y: 1 }));
+        assert_eq!(reports[0].source, ActionSource::Terminal);
+        assert_eq!(reports[0].result, ActionResult::Updated);
+        assert_eq!(g.state().cursor, Some(Position { x: 2, y: 1 }));
     }
 
     #[test]
@@ -529,6 +607,10 @@ mod tests {
         assert_eq!(snap.distance_to_nearest_hazard, Some(8));
         assert_eq!(snap.distance_to_nearest_chaser, None);
         assert_eq!(snap.safer_neighbors, vec![Position { x: 2, y: 1 }]);
+        assert_eq!(snap.cursor, None);
+        assert_eq!(snap.cursor_tile, None);
+        assert_eq!(snap.path_to_cursor, None);
+        assert_eq!(snap.distance_to_cursor, None);
         // Frame must contain a player glyph.
         assert!(snap.frame.contains('@'));
         // ...and have the right number of rows.
@@ -675,5 +757,117 @@ mod tests {
 
         let chaser_pos = *g.world.get::<Position>(chasers[0].0).unwrap();
         assert_eq!(chaser_pos, Position { x: 3, y: 1 });
+    }
+
+    #[test]
+    fn game_clock_tracks_turns_independently() {
+        let mut g = fresh();
+        assert_eq!(g.clock().elapsed_ticks(), 0);
+        g.step(Action::Wait);
+        assert_eq!(g.clock().elapsed_ticks(), 1);
+        assert_eq!(g.state().turn, 1);
+        g.step(Action::MoveEast);
+        assert_eq!(g.clock().elapsed_ticks(), 2);
+        assert_eq!(g.state().turn, 2);
+    }
+
+    #[test]
+    fn game_clock_does_not_advance_on_noop() {
+        let mut g = fresh();
+        g.step(Action::MoveNorth); // wall — noop
+        assert_eq!(g.clock().elapsed_ticks(), 0);
+        assert_eq!(g.state().turn, 0);
+    }
+
+    #[test]
+    fn game_clock_and_state_turn_stay_synchronized() {
+        let layout = &["#####", "#@p.#", "###G#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        g.router.inject_all([
+            Action::MoveEast,
+            Action::PickUp,
+            Action::MoveEast,
+            Action::MoveSouth,
+        ]);
+        g.run_pending();
+        assert_eq!(g.outcome(), Outcome::Won);
+        assert_eq!(g.clock().elapsed_ticks(), g.state().turn as u64);
+    }
+
+    #[test]
+    fn rng_resource_is_available_in_world() {
+        let g = fresh();
+        let seed = g
+            .world
+            .resource::<verryte_core::Rng>()
+            .unwrap()
+            .seed_value();
+        assert_ne!(seed, 0);
+    }
+
+    #[test]
+    fn same_seed_produces_deterministic_chaser_outcomes() {
+        let layout = &["#######", "#@...c#", "#.....#", "#######"];
+
+        let mut g1 = Game::from_layout_with_seed(layout, default_bindings(), 42).unwrap();
+        let mut g2 = Game::from_layout_with_seed(layout, default_bindings(), 42).unwrap();
+
+        for _ in 0..3 {
+            g1.step(Action::Wait);
+            g2.step(Action::Wait);
+        }
+
+        let pos1: Vec<_> = g1
+            .world
+            .query2::<Position, crate::components::Chaser>()
+            .into_iter()
+            .map(|(_, p, _)| *p)
+            .collect();
+        let pos2: Vec<_> = g2
+            .world
+            .query2::<Position, crate::components::Chaser>()
+            .into_iter()
+            .map(|(_, p, _)| *p)
+            .collect();
+        assert_eq!(pos1, pos2);
+    }
+
+    #[test]
+    fn with_seed_constructor_sets_rng() {
+        let g = Game::with_seed(99);
+        let seed = g
+            .world
+            .resource::<verryte_core::Rng>()
+            .unwrap()
+            .seed_value();
+        assert_eq!(seed, 99);
+    }
+
+    #[test]
+    fn from_cave_creates_playable_game() {
+        let g = Game::from_cave(20, 15, 42);
+        assert_eq!(g.outcome(), Outcome::Playing);
+        // Player should be alive and positioned.
+        let pos = g.player_position();
+        assert!(g.map().is_walkable(verryte_map::Point::new(pos.x, pos.y)));
+    }
+
+    #[test]
+    fn from_cave_has_package_and_goal_entities() {
+        let g = Game::from_cave(25, 20, 123);
+        // Should have at least one package.
+        let pkgs = g.world.query2::<Position, Package>();
+        assert!(pkgs.len() >= 1, "cave should have a package");
+        // Goal tile should exist in the map.
+        let goal_count = g.map().tiles.count_matching(|_, t| *t == Tile::Goal);
+        assert!(goal_count >= 1, "cave should have a goal tile");
+    }
+
+    #[test]
+    fn from_cave_is_deterministic_with_same_seed() {
+        let g1 = Game::from_cave(20, 15, 777);
+        let g2 = Game::from_cave(20, 15, 777);
+        assert_eq!(g1.player_position(), g2.player_position());
+        assert_eq!(g1.state().turn, g2.state().turn);
     }
 }

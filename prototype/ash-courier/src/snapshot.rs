@@ -20,6 +20,10 @@ pub struct Snapshot {
     pub map_height: u16,
     pub tile_under_player: Tile,
     pub walkable_neighbors: Vec<Position>,
+    pub cursor: Option<Position>,
+    pub cursor_tile: Option<Tile>,
+    pub path_to_cursor: Option<Vec<Position>>,
+    pub distance_to_cursor: Option<u16>,
     pub path_to_nearest_package: Option<Vec<Position>>,
     pub path_to_goal: Option<Vec<Position>>,
     pub path_to_nearest_hazard: Option<Vec<Position>>,
@@ -54,6 +58,7 @@ pub struct StepReport {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ActionResult {
     NoOp,
+    Updated,
     Advanced,
     Ended(Outcome),
     IgnoredGameOver,
