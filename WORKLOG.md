@@ -1169,3 +1169,29 @@ TTY frontend to detect idle states for animation or timeout logic.
 **Gotchas.** `TextInput` cursor math is character-count based, so deletion helpers compute char indices before byte ranges; this keeps multibyte safety but is still O(n) per edit. Column fill writes per row because the grid is row-major, so there is no mutable column slice.
 
 **Follow-ups.** Consider extending TextInput with word-right navigation if the key model adds Ctrl+arrow support, and evaluate whether a `Grid::col_mut` or column iterator would be worth the borrow complexity.
+
+## 2026-05-20 - autonomous engine run: input context stack, binding inspection, map crop, game reset, BSP maps, configurable palette, chaser anti-oscillation
+
+**Goal.** Continue autonomous Verryte development with improvements to input ergonomics, map primitives, agent-readiness, and game prototype quality — all preserving the shared terminal/script/control path.
+
+**Changes.**
+- `crates/verryte-input/src/lib.rs:328` — added `Bindings::iter_keys()` and `Bindings::iter_mouse()` for inspecting active key and mouse bindings. Added `CommandBindings::iter_names()` and `CommandBindings::iter_glyphs()` for inspecting command binding maps.
+- `crates/verryte-input/src/lib.rs:549` — added `InputRouter::push_bindings()` / `pop_bindings()` / `context_depth()` for nested modal input context support. Push saves the current bindings on a stack and installs new ones; pop restores the most recently saved set. This supports game → inventory → item detail-style nested UI without a single-level `bindings_guard` limitation.
+- `crates/verryte-map/src/lib.rs:664` — added `TileGrid::crop(x, y, width, height, fill)` for extracting rectangular sub-regions as new grids. Areas outside the source grid are filled with the provided default. Useful for viewport/camera extraction or chunking large maps.
+- `crates/verryte-terminal/src/lib.rs:445` — added `Grid::fill_background(bg)` for setting the background color of every cell without changing glyphs. Useful for theme-aware TTY rendering.
+- `prototype/ash-courier/src/game.rs:232` — added `Game::reset()`, `reset_from_layout()`, `reset_from_layout_with_seed()`, and `reset_from_cave()` for agent-ready game restart. Reuses the same `Game` struct and `InputRouter` while resetting all world state.
+- `prototype/ash-courier/src/game.rs:133` — added `Game::from_bsp(width, height, seed)` for BSP dungeon map generation. Falls back to cave generation if BSP produces no rooms. Places player, package, goal, hazard, and chaser entities.
+- `prototype/ash-courier/src/game.rs:650` — added `Game::render_with_palette(&ColorPalette)` for theme-configurable rendering. The existing `render()` now delegates to `render_with_palette` with the default dark dungeon palette.
+- `prototype/ash-courier/src/components.rs:18` — added `PreviousPosition` component for chaser anti-oscillation tracking.
+- `prototype/ash-courier/src/systems.rs:6` — updated `chaser_system` to prefer non-backtracking moves when a chaser's shortest path would return to its previous position. Also adds `PreviousPosition` tracking for each chaser entity.
+- `prototype/ash-courier/src/game.rs:315` — extracted `from_generated_grid()` helper to share entity placement logic between `from_cave`, `from_bsp`, and future generators. Now also spawns chaser entities when walkable tiles are available.
+- `crates/verryte-map/src/lib.rs:1704` — fixed clippy `unnecessary_map_or` lint in cellular automata.
+- `README.md` and `prototype/ash-courier/README.md` — documented all new capabilities.
+
+**Reasoning.** These improvements address the top follow-ups identified through code inspection and worklog review. The input context stack was the most impactful missing feature for real terminal games with menus and dialogs — the single-level `bindings_guard` couldn't support nested modals. Binding inspection enables debugging and tooling to see what's currently bound without reading source code. Map crop is a fundamental spatial primitive for viewport extraction and map chunking. Game reset is essential for agent-readiness — the GOAL.md explicitly promises that tools should be able to start from a known state. BSP dungeon generation provides structured room-and-corridor maps as an alternative to the organic caves from cellular automata. Configurable palette rendering lets the TTY frontend and tests exercise different themes. The chaser anti-oscillation via `PreviousPosition` prevents the deterministic backtracking artifact that made chasers appear stuck in narrow corridors.
+
+**Assumptions.** The context stack uses `Vec` (not `VecDeque`) since push/pop is always LIFO. `pop_bindings` returns `bool` rather than `Option<Bindings<A>>` since the caller already knows what they pushed. The BSP fallback to cave generation ensures `from_bsp` always produces a playable map even at tiny sizes where BSP can't split. Chaser anti-oscillation only checks the immediately previous position, not the full movement history, which is sufficient for the corridor oscillation pattern.
+
+**Gotchas.** The initial `reset_restores_game_to_initial_state` test had wrong move expectations: `MoveSouth` from (2,1) hits a wall in the default map. Fixed by using `MoveEast` three times which stays on floor tiles. The `from_generated_grid` helper needed to handle the case where `walkable` becomes empty before placing a chaser (graceful fallback with `if !walkable.is_empty()`).
+
+**Follow-ups.** The context stack could be extended with a `swap_bindings` that replaces the top of stack without pushing. `TileGrid::crop` could return `None` for completely out-of-bounds crops instead of an all-fill grid. `Game::reset` could accept a seed parameter for deterministic restart. The chaser anti-oscillation could track more history (last N positions) for more complex patrol patterns.

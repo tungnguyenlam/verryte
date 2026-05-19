@@ -14,6 +14,10 @@ pub struct Hazard;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Chaser;
 
+/// Tracks the chaser's position from the previous tick to avoid backtracking.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PreviousPosition(pub Position);
+
 // ----------------------------------------------------------------------------
 // Resources — game-level state that systems read and write through the world.
 // ----------------------------------------------------------------------------

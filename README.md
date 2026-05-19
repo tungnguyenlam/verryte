@@ -35,9 +35,13 @@ those pieces as the first proving game.
   script command bindings, sourced queued actions, replayable `ActionTrace`s,
   router-level script injection, pending queue snapshots and drain traces, the
   shared action queue, input context switching via `set_bindings` and
-  `bindings_guard`, batch event processing (`handle_batch`), custom event
-  translation (`handle_with`) for position-aware inputs, `Bindings::merge` for
-  layering keymaps, `CommandBindings::merge` for layering command sets,
+  `bindings_guard`, a context stack via `InputRouter::push_bindings` /
+  `pop_bindings` for nested modal input, batch event processing
+  (`handle_batch`), custom event translation (`handle_with`) for
+  position-aware inputs, `Bindings::merge` for layering keymaps,
+  `CommandBindings::merge` for layering command sets,
+  `Bindings::iter_keys` / `iter_mouse` and `CommandBindings::iter_names` /
+  `iter_glyphs` for binding inspection,
   `InputRouter::total_actions_queued()` for lifetime action metrics,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
   movement, insertion, deletion, max length, dirty tracking, and Ctrl shortcut
@@ -62,7 +66,8 @@ those pieces as the first proving game.
   generation
   (`TileGrid::cellular_automata_cave`) for organic procedural maps,
   `TileGrid::from_ascii` for constructing grids from multi-line string
-  literals, and `TileGrid::map_tiles` for transforming tile types.
+  literals, `TileGrid::map_tiles` for transforming tile types, and
+  `TileGrid::crop` for extracting rectangular sub-regions as new grids.
 - `crates/verryte-terminal` - terminal-cell data structures: colors, cells,
   grids, clipping, borders, line drawing, blitting, viewports, frame diffs,
   plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string`), HTML
@@ -83,7 +88,8 @@ those pieces as the first proving game.
   and `draw_sparkline` for inline data visualization with Unicode block
   characters.
   `CellAttrs` supports all attribute combinations (bold, dim, italic, underline,
-  blink, reverse) with correct ANSI escape code generation.
+  blink, reverse) with correct ANSI escape code generation. `Grid::fill_background`
+  sets the background color across all cells without changing glyphs.
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
   input polling with full modifier key passthrough (Ctrl, Alt, Shift produce
   `Key::Modified` events), Grid rendering with ANSI colors, incremental
@@ -97,8 +103,11 @@ those pieces as the first proving game.
   snapshots,
   `GameClock` for turn tracking, `Rng` for reproducible chaser AI,
   diff-based TTY rendering, procedural cave map generation via
-  `Game::from_cave` using cellular automata, and `Map::from_ascii` for
-  convenient map construction from string literals.
+  `Game::from_cave` using cellular automata, BSP dungeon generation via
+  `Game::from_bsp`, `Map::from_ascii` for convenient map construction,
+  `Game::reset` / `reset_from_cave` / `reset_from_layout` for agent-ready
+  restart, `Game::render_with_palette` for theme-configurable rendering,
+  and `PreviousPosition` for chaser anti-oscillation tie-breaking.
 
 ## Control Model
 

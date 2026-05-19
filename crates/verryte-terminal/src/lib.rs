@@ -441,6 +441,17 @@ impl Grid {
         }
     }
 
+    /// Fill the entire grid with a background cell, preserving foreground glyphs.
+    ///
+    /// Sets the background color of every cell to `bg` without changing the
+    /// glyph or foreground color. This is useful for theme-aware TTY rendering
+    /// where the background should span the full terminal.
+    pub fn fill_background(&mut self, bg: Color) {
+        for cell in &mut self.cells {
+            cell.bg = bg;
+        }
+    }
+
     fn index(&self, x: u16, y: u16) -> Option<usize> {
         if x < self.width && y < self.height {
             Some((y as usize) * (self.width as usize) + (x as usize))

@@ -1,4 +1,6 @@
-use crate::components::{Chaser, GameEvent, GameState, Hazard, Outcome, Player, Position};
+use crate::components::{
+    Chaser, GameEvent, GameState, Hazard, Outcome, Player, Position, PreviousPosition,
+};
 use crate::map::{Map, Tile};
 use verryte_core::{Entity, Events, MessageLog, Rng, World};
 
@@ -34,19 +36,39 @@ pub fn chaser_system(world: &mut World) {
         let map = world.resource::<Map>().unwrap();
         for &entity in &chasers {
             let pos = *world.get::<Position>(entity).unwrap();
+            let prev = world.get::<PreviousPosition>(entity).map(|pp| pp.0);
             let start = verryte_map::Point::new(pos.x, pos.y);
             let goal = verryte_map::Point::new(player_pos.x, player_pos.y);
 
-            // Only chase if within 6 steps
+            // Only chase if within 6 steps.
             if let Some(path) = map.shortest_walkable_path(start, goal) {
                 if path.len() > 1 && path.len() <= 7 {
+                    // If multiple second-step candidates exist, prefer the one
+                    // that doesn't backtrack to the previous position.
                     let next = path[1];
+                    let actual_next = if Some(next) == prev && path.len() > 2 {
+                        // Backtracking detected: check if the third step is a
+                        // valid alternative (i.e., same-cost path). Only use
+                        // the third step if it's adjacent to current position.
+                        let alt = path[2];
+                        let is_adjacent = verryte_map::Direction::ALL
+                            .iter()
+                            .any(|&d| start.step(d) == alt);
+                        if is_adjacent && map.is_walkable(alt) && Some(alt) != prev {
+                            alt
+                        } else {
+                            next
+                        }
+                    } else {
+                        next
+                    };
                     moves.push((
                         entity,
                         Position {
-                            x: next.x,
-                            y: next.y,
+                            x: actual_next.x,
+                            y: actual_next.y,
                         },
+                        pos,
                     ));
                 }
             }
@@ -54,11 +76,16 @@ pub fn chaser_system(world: &mut World) {
     }
 
     let mut moved_events = Vec::new();
-    for (entity, next_pos) in moves {
+    for (entity, next_pos, from) in moves {
         if let Some(pos) = world.get_mut::<Position>(entity) {
-            let from = *pos;
             *pos = next_pos;
             moved_events.push(GameEvent::ChaserMoved { from, to: next_pos });
+        }
+        // Update previous position for next tick.
+        if world.get::<PreviousPosition>(entity).is_some() {
+            *world.get_mut::<PreviousPosition>(entity).unwrap() = PreviousPosition(from);
+        } else {
+            world.insert(entity, PreviousPosition(from));
         }
     }
     if !moved_events.is_empty() {

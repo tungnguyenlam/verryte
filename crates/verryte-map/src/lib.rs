@@ -660,6 +660,28 @@ impl<T> TileGrid<T> {
         }
     }
 
+    /// Extract a rectangular sub-region as a new grid.
+    ///
+    /// The region starts at `(x, y)` with the given `width` and `height`.
+    /// Areas outside the source grid are filled with `fill`. Useful for
+    /// viewport/camera extraction or chunking large maps.
+    pub fn crop(&self, x: i16, y: i16, width: u16, height: u16, fill: T) -> TileGrid<T>
+    where
+        T: Clone,
+    {
+        let mut tiles = Vec::with_capacity((width as usize) * (height as usize));
+        for cy in 0..height as i16 {
+            for cx in 0..width as i16 {
+                let src = Point::new(x + cx, y + cy);
+                tiles.push(self.get(src).cloned().unwrap_or_else(|| fill.clone()));
+            }
+        }
+        TileGrid {
+            size: Size::new(width, height),
+            tiles,
+        }
+    }
+
     pub fn neighbors4(&self, point: Point) -> Vec<(Point, &T)> {
         point
             .neighbors4()
@@ -1679,7 +1701,7 @@ impl<T> TileGrid<T> {
                             let ny = y as i16 + dy;
                             if nx < 0 || ny < 0 || nx >= w as i16 || ny >= h as i16 {
                                 wall_count += 1;
-                            } else if self.get(Point::new(nx, ny)).map_or(true, |t| *t == wall) {
+                            } else if self.get(Point::new(nx, ny)).is_none_or(|t| *t == wall) {
                                 wall_count += 1;
                             }
                         }
@@ -3325,5 +3347,50 @@ mod tests {
         assert_eq!(mapped.width(), 4);
         assert_eq!(mapped.height(), 3);
         assert_eq!(*mapped.get(Point::new(0, 0)).unwrap(), true);
+    }
+
+    #[test]
+    fn crop_extracts_sub_region() {
+        let ascii = "ABCDE\nFGHIJ\nKLMNO";
+        let grid = TileGrid::from_ascii(ascii, |ch, _x, _y| ch);
+        let cropped = grid.crop(1, 1, 3, 2, 'X');
+        assert_eq!(cropped.width(), 3);
+        assert_eq!(cropped.height(), 2);
+        assert_eq!(*cropped.get(Point::new(0, 0)).unwrap(), 'G');
+        assert_eq!(*cropped.get(Point::new(1, 0)).unwrap(), 'H');
+        assert_eq!(*cropped.get(Point::new(2, 0)).unwrap(), 'I');
+        assert_eq!(*cropped.get(Point::new(0, 1)).unwrap(), 'L');
+        assert_eq!(*cropped.get(Point::new(1, 1)).unwrap(), 'M');
+        assert_eq!(*cropped.get(Point::new(2, 1)).unwrap(), 'N');
+    }
+
+    #[test]
+    fn crop_out_of_bounds_uses_fill() {
+        let grid = TileGrid::new(3, 3, 'A');
+        let cropped = grid.crop(-1, -1, 3, 3, 'X');
+        assert_eq!(cropped.width(), 3);
+        assert_eq!(cropped.height(), 3);
+        // Top-left corner is out of bounds → fill.
+        assert_eq!(*cropped.get(Point::new(0, 0)).unwrap(), 'X');
+        // (1,1) in cropped maps to (0,0) in source → 'A'.
+        assert_eq!(*cropped.get(Point::new(1, 1)).unwrap(), 'A');
+        assert_eq!(*cropped.get(Point::new(2, 2)).unwrap(), 'A');
+    }
+
+    #[test]
+    fn crop_full_grid_returns_clone() {
+        let ascii = "#.@";
+        let grid = TileGrid::from_ascii(ascii, |ch, _x, _y| ch);
+        let cropped = grid.crop(0, 0, 3, 1, 'X');
+        assert_eq!(cropped, grid);
+    }
+
+    #[test]
+    fn crop_zero_dimensions_returns_empty() {
+        let grid = TileGrid::new(5, 5, 0u32);
+        let cropped = grid.crop(0, 0, 0, 0, 99);
+        assert_eq!(cropped.width(), 0);
+        assert_eq!(cropped.height(), 0);
+        assert!(cropped.is_empty());
     }
 }

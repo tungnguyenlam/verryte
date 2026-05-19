@@ -153,25 +153,75 @@ impl Game {
             "cave must have at least 4 walkable tiles"
         );
 
+        Self::from_generated_grid(grid, walkable, width, height, seed)
+    }
+
+    /// Build a game on a procedurally generated BSP dungeon map.
+    ///
+    /// Uses binary space partitioning to create a structured room-and-corridor
+    /// layout, then places the player, a package, a goal, and hazards at room
+    /// centers or reachable positions. The `seed` controls generation.
+    /// The `width`/`height` set the grid dimensions (minimum 10×10).
+    pub fn from_bsp(width: u16, height: u16, seed: u64) -> Self {
+        let width = width.max(10);
+        let height = height.max(10);
+        let mut grid = TileGrid::new(width, height, crate::map::Tile::Wall);
+        let centers =
+            grid.generate_bsp_dungeon(crate::map::Tile::Wall, crate::map::Tile::Floor, 3, seed);
+
+        if centers.is_empty() {
+            // Fallback: generate a cave instead.
+            return Self::from_cave(width, height, seed);
+        }
+
+        // Collect walkable tiles.
+        let walkable: Vec<Point> = grid
+            .iter()
+            .filter(|(_, tile)| matches!(tile, crate::map::Tile::Floor))
+            .map(|(p, _)| p)
+            .collect();
+        assert!(
+            walkable.len() >= 4,
+            "BSP dungeon must have at least 4 walkable tiles"
+        );
+
+        Self::from_generated_grid(grid, walkable, width, height, seed)
+    }
+
+    /// Shared helper: place entities on a generated grid and wire up the ECS.
+    fn from_generated_grid(
+        mut grid: TileGrid<crate::map::Tile>,
+        mut walkable: Vec<Point>,
+        width: u16,
+        height: u16,
+        seed: u64,
+    ) -> Self {
         let mut rng = Rng::seed(seed.wrapping_add(1));
-        let mut remaining = walkable.clone();
 
         // Pick player spawn.
-        let player_idx = rng.pick_index(remaining.len()).unwrap();
-        let player_pt = remaining.remove(player_idx);
+        let player_idx = rng.pick_index(walkable.len()).unwrap();
+        let player_pt = walkable.remove(player_idx);
 
         // Pick goal (far from player if possible).
-        let goal_idx = rng.pick_index(remaining.len()).unwrap();
-        let goal_pt = remaining.remove(goal_idx);
+        let goal_idx = rng.pick_index(walkable.len()).unwrap();
+        let goal_pt = walkable.remove(goal_idx);
         grid.set(goal_pt, crate::map::Tile::Goal);
 
         // Pick package.
-        let pkg_idx = rng.pick_index(remaining.len()).unwrap();
-        let pkg_pt = remaining.remove(pkg_idx);
+        let pkg_idx = rng.pick_index(walkable.len()).unwrap();
+        let pkg_pt = walkable.remove(pkg_idx);
 
         // Pick hazard.
-        let haz_idx = rng.pick_index(remaining.len()).unwrap();
-        let haz_pt = remaining.remove(haz_idx);
+        let haz_idx = rng.pick_index(walkable.len()).unwrap();
+        let haz_pt = walkable.remove(haz_idx);
+
+        // Pick chaser (if enough walkable tiles remain).
+        let chaser_pt = if !walkable.is_empty() {
+            let chaser_idx = rng.pick_index(walkable.len()).unwrap();
+            Some(walkable.remove(chaser_idx))
+        } else {
+            None
+        };
 
         let map = crate::map::Map {
             width,
@@ -208,6 +258,18 @@ impl Game {
             .with(Hazard)
             .build();
 
+        if let Some(chaser_pos) = chaser_pt {
+            world
+                .builder()
+                .with(Position {
+                    x: chaser_pos.x,
+                    y: chaser_pos.y,
+                })
+                .with(Hazard)
+                .with(Chaser)
+                .build();
+        }
+
         world.insert_resource(map);
         world.insert_resource(GameState::default());
         world.insert_resource(GameClock::new());
@@ -226,6 +288,52 @@ impl Game {
             router: InputRouter::new(default_bindings()),
             player,
         }
+    }
+
+    /// Reset the game to its initial state using the default map.
+    ///
+    /// This is the agent-ready restart path: reuse the same `Game` struct
+    /// (and its `InputRouter`) while resetting all world state to a fresh
+    /// default game. Pending router actions are also cleared.
+    pub fn reset(&mut self) {
+        let fresh = Self::new();
+        self.world = fresh.world;
+        self.schedule = fresh.schedule;
+        self.player = fresh.player;
+        self.router.clear();
+    }
+
+    /// Reset the game using a specific layout.
+    pub fn reset_from_layout(&mut self, rows: &[&str]) -> Result<(), MapError> {
+        let fresh = Self::from_layout(rows, default_bindings())?;
+        self.world = fresh.world;
+        self.schedule = fresh.schedule;
+        self.player = fresh.player;
+        self.router.clear();
+        Ok(())
+    }
+
+    /// Reset the game using a specific layout and seed.
+    pub fn reset_from_layout_with_seed(
+        &mut self,
+        rows: &[&str],
+        seed: u64,
+    ) -> Result<(), MapError> {
+        let fresh = Self::from_layout_with_seed(rows, default_bindings(), seed)?;
+        self.world = fresh.world;
+        self.schedule = fresh.schedule;
+        self.player = fresh.player;
+        self.router.clear();
+        Ok(())
+    }
+
+    /// Reset the game to a new procedurally generated cave.
+    pub fn reset_from_cave(&mut self, width: u16, height: u16, seed: u64) {
+        let fresh = Self::from_cave(width, height, seed);
+        self.world = fresh.world;
+        self.schedule = fresh.schedule;
+        self.player = fresh.player;
+        self.router.clear();
     }
 
     pub fn player_entity(&self) -> Entity {
@@ -629,8 +737,12 @@ impl Game {
 
     /// Render the current state to a [`Grid`].
     pub fn render(&self) -> Grid {
+        self.render_with_palette(&ColorPalette::dark_dungeon())
+    }
+
+    /// Render the current state to a [`Grid`] using the specified palette.
+    pub fn render_with_palette(&self, palette: &ColorPalette) -> Grid {
         let map = self.map();
-        let palette = ColorPalette::dark_dungeon();
         let mut grid = Grid::new(map.width, map.height);
         for y in 0..map.height {
             for x in 0..map.width {

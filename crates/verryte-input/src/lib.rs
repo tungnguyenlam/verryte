@@ -321,6 +321,19 @@ impl<A: Clone> Bindings<A> {
         self.by_key.is_empty() && self.by_mouse.is_empty()
     }
 
+    /// Iterate over all key bindings as `(Key, &A)` pairs.
+    pub fn iter_keys(&self) -> impl Iterator<Item = (Key, &A)> {
+        self.by_key.iter().map(|(&k, a)| (k, a))
+    }
+
+    /// Iterate over all mouse bindings as `((MouseButton, bool), &A)` pairs.
+    /// The bool is the `pressed` flag.
+    pub fn iter_mouse(&self) -> impl Iterator<Item = ((MouseButton, bool), &A)> {
+        self.by_mouse
+            .iter()
+            .map(|(t, a)| ((t.button, t.pressed), a))
+    }
+
     /// Merge `other` bindings into `self`. Bindings in `other` overwrite
     /// existing bindings in `self` for the same key or mouse trigger.
     ///
@@ -497,6 +510,16 @@ impl<A: Clone> CommandBindings<A> {
         self.by_glyph.len()
     }
 
+    /// Iterate over all name bindings as `(&str, &A)` pairs.
+    pub fn iter_names(&self) -> impl Iterator<Item = (&str, &A)> {
+        self.by_name.iter().map(|(k, a)| (k.as_str(), a))
+    }
+
+    /// Iterate over all glyph bindings as `(char, &A)` pairs.
+    pub fn iter_glyphs(&self) -> impl Iterator<Item = (char, &A)> {
+        self.by_glyph.iter().map(|(&k, a)| (k, a))
+    }
+
     /// Merge `other` command bindings into `self`. Bindings in `other`
     /// overwrite existing bindings in `self` for the same name or glyph.
     ///
@@ -549,6 +572,7 @@ pub struct InputRouter<A: Clone> {
     bindings: Bindings<A>,
     pending: VecDeque<QueuedAction<A>>,
     total_queued: usize,
+    context_stack: Vec<Bindings<A>>,
 }
 
 impl<A: Clone> InputRouter<A> {
@@ -557,6 +581,7 @@ impl<A: Clone> InputRouter<A> {
             bindings,
             pending: VecDeque::new(),
             total_queued: 0,
+            context_stack: Vec::new(),
         }
     }
 
@@ -595,6 +620,38 @@ impl<A: Clone> InputRouter<A> {
             router: self,
             original,
         }
+    }
+
+    /// Push the current bindings onto the context stack and install `new`.
+    ///
+    /// This enables nested modal input (game → inventory → item detail).
+    /// Each push saves the current bindings; [`Self::pop_bindings`] restores
+    /// the most recently saved set.
+    pub fn push_bindings(&mut self, new: Bindings<A>) {
+        let current = std::mem::replace(&mut self.bindings, new);
+        self.context_stack.push(current);
+    }
+
+    /// Pop the most recently pushed bindings from the context stack and
+    /// restore them as the active set.
+    ///
+    /// Returns `true` if there was a saved context to restore, `false` if the
+    /// stack was empty (no change).
+    pub fn pop_bindings(&mut self) -> bool {
+        if let Some(previous) = self.context_stack.pop() {
+            self.bindings = previous;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The number of saved binding contexts on the stack.
+    ///
+    /// A depth of 0 means only the current bindings are active. A depth of 2
+    /// means two levels of nested modals have been pushed.
+    pub fn context_depth(&self) -> usize {
+        self.context_stack.len()
     }
 }
 
@@ -2319,5 +2376,111 @@ mod tests {
         let removed = router.filter_pending(|_| true);
         assert_eq!(removed, 0);
         assert!(router.is_idle());
+    }
+
+    #[test]
+    fn bindings_iter_keys_yields_all_key_bindings() {
+        let b = bound_router();
+        let keys: Vec<Key> = b.bindings().iter_keys().map(|(k, _)| k).collect();
+        assert_eq!(keys.len(), 5);
+        assert!(keys.contains(&Key::Up));
+        assert!(keys.contains(&Key::Down));
+        assert!(keys.contains(&Key::Left));
+        assert!(keys.contains(&Key::Right));
+        assert!(keys.contains(&Key::Char('.')));
+    }
+
+    #[test]
+    fn bindings_iter_mouse_yields_mouse_bindings() {
+        let mut b = Bindings::new();
+        b.bind_mouse(MouseButton::Left, true, Move::North);
+        b.bind_mouse(MouseButton::Right, false, Move::South);
+        let mouse: Vec<_> = b.iter_mouse().collect();
+        assert_eq!(mouse.len(), 2);
+    }
+
+    #[test]
+    fn command_bindings_iter_names_and_glyphs() {
+        let mut c = CommandBindings::new();
+        c.bind_name("north", Move::North);
+        c.bind_name("south", Move::South);
+        c.bind_glyph('e', Move::East);
+        c.bind_glyph('w', Move::West);
+
+        let names: Vec<&str> = c.iter_names().map(|(n, _)| n).collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"north"));
+        assert!(names.contains(&"south"));
+
+        let glyphs: Vec<char> = c.iter_glyphs().map(|(g, _)| g).collect();
+        assert_eq!(glyphs.len(), 2);
+        assert!(glyphs.contains(&'e'));
+        assert!(glyphs.contains(&'w'));
+    }
+
+    #[test]
+    fn push_bindings_saves_and_switches_context() {
+        let mut router = bound_router();
+        assert_eq!(router.context_depth(), 0);
+
+        let mut menu = Bindings::new();
+        menu.bind(Key::Enter, Move::Wait);
+        router.push_bindings(menu);
+
+        assert_eq!(router.context_depth(), 1);
+        assert!(router.handle(InputEvent::Key(Key::Enter)));
+        assert_eq!(router.next_action(), Some(Move::Wait));
+        assert!(!router.handle(InputEvent::Key(Key::Up)));
+    }
+
+    #[test]
+    fn pop_bindings_restores_previous_context() {
+        let mut router = bound_router();
+
+        let mut menu = Bindings::new();
+        menu.bind(Key::Enter, Move::Wait);
+        router.push_bindings(menu);
+
+        assert!(router.pop_bindings());
+        assert_eq!(router.context_depth(), 0);
+        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert_eq!(router.next_action(), Some(Move::North));
+        assert!(!router.handle(InputEvent::Key(Key::Enter)));
+    }
+
+    #[test]
+    fn pop_bindings_returns_false_on_empty_stack() {
+        let mut router = bound_router();
+        assert!(!router.pop_bindings());
+        assert_eq!(router.context_depth(), 0);
+    }
+
+    #[test]
+    fn nested_push_bindings_supports_multiple_levels() {
+        let mut router = bound_router();
+
+        let mut level1 = Bindings::new();
+        level1.bind(Key::Char('a'), Move::North);
+        router.push_bindings(level1);
+        assert_eq!(router.context_depth(), 1);
+
+        let mut level2 = Bindings::new();
+        level2.bind(Key::Char('b'), Move::South);
+        router.push_bindings(level2);
+        assert_eq!(router.context_depth(), 2);
+
+        // Level 2 is active.
+        assert!(router.handle(InputEvent::Key(Key::Char('b'))));
+        assert!(!router.handle(InputEvent::Key(Key::Char('a'))));
+
+        // Pop to level 1.
+        router.pop_bindings();
+        assert!(router.handle(InputEvent::Key(Key::Char('a'))));
+        assert!(!router.handle(InputEvent::Key(Key::Char('b'))));
+
+        // Pop back to original.
+        router.pop_bindings();
+        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(!router.handle(InputEvent::Key(Key::Char('a'))));
     }
 }

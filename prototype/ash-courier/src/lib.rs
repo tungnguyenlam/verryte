@@ -8,7 +8,9 @@ pub mod snapshot;
 pub mod systems;
 
 pub use action::{default_bindings, default_commands, resolve_command_token, Action};
-pub use components::{GameEvent, GameState, Hazard, Outcome, Package, Player, Position};
+pub use components::{
+    GameEvent, GameState, Hazard, Outcome, Package, Player, Position, PreviousPosition,
+};
 pub use game::{Game, MapError, DEFAULT_MAP};
 pub use map::{Map, Tile};
 pub use snapshot::{ActionResult, Snapshot, StepReport};
@@ -869,5 +871,86 @@ mod tests {
         let g2 = Game::from_cave(20, 15, 777);
         assert_eq!(g1.player_position(), g2.player_position());
         assert_eq!(g1.state().turn, g2.state().turn);
+    }
+
+    #[test]
+    fn reset_restores_game_to_initial_state() {
+        let mut g = fresh();
+        g.step(Action::MoveEast);
+        g.step(Action::MoveEast);
+        g.step(Action::MoveEast);
+        assert_eq!(g.state().turn, 3);
+        assert_eq!(g.player_position(), Position { x: 4, y: 1 });
+
+        g.reset();
+        assert_eq!(g.state().turn, 0);
+        assert_eq!(g.outcome(), Outcome::Playing);
+        assert_eq!(g.player_position(), Position { x: 1, y: 1 });
+        assert!(g.router.is_idle());
+    }
+
+    #[test]
+    fn reset_after_loss_restores_playable_state() {
+        let layout = &["#####", "#@h.#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        g.step(Action::MoveEast);
+        assert_eq!(g.outcome(), Outcome::Lost);
+
+        g.reset();
+        assert_eq!(g.outcome(), Outcome::Playing);
+        assert_eq!(g.player_position(), Position { x: 1, y: 1 });
+    }
+
+    #[test]
+    fn reset_from_cave_produces_playable_game() {
+        let mut g = fresh();
+        g.step(Action::Quit);
+        assert_eq!(g.outcome(), Outcome::Quit);
+
+        g.reset_from_cave(20, 15, 42);
+        assert_eq!(g.outcome(), Outcome::Playing);
+        let pos = g.player_position();
+        assert!(g.map().is_walkable(verryte_map::Point::new(pos.x, pos.y)));
+    }
+
+    #[test]
+    fn from_bsp_creates_playable_game() {
+        let g = Game::from_bsp(25, 20, 42);
+        assert_eq!(g.outcome(), Outcome::Playing);
+        let pos = g.player_position();
+        assert!(g.map().is_walkable(verryte_map::Point::new(pos.x, pos.y)));
+    }
+
+    #[test]
+    fn from_bsp_has_package_and_goal() {
+        let g = Game::from_bsp(25, 20, 123);
+        let pkgs = g.world.query2::<Position, Package>();
+        assert!(pkgs.len() >= 1, "BSP dungeon should have a package");
+        let goal_count = g.map().tiles.count_matching(|_, t| *t == Tile::Goal);
+        assert!(goal_count >= 1, "BSP dungeon should have a goal tile");
+    }
+
+    #[test]
+    fn from_bsp_is_deterministic_with_same_seed() {
+        let g1 = Game::from_bsp(25, 20, 42);
+        let g2 = Game::from_bsp(25, 20, 42);
+        assert_eq!(g1.player_position(), g2.player_position());
+        assert_eq!(g1.state().turn, g2.state().turn);
+    }
+
+    #[test]
+    fn from_bsp_has_chaser_entity() {
+        let g = Game::from_bsp(30, 25, 99);
+        let chasers = g.world.query2::<Position, crate::components::Chaser>();
+        assert!(chasers.len() >= 1, "BSP dungeon should spawn a chaser");
+    }
+
+    #[test]
+    fn render_with_palette_produces_grid() {
+        use verryte_terminal::ColorPalette;
+        let g = fresh();
+        let grid = g.render_with_palette(&ColorPalette::amber_terminal());
+        assert_eq!(grid.width(), g.map().width);
+        assert_eq!(grid.height(), g.map().height);
     }
 }

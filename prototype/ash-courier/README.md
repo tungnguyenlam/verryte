@@ -13,7 +13,11 @@ The first slice is in place and is driven exclusively through Verryte's shared
 input/script path. Highlights:
 
 - An ASCII level loader (`Game::from_layout`) recognising `#` walls, `.` floor,
-  `@` player spawn, `p` package, `h` hazard, `G` goal.
+  `@` player spawn, `p` package, `h` hazard, `c` chaser, `G` goal.
+- Procedural map generation: `Game::from_cave` (cellular automata) and
+  `Game::from_bsp` (BSP dungeon) with seeded RNG for reproducibility.
+- Agent-ready restart: `Game::reset`, `reset_from_layout`, `reset_from_cave`
+  for reusing the same Game instance across multiple runs.
 - An `Action` enum covering `MoveNorth/South/East/West`, `StepToPackage`,
   `StepToGoal`, `StepToSafety`, `Wait`, `Scan`, `ScanRadius(u16)`,
   `Inspect(Point)`, `PickUp`, `Drop`, and `Quit`,
