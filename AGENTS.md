@@ -97,7 +97,7 @@ Keep these docs aligned when their subject changes:
 
 ## Committing
 
-After successfully completing a task, updating the documentation, and verifying the workspace, you must commit your changes. 
+After successfully completing a task, updating the documentation, and verifying the workspace, you must commit your changes. Only commit once the job is complete and all tests pass.
 - Use `git status` and `git diff HEAD` to review your work.
 - Stage the specific files you modified or created using `git add <file>`.
 - Use `git log -n 3` to match the project's commit message style.
