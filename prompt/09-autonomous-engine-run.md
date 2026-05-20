@@ -49,6 +49,24 @@ Meaningful improvements include:
 
 If fewer than 5 improvements are complete and there is no hard blocker, keep going.
 
+## Current Engine State
+
+As of the latest commits:
+
+- **ECS foundation is solid**: entities, components, resources, events, queries, and schedules are working. The core is generic and decoupled from terminal/game specifics.
+- **Input and control path is unified**: all gameplay paths (terminal, script, replay, agent) converge on `Action` enum and `apply_action()`. No separate test/interactive forks.
+- **Terminal rendering is functional**: grid-based cell rendering, viewport clipping, diff-based updates, batch write helpers.
+- **Map/spatial primitives are complete**: grids, pathfinding, visibility, bounds, geometric queries.
+- **Ash Courier proving game works**: turn-based roguelike validates engine behavior. Script runner tests win condition deterministically. TTY frontend supports interactive play.
+
+**Areas that could benefit from improvement:**
+- Ash Courier game depth: more mechanics, encounters, or content variety to stress-test the engine further.
+- State serialization: snapshot/replay persistence to disk for session save/load or agent replay analysis.
+- Performance optimization: profile heavy operations (pathfinding, visibility, grid iteration) and optimize as needed.
+- UI polish: better viewport camera control, visualization of spatial queries, cursor feedback.
+- Documentation: more inline examples in public APIs, walkthroughs of common patterns (scheduling a system, querying entities, binding actions).
+- Error handling: improve error messages, add recoverable error types instead of panics where appropriate.
+
 ## Autonomy Rules
 
 1. Do not stop after one small task.

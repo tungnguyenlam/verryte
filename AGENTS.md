@@ -60,6 +60,19 @@ then assert observable state.
 Preserve unrelated user changes. The worktree may already be dirty; inspect
 before editing and do not revert work you did not make.
 
+## Current Engine Capabilities
+
+As of the latest commits, Verryte has:
+
+- **ECS core** (`verryte-core`): entities, components, resources, events, queries, schedules.
+- **Input system** (`verryte-input`): unified input events (keyboard, mouse, scroll), action bindings, command parsing, action queues, replay traces, `ActionSource` for origin tracking.
+- **Map & geometry** (`verryte-map`): grid, bounds, distance, visibility, reachability, pathfinding, `TileGrid` with iterators.
+- **Terminal rendering** (`verryte-terminal`): cell, color, grid, clipping, viewport, diff, line, border, text rendering, batch write helpers.
+- **TTY frontend** (`verryte-tty`): crossterm integration, real-time input translation, incremental cell-diff rendering.
+- **Ash Courier proving game** (`prototype/ash-courier`): turn-based roguelike, cursor control, step-to-target navigation, score/win/loss outcomes, batch input, replay support, script runner.
+
+**Key architectural invariant:** all gameplay paths (terminal input, scripted commands, tests, replays, agent injection) converge on the same `Action` enum and `apply_action()` function. Do not split this path.
+
 ## Verification
 
 Normal workspace verification:
