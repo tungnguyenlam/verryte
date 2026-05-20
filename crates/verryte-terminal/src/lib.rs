@@ -285,6 +285,18 @@ impl Rect {
         Rect::new(x, y, right - x, bottom - y)
     }
 
+    /// Shrink the rectangle by `(dx, dy)` on all sides.
+    ///
+    /// If the inset exceeds the rectangle's size, the result is an empty rect.
+    /// Useful for computing inner panel regions or padding UI layouts.
+    pub fn inset(self, dx: u16, dy: u16) -> Rect {
+        let x = self.x.saturating_add(dx);
+        let y = self.y.saturating_add(dy);
+        let width = self.width.saturating_sub(dx.saturating_mul(2));
+        let height = self.height.saturating_sub(dy.saturating_mul(2));
+        Rect::new(x, y, width, height)
+    }
+
     /// Offset the rectangle by `(dx, dy)`. Negative offsets are clamped to zero.
     ///
     /// Useful for moving UI elements or adjusting rects for viewport offsets.
@@ -2986,6 +2998,24 @@ mod tests {
         assert_eq!(t.y, 7);
         assert_eq!(t.width, 3);
         assert_eq!(t.height, 4);
+    }
+
+    #[test]
+    fn rect_inset_shrinks_rect() {
+        let r = Rect::new(1, 2, 10, 8);
+        let inner = r.inset(1, 2);
+        assert_eq!(inner.x, 2);
+        assert_eq!(inner.y, 4);
+        assert_eq!(inner.width, 8);
+        assert_eq!(inner.height, 4);
+    }
+
+    #[test]
+    fn rect_inset_clamps_to_empty() {
+        let r = Rect::new(0, 0, 4, 4);
+        let inner = r.inset(3, 3);
+        assert_eq!(inner.width, 0);
+        assert_eq!(inner.height, 0);
     }
 
     #[test]

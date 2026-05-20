@@ -14,6 +14,7 @@ pub enum Action {
     Scan,
     ScanRadius(u16),
     Inspect(Point),
+    ClearCursor,
     PickUp,
     Drop,
     Quit,
@@ -71,6 +72,8 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('D'), Action::Drop);
     b.bind(Key::Char('q'), Action::Quit);
     b.bind(Key::Esc, Action::Quit);
+    b.bind(Key::Char('c'), Action::ClearCursor);
+    b.bind(Key::Char('C'), Action::ClearCursor);
     b.bind_mouse(MouseButton::Right, true, Action::Scan);
     b.bind_mouse(MouseButton::Middle, true, Action::Wait);
     b
@@ -96,6 +99,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("pickup", Action::PickUp);
     c.bind_name("drop", Action::Drop);
     c.bind_name("quit", Action::Quit);
+    c.bind_name("clear_cursor", Action::ClearCursor);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('N', Action::MoveNorth);
@@ -115,6 +119,8 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('!', Action::Drop);
     c.bind_glyph('D', Action::Drop);
     c.bind_glyph('q', Action::Quit);
+    c.bind_glyph('c', Action::ClearCursor);
+    c.bind_glyph('C', Action::ClearCursor);
     c
 }
 

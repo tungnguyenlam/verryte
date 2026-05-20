@@ -11,6 +11,7 @@
 //! * `x` — scan visible tiles
 //! * `scan:3`, `scan3`, `x3` — scan with explicit radius
 //! * `inspect:3,4` / `look:3,4` — inspect a tile and update the cursor
+//! * `c` / `clear_cursor` — clear the inspection cursor
 //! * `p` — step one tile toward nearest package
 //! * `o` — step one tile toward nearest goal
 //! * `v` — step one tile toward the safest neighbor away from hazards

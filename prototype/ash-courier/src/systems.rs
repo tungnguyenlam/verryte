@@ -167,6 +167,9 @@ pub fn message_system(world: &mut World) {
                 GameEvent::Inspected { at, tile } => {
                     format!("Inspected {},{} ({:?}).", at.x, at.y, tile)
                 }
+                GameEvent::CursorCleared { at } => {
+                    format!("Cleared cursor at {},{}.", at.x, at.y)
+                }
                 GameEvent::ChaserMoved { from, to } => {
                     format!(
                         "A chaser moved from {},{} to {},{}.",

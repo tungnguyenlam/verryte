@@ -2000,6 +2000,31 @@ impl Bounds {
             && (point.y as u16) < self.bottom()
     }
 
+    /// Returns `true` if this bounds overlaps `other`.
+    pub fn intersects(self, other: Bounds) -> bool {
+        if self.width == 0 || self.height == 0 || other.width == 0 || other.height == 0 {
+            return false;
+        }
+        let x0 = self.x.max(other.x);
+        let y0 = self.y.max(other.y);
+        let x1 = self.right().min(other.right());
+        let y1 = self.bottom().min(other.bottom());
+        x0 < x1 && y0 < y1
+    }
+
+    /// Return the overlapping bounds between `self` and `other`, if any.
+    pub fn intersection(self, other: Bounds) -> Option<Bounds> {
+        let x0 = self.x.max(other.x);
+        let y0 = self.y.max(other.y);
+        let x1 = self.right().min(other.right());
+        let y1 = self.bottom().min(other.bottom());
+        if x0 < x1 && y0 < y1 {
+            Some(Bounds::new(x0, y0, x1 - x0, y1 - y0))
+        } else {
+            None
+        }
+    }
+
     /// Clamp a point to the bounds rectangle.
     ///
     /// Returns `None` if the bounds are empty.
@@ -2974,6 +2999,33 @@ mod tests {
             bounds.clamp_point(Point::new(-5, 10)),
             Some(Point::new(2, 4))
         );
+    }
+
+    #[test]
+    fn bounds_intersects_detects_overlap() {
+        let a = Bounds::new(0, 0, 4, 4);
+        let b = Bounds::new(3, 3, 4, 4);
+        assert!(a.intersects(b));
+        assert!(b.intersects(a));
+    }
+
+    #[test]
+    fn bounds_intersection_returns_overlap() {
+        let a = Bounds::new(0, 0, 4, 4);
+        let b = Bounds::new(2, 1, 3, 4);
+        assert_eq!(a.intersection(b), Some(Bounds::new(2, 1, 2, 3)));
+    }
+
+    #[test]
+    fn bounds_intersection_none_for_disjoint_or_empty() {
+        let a = Bounds::new(0, 0, 4, 4);
+        let b = Bounds::new(5, 5, 2, 2);
+        assert!(!a.intersects(b));
+        assert_eq!(a.intersection(b), None);
+
+        let empty = Bounds::new(0, 0, 0, 4);
+        assert!(!empty.intersects(a));
+        assert_eq!(empty.intersection(a), None);
     }
 
     #[test]

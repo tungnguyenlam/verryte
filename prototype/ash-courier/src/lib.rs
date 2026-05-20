@@ -22,6 +22,7 @@ pub use verryte_map;
 mod tests {
     use super::*;
     use verryte_input::{ActionSource, InputEvent, Key, MouseButton};
+    use verryte_terminal::ColorPalette;
 
     fn fresh() -> Game {
         Game::new()
@@ -196,6 +197,33 @@ mod tests {
         assert_eq!(report.result, ActionResult::NoOp);
         assert_eq!(g.state().cursor, None);
         assert_eq!(g.state().turn, 0);
+    }
+
+    #[test]
+    fn clear_cursor_action_resets_state() {
+        let mut g = fresh();
+        g.step(Action::Inspect(Position { x: 2, y: 1 }));
+        let report = g.step(Action::ClearCursor);
+
+        assert_eq!(report.result, ActionResult::Updated);
+        assert_eq!(g.state().cursor, None);
+        assert_eq!(g.state().turn, 0);
+        assert_eq!(
+            report.events,
+            vec![GameEvent::CursorCleared {
+                at: Position { x: 2, y: 1 }
+            }]
+        );
+    }
+
+    #[test]
+    fn clear_cursor_is_noop_without_cursor() {
+        let mut g = fresh();
+        let report = g.step(Action::ClearCursor);
+
+        assert_eq!(report.result, ActionResult::NoOp);
+        assert_eq!(g.state().cursor, None);
+        assert!(report.events.is_empty());
     }
 
     #[test]
@@ -525,7 +553,7 @@ mod tests {
 
     #[test]
     fn compact_glyph_scripts_use_engine_command_bindings() {
-        let parsed = default_commands().parse_glyphs("e . W p o v !").unwrap();
+        let parsed = default_commands().parse_glyphs("e . W p o v ! c").unwrap();
         assert_eq!(
             parsed,
             vec![
@@ -535,7 +563,8 @@ mod tests {
                 Action::StepToPackage,
                 Action::StepToGoal,
                 Action::StepToSafety,
-                Action::Drop
+                Action::Drop,
+                Action::ClearCursor
             ]
         );
     }
@@ -624,6 +653,17 @@ mod tests {
         let snap2 = g.snapshot();
         assert_eq!(snap2.player, Position { x: 2, y: 1 });
         assert_eq!(snap2.turn, 1);
+    }
+
+    #[test]
+    fn render_highlights_cursor_cell_background() {
+        let mut g = fresh();
+        g.step(Action::Inspect(Position { x: 2, y: 1 }));
+
+        let frame = g.render();
+        let cell = frame.get(2, 1).unwrap();
+        assert_eq!(cell.bg, ColorPalette::dark_dungeon().ui_highlight);
+        assert_eq!(cell.glyph, '.');
     }
 
     #[test]
@@ -909,6 +949,23 @@ mod tests {
 
         g.reset_from_cave(20, 15, 42);
         assert_eq!(g.outcome(), Outcome::Playing);
+        let pos = g.player_position();
+        assert!(g.map().is_walkable(verryte_map::Point::new(pos.x, pos.y)));
+    }
+
+    #[test]
+    fn reset_from_bsp_produces_playable_game() {
+        let mut g = fresh();
+        g.step(Action::MoveEast);
+        g.router.inject(Action::Wait);
+        assert_eq!(g.router.pending(), 1);
+
+        g.reset_from_bsp(20, 15, 42);
+        assert_eq!(g.outcome(), Outcome::Playing);
+        assert_eq!(g.state().turn, 0);
+        assert_eq!(g.map().width, 20);
+        assert_eq!(g.map().height, 15);
+        assert_eq!(g.router.pending(), 0);
         let pos = g.player_position();
         assert!(g.map().is_walkable(verryte_map::Point::new(pos.x, pos.y)));
     }

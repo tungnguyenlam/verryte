@@ -336,6 +336,15 @@ impl Game {
         self.router.clear();
     }
 
+    /// Reset the game to a new procedurally generated BSP dungeon.
+    pub fn reset_from_bsp(&mut self, width: u16, height: u16, seed: u64) {
+        let fresh = Self::from_bsp(width, height, seed);
+        self.world = fresh.world;
+        self.schedule = fresh.schedule;
+        self.player = fresh.player;
+        self.router.clear();
+    }
+
     pub fn player_entity(&self) -> Entity {
         self.player
     }
@@ -505,6 +514,22 @@ impl Game {
                     self.schedule
                         .run_system_by_name("messages", &mut self.world);
                     ActionResult::Updated
+                }
+            }
+            Action::ClearCursor => {
+                let cursor = self
+                    .world
+                    .resource_mut::<GameState>()
+                    .unwrap()
+                    .cursor
+                    .take();
+                if let Some(cursor) = cursor {
+                    self.send_event(GameEvent::CursorCleared { at: cursor });
+                    self.schedule
+                        .run_system_by_name("messages", &mut self.world);
+                    ActionResult::Updated
+                } else {
+                    ActionResult::NoOp
                 }
             }
             Action::PickUp => {
@@ -787,6 +812,15 @@ impl Game {
             player_pos.y as u16,
             Cell::new('@').with_fg(player_color),
         );
+        if let Some(cursor) = self.state().cursor {
+            if self.map().in_bounds(cursor) {
+                let x = cursor.x as u16;
+                let y = cursor.y as u16;
+                if let Some(cell) = grid.get(x, y).copied() {
+                    grid.put(x, y, cell.with_bg(palette.ui_highlight));
+                }
+            }
+        }
         grid
     }
 

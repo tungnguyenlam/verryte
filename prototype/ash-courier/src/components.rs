@@ -79,6 +79,9 @@ pub enum GameEvent {
         at: Position,
         tile: crate::map::Tile,
     },
+    CursorCleared {
+        at: Position,
+    },
     ChaserMoved {
         from: Position,
         to: Position,

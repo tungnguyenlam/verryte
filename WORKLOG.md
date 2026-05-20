@@ -1195,3 +1195,25 @@ TTY frontend to detect idle states for animation or timeout logic.
 **Gotchas.** The initial `reset_restores_game_to_initial_state` test had wrong move expectations: `MoveSouth` from (2,1) hits a wall in the default map. Fixed by using `MoveEast` three times which stays on floor tiles. The `from_generated_grid` helper needed to handle the case where `walkable` becomes empty before placing a chaser (graceful fallback with `if !walkable.is_empty()`).
 
 **Follow-ups.** The context stack could be extended with a `swap_bindings` that replaces the top of stack without pushing. `TileGrid::crop` could return `None` for completely out-of-bounds crops instead of an all-fill grid. `Game::reset` could accept a seed parameter for deterministic restart. The chaser anti-oscillation could track more history (last N positions) for more complex patrol patterns.
+
+## 2026-05-20 - add cursor controls, bounds/rect helpers, BSP reset
+
+**Goal.** Make another autonomous batch of engine improvements, focusing on small reusable primitives and tighter Ash Courier inspection/reset ergonomics without forking the shared input path.
+
+**Changes.**
+- `crates/verryte-terminal/src/lib.rs` - added `Rect::inset` plus tests and used it to simplify viewport/panel layout math.
+- `crates/verryte-map/src/lib.rs` - added `Bounds::intersects` and `Bounds::intersection` with overlap/empty tests.
+- `prototype/ash-courier/src/action.rs` - introduced `Action::ClearCursor` with key and command bindings.
+- `prototype/ash-courier/src/components.rs` / `src/systems.rs` - added `GameEvent::CursorCleared` and message log text.
+- `prototype/ash-courier/src/game.rs` - applied cursor clearing, highlighted cursor cells in render output, and added `reset_from_bsp`.
+- `prototype/ash-courier/src/bin/tty.rs` - switched viewport positioning to `Rect::inset` and updated blit coordinates.
+- `prototype/ash-courier/src/lib.rs` - added tests for cursor clearing, cursor highlight rendering, glyph parsing, and BSP resets.
+- `README.md`, `prototype/ash-courier/README.md`, `prototype/ash-courier/src/bin/script.rs` - documented the new helpers, cursor controls, and reset API.
+
+**Reasoning.** Rect and bounds helpers are small but widely reusable for UI and spatial logic. Ash Courier needed a way to clear inspection state and make the cursor visible in rendered frames so agents and terminals can confirm what is being inspected. Adding `reset_from_bsp` keeps the agent-ready restart API consistent with the procedural generators already exposed.
+
+**Assumptions.** The inspection cursor highlight should be a background tint using the palette’s `ui_highlight` rather than a glyph swap. Clearing a cursor is a non-advancing state update that should be a no-op when no cursor is set. BSP resets should reuse the same constructor as `from_bsp` and clear pending router actions.
+
+**Gotchas.** `Grid::blit` takes `i32` coordinates, so the new inset-based rect values had to be converted from `u16`. The cursor highlight is invisible in `to_plain_string` output, so tests assert against the underlying cell background instead.
+
+**Follow-ups.** Consider a mouse gesture to clear the cursor and a small overlay glyph option for terminals that do not render background colors reliably.

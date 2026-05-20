@@ -16,13 +16,13 @@ input/script path. Highlights:
   `@` player spawn, `p` package, `h` hazard, `c` chaser, `G` goal.
 - Procedural map generation: `Game::from_cave` (cellular automata) and
   `Game::from_bsp` (BSP dungeon) with seeded RNG for reproducibility.
-- Agent-ready restart: `Game::reset`, `reset_from_layout`, `reset_from_cave`
-  for reusing the same Game instance across multiple runs.
+- Agent-ready restart: `Game::reset`, `reset_from_layout`, `reset_from_cave`,
+  `reset_from_bsp` for reusing the same Game instance across multiple runs.
 - An `Action` enum covering `MoveNorth/South/East/West`, `StepToPackage`,
   `StepToGoal`, `StepToSafety`, `Wait`, `Scan`, `ScanRadius(u16)`,
-  `Inspect(Point)`, `PickUp`, `Drop`, and `Quit`,
+  `Inspect(Point)`, `ClearCursor`, `PickUp`, `Drop`, and `Quit`,
   bound to arrow keys, WASD, vi keys, plus `.` / `x` / `p` / `o` / `r` / `,` /
-  `D` / `q` / `Esc`, plus `1`-`5` for fixed-radius scans.
+  `D` / `c` / `q` / `Esc`, plus `1`-`5` for fixed-radius scans.
   Left mouse press sets an inspection cursor, right mouse press maps to `Scan`,
   and middle mouse press maps to `Wait` through the same router path.
 - A single `Game::apply(action)` spine. Terminal events, scripted injections,
@@ -32,7 +32,8 @@ input/script path. Highlights:
   per-action `Events<GameEvent>` resource, and an entity for the player, each
   package, and each hazard.
 - A layered `render()` that walks the ECS to produce a `Grid` (walls / goal,
-  then hazards, then packages, then player on top).
+  then hazards, then packages, then player on top), plus a highlighted
+  inspection cursor overlay when active.
 - A structured `Snapshot { turn, outcome, has_package, scans, player, cursor,
   cursor_tile, path_to_cursor, distance_to_cursor,
   packages, hazards, chasers, visible_tiles, visible_hazards, map_width,
@@ -92,6 +93,7 @@ replay strings. Scripts also accept `;` separators and `#` inline comments.
 Parameterized scan tokens (`scan:3`, `scan3`, `x3`) and inspect tokens
 (`inspect:3,4`, `look:3,4`) are supported through the same shared
 `InputRouter` queue path.
+`clear_cursor` (or glyph `c`) clears the inspection cursor.
 
 ## Why This Prototype Exists
 

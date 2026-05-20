@@ -75,7 +75,8 @@ impl InspectLayout {
         let inner_w = vp_w.min(map.width);
         let inner_h = vp_h.min(map.height);
         let origin = game.viewport_origin(inner_w, inner_h);
-        let inner = Rect::new(1, 1, inner_w, inner_h);
+        let inner =
+            Rect::new(0, 0, inner_w.saturating_add(2), inner_h.saturating_add(2)).inset(1, 1);
         Self { origin, inner }
     }
 
@@ -115,7 +116,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
     // Derive layout from terminal size.
     // Viewport: left side, roughly half width, most of height.
     let (vp_w, vp_h) = viewport_dimensions(w, h);
-    let vp_rect = Rect::new(0, 0, vp_w + 2, vp_h + 2);
+    let vp_rect = Rect::new(0, 0, vp_w.saturating_add(2), vp_h.saturating_add(2));
     root.draw_rounded_panel(
         vp_rect,
         " VIEWPORT ",
@@ -124,7 +125,8 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
         palette.background,
     );
     let viewport = game.render_viewport(vp_w, vp_h);
-    root.blit(&viewport, 1, 1);
+    let vp_inner = vp_rect.inset(1, 1);
+    root.blit(&viewport, i32::from(vp_inner.x), i32::from(vp_inner.y));
 
     // Right side: log on top, status below.
     let right_x = vp_w + 3;

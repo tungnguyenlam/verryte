@@ -60,8 +60,9 @@ those pieces as the first proving game.
   (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching`,
   `TileGrid::find_matching`, `TileGrid::points_matching`, and
   `TileGrid::density` for map analysis, `TileGrid::bounds` and
-  `TileGrid::bounding_box_of` with `Bounds`/`Bounds::clamp_point` for spatial
-  framing, `SpatialHash<T>` for efficient proximity queries on grid-based
+  `TileGrid::bounding_box_of` with `Bounds`/`Bounds::clamp_point` plus
+  `Bounds::intersects` / `Bounds::intersection` for spatial framing, `SpatialHash<T>`
+  for efficient proximity queries on grid-based
   entities, cellular automata cave
   generation
   (`TileGrid::cellular_automata_cave`) for organic procedural maps,
@@ -78,8 +79,9 @@ those pieces as the first proving game.
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
   text wrapping utilities (`wrap_text`, `write_wrapped_text`), `Grid::transform`
   and `Grid::map` for bulk cell modification, row/column helpers
-  (`Grid::row_mut`, `Grid::fill_row`, `Grid::fill_col`), `Grid::resize` for
-  dynamic grid sizing on terminal resize, `Grid::scroll_up` and
+  (`Grid::row_mut`, `Grid::fill_row`, `Grid::fill_col`), `Rect::inset` for
+  padded layouts, `Grid::resize` for dynamic grid sizing on terminal resize,
+  `Grid::scroll_up` and
   `Grid::scroll_down` for scrolling content within a grid, a `Layer` system
   for compositing named, ordered rendering layers (map, entities, UI), a
   `Layers` collection for managed layer lifecycle, `ColorPalette` with built-in
@@ -98,14 +100,14 @@ those pieces as the first proving game.
 - `prototype/ash-courier` - a small turn-based roguelike prototype that proves
   the engine path through movement, pickup, hazards, win/loss state, rendering,
   scan/visibility state (using recursive shadowcasting FOV), inspection cursor
-  state, event reports, package drop/re-pickup, path hints, hazard-distance
+  state with highlight rendering, event reports, package drop/re-pickup, path hints, hazard-distance
   safety hints, reachable-state hints, local viewport snapshots, observable
   snapshots,
   `GameClock` for turn tracking, `Rng` for reproducible chaser AI,
   diff-based TTY rendering, procedural cave map generation via
   `Game::from_cave` using cellular automata, BSP dungeon generation via
   `Game::from_bsp`, `Map::from_ascii` for convenient map construction,
-  `Game::reset` / `reset_from_cave` / `reset_from_layout` for agent-ready
+  `Game::reset` / `reset_from_cave` / `reset_from_bsp` / `reset_from_layout` for agent-ready
   restart, `Game::render_with_palette` for theme-configurable rendering,
   and `PreviousPosition` for chaser anti-oscillation tie-breaking.
 
@@ -153,11 +155,11 @@ cargo run -p ash-courier --bin ash-courier-tty
 
 `verryte-input` command bindings accept both command words and compact glyphs:
 `north`, `south`, `east`, `west`, `wait`, `scan`, `step_package`, `step_goal`,
-`step_safety`, `pickup`, `drop`, `quit`, plus `n`, `s`, `e`, `w`, `.`, `x`, `p`,
-`o`, `v`, `,`, `!`, and `q`. Scripts can mix whitespace with `;` separators and
-#` line comments. Ash Courier's script runner also accepts parameterized scan
-tokens (`scan:3`, `scan3`, `x3`) and inspect tokens (`inspect:3,4`, `look:3,4`)
-through `inject_script_with`.
+`step_safety`, `pickup`, `drop`, `clear_cursor`, `quit`, plus `n`, `s`, `e`, `w`,
+`.`, `x`, `p`, `o`, `v`, `,`, `!`, `c`, and `q`. Scripts can mix whitespace with
+`;` separators and `#` line comments. Ash Courier's script runner also accepts
+parameterized scan tokens (`scan:3`, `scan3`, `x3`) and inspect tokens
+(`inspect:3,4`, `look:3,4`) through `inject_script_with`.
 The script runner prints the rendered frame, local viewport, state summary,
 source, action result, event count, visible/reachable tile counts, path lengths,
 shortest distances to package/goal/hazards/chasers, and safer-neighbor counts
