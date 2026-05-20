@@ -69,11 +69,56 @@ That shared path is what keeps play, debugging, testing, replays, and agent cont
 
 ## Agent-Ready by Default
 
-Every Verryte game should be observable and controllable outside the interactive TUI.
+Every Verryte game should be observable and controllable outside the interactive TUI. This is not a separate testing mode; it is part of the engine's design. A game that can be played by a person should also be understandable to tools.
 
-The finished engine should make it natural to reset a game, inspect state, inject actions, enter text, run tests, and reproduce behavior from scripts or CI. This is not a separate testing mode; it is part of the engine's design. A game that can be played by a person should also be understandable to tools.
+The shared control path makes this possible:
 
-The exact commands can evolve, but the capability should remain clear: a tool should be able to start from a known state, apply input step by step, and receive structured state back after meaningful changes.
+```text
+terminal event -> game action -> game system -> observable state
+script command -> game action -> game system -> observable state
+agent command -> game action -> game system -> observable state
+```
+
+All input sources converge into the same action queue, pass through the same game logic, and produce the same observable state. No source gets a privileged or degraded path.
+
+### Runners
+
+A finished Verryte game should ship with two runners:
+
+**Interactive TUI** - a terminal frontend that renders the game to a real terminal, handles keyboard and mouse input, and presents the game's visual output through incremental cell diffs. This is the player-facing runner.
+
+**Script / CI runner** - a non-interactive runner that accepts a script of commands, applies them step by step, and exits with a pass/fail result. This runner requires no terminal, produces plain-text output suitable for logs, and is the primary smoke-test and regression tool. It should be usable from CI with no special setup.
+
+Both runners drive the same game logic. A script that wins in the CI runner should win identically in the interactive TUI.
+
+The command-line interface for these runners should stay simple. A user or tool invokes the runner with straightforward arguments — a script string, a seed, a layout flag — and the engine handles all parsing, execution, state management, and output formatting internally. Complex logic lives in the engine, not in the command that starts it.
+
+### Observability
+
+A game's state should be fully observable at any point during execution. The engine should provide:
+
+- **Step reports** - after each action, a report containing the action taken, its source, the result, whether the turn advanced, and before/after snapshots of changed state.
+- **Snapshots** - a complete picture of observable game state at a moment in time: positions, inventories, map state, visibility, outcomes, scores, and any game-specific data the game chooses to expose.
+- **Action provenance** - every action should carry metadata indicating its source (terminal, script, agent, replay, test) so that tools can distinguish human play from automated runs without affecting game behavior.
+
+Observability is not an afterthought. Game systems should be designed so that meaningful state is accessible to tests, scripts, and tools without requiring internal access.
+
+### Replay
+
+The engine should support recording and replaying sessions. A sequence of sourced actions should be capturable as a trace, serializable, and replayable through the same action queue that handles live input. Replay should reproduce identical game state when given the same initial conditions and RNG seed.
+
+Replay serves debugging (reproduce a failure), testing (assert on recorded sessions), and demonstration (show how a game was played).
+
+### Agent Control
+
+A tool should be able to start a game from a known state, inject actions step by step, inspect the resulting state, and reset for another attempt. The exact protocol can evolve, but the capability should remain clear:
+
+- **Reset** - return the game to its initial state, reusing the same structures.
+- **Inject** - place actions into the queue with an agent source tag.
+- **Observe** - read structured state after each step or at any point.
+- **Batch** - drain and apply all pending actions, receiving a report for each.
+
+This enables agents, bots, and external tools to drive games through the same path as human players, without requiring Rust-level access to the engine internals.
 
 ---
 

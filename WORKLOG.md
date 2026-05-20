@@ -1287,3 +1287,72 @@ Documentation (`README.md`, `prototype/ash-courier/README.md`, `prototype/ash-co
 
 **Follow-ups.** Consider mouse scroll speed/acceleration settings if scroll-wheel control becomes a core interaction. Batch processing could be extended with priorities (e.g., urgent translator runs before fallback). StepToCursor cursor visualization (highlighting path in TTY) could improve UX but is not required for engine validation. Tests for scroll persistence in bindings state might be useful if replay traces need to capture scroll history. The script smoke test should remain part of CI to ensure new features do not break the canonical winning path.
 
+
+## 2026-05-21 - Restructure Agent-Ready section in GOAL.md
+
+**Goal.** Improve the TUI tester / harness definition in GOAL.md. The previous
+"Agent-Ready by Default" section (lines 70-77) was vague — it mentioned
+observability and controllability but did not define what runners exist, what
+observability means concretely, or how replay and agent control relate to the
+shared input path.
+
+**Changes.**
+- `GOAL.md:70-119` - Replaced the flat "Agent-Ready by Default" paragraph with
+  a structured section containing five subsections:
+  - **Intro** - restates the shared control path with all three sources
+    (terminal, script, agent) and the no-privileged-path principle.
+  - **Runners** - defines the two runners every game should ship: interactive
+    TUI (player-facing, incremental cell diffs) and script/CI runner
+    (non-interactive, plain-text, pass/fail exit, CI-friendly).
+  - **Observability** - defines step reports, snapshots, and action provenance
+    as concrete contracts, not aspirations.
+  - **Replay** - defines session recording/replay via action traces,
+    serializable and deterministic given same seed.
+  - **Agent Control** - defines the four agent capabilities (reset, inject,
+    observe, batch) as concrete operations.
+
+**Reasoning.** The old section was a single paragraph that mixed philosophy with
+implied capabilities. The new structure makes each concern independently
+readable and gives future agents (human or AI) a clear checklist of what the
+harness should provide. The subsections match what the codebase already
+delivers (InputRouter, ActionSource, StepReport, Snapshot, ActionTrace,
+Game::reset) so the doc now describes the actual architecture rather than
+hand-waving at it.
+
+**Assumptions.** The two-runner model (interactive TUI + script/CI) is the
+intended long-term shape. The agent protocol layer (non-Rust agents driving
+games via IPC/stdin) is intentionally left open — the doc says "the exact
+protocol can evolve" — because the current codebase only supports Rust-level
+agent control.
+
+**Gotchas.** The Input and Control section (lines 51-67) already has a
+two-line shared-path diagram. The new Agent-Ready section repeats the pattern
+with the agent line added. This intentional duplication keeps each section
+self-contained rather than forcing cross-references.
+
+**Follow-ups.** If the engine ever adds a structured agent protocol (JSON over
+stdin, socket, etc.), the Agent Control subsection should be updated to match.
+The Observability subsection could eventually reference a formal Snapshot
+schema if serialization (JSON/CBOR) is added.
+
+## 2026-05-21 - Add CLI simplicity principle to GOAL.md runners section
+
+**Goal.** Emphasize that the runner CLI must stay simple — complex logic belongs
+in the engine, not in the command that starts it.
+
+**Changes.**
+- `GOAL.md:94-95` - Added a paragraph after the runners description stating
+  that the command-line interface should accept straightforward arguments
+  (script string, seed, layout flag) and that the engine handles all parsing,
+  execution, state management, and output formatting internally.
+
+**Reasoning.** The previous runners section described what the runners do but
+not how they should feel to invoke. This principle makes explicit that the
+engine absorbs complexity so that the CLI surface stays thin — consistent with
+the project's "engine supports the game, does not swallow it" philosophy.
+
+**Assumptions.** This applies to both the script/CI runner and any future agent
+runner. The interactive TUI is excluded since it has no meaningful CLI arguments
+beyond perhaps a seed or layout.
+
+**Follow-ups.** None.
