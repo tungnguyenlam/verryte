@@ -532,7 +532,11 @@ mod tests {
         let items: Vec<&str> = vec!["alpha", "beta", "gamma"];
         let picked: Option<&&str> = rng.pick_range(items.iter());
         assert!(picked.is_some());
-        assert!(*picked.unwrap() == "alpha" || *picked.unwrap() == "beta" || *picked.unwrap() == "gamma");
+        assert!(
+            *picked.unwrap() == "alpha"
+                || *picked.unwrap() == "beta"
+                || *picked.unwrap() == "gamma"
+        );
     }
 
     #[test]

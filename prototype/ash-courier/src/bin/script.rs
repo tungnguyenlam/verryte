@@ -15,6 +15,7 @@
 //! * `p` — step one tile toward nearest package
 //! * `o` — step one tile toward nearest goal
 //! * `v` — step one tile toward the safest neighbor away from hazards
+//! * `t` / `step_cursor` — step one tile toward the inspection cursor
 //! * `,` — pick up
 //! * `!` — drop carried package
 //! * `q` — quit

@@ -90,6 +90,15 @@ pub enum MouseButton {
     Middle,
 }
 
+/// Mouse wheel scroll direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 /// A coarse mouse binding key.
 ///
 /// The trigger intentionally ignores the terminal cell position. Games that
@@ -117,6 +126,12 @@ pub enum InputEvent {
         y: u16,
         button: MouseButton,
         pressed: bool,
+    },
+    /// A mouse scroll event at a terminal cell position.
+    MouseScroll {
+        x: u16,
+        y: u16,
+        direction: ScrollDirection,
     },
     /// A fixed-cadence pulse useful for real-time games; ignored by default.
     Tick,
@@ -259,6 +274,7 @@ impl<A> Default for ActionTrace<A> {
 pub struct Bindings<A: Clone> {
     by_key: HashMap<Key, A>,
     by_mouse: HashMap<MouseTrigger, A>,
+    by_scroll: HashMap<ScrollDirection, A>,
 }
 
 impl<A: Clone> Bindings<A> {
@@ -266,6 +282,7 @@ impl<A: Clone> Bindings<A> {
         Self {
             by_key: HashMap::new(),
             by_mouse: HashMap::new(),
+            by_scroll: HashMap::new(),
         }
     }
 
@@ -293,6 +310,15 @@ impl<A: Clone> Bindings<A> {
         self.by_mouse.remove(&MouseTrigger::new(button, pressed))
     }
 
+    /// Bind a scroll direction to an action.
+    pub fn bind_scroll(&mut self, direction: ScrollDirection, action: A) -> Option<A> {
+        self.by_scroll.insert(direction, action)
+    }
+
+    pub fn unbind_scroll(&mut self, direction: ScrollDirection) -> Option<A> {
+        self.by_scroll.remove(&direction)
+    }
+
     pub fn translate(&self, key: Key) -> Option<A> {
         self.by_key.get(&key).cloned()
     }
@@ -303,22 +329,27 @@ impl<A: Clone> Bindings<A> {
             .cloned()
     }
 
+    pub fn translate_scroll(&self, direction: ScrollDirection) -> Option<A> {
+        self.by_scroll.get(&direction).cloned()
+    }
+
     pub fn translate_event(&self, event: InputEvent) -> Option<A> {
         match event {
             InputEvent::Key(key) => self.translate(key),
             InputEvent::Mouse {
                 button, pressed, ..
             } => self.translate_mouse(button, pressed),
+            InputEvent::MouseScroll { direction, .. } => self.translate_scroll(direction),
             InputEvent::Tick | InputEvent::Resize { .. } => None,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.by_key.len() + self.by_mouse.len()
+        self.by_key.len() + self.by_mouse.len() + self.by_scroll.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.by_key.is_empty() && self.by_mouse.is_empty()
+        self.by_key.is_empty() && self.by_mouse.is_empty() && self.by_scroll.is_empty()
     }
 
     /// Iterate over all key bindings as `(Key, &A)` pairs.
@@ -334,8 +365,13 @@ impl<A: Clone> Bindings<A> {
             .map(|(t, a)| ((t.button, t.pressed), a))
     }
 
+    /// Iterate over all scroll bindings as `(ScrollDirection, &A)` pairs.
+    pub fn iter_scroll(&self) -> impl Iterator<Item = (ScrollDirection, &A)> {
+        self.by_scroll.iter().map(|(&dir, a)| (dir, a))
+    }
+
     /// Merge `other` bindings into `self`. Bindings in `other` overwrite
-    /// existing bindings in `self` for the same key or mouse trigger.
+    /// existing bindings in `self` for the same key, mouse trigger, or scroll.
     ///
     /// Useful for layering input contexts: start with base game bindings,
     /// then merge context-specific bindings (menus, dialogs, etc.) on top.
@@ -345,6 +381,9 @@ impl<A: Clone> Bindings<A> {
         }
         for (trigger, action) in other.by_mouse {
             self.by_mouse.insert(trigger, action);
+        }
+        for (direction, action) in other.by_scroll {
+            self.by_scroll.insert(direction, action);
         }
     }
 }
@@ -739,21 +778,58 @@ impl<A: Clone> InputRouter<A> {
 
     /// Translate many input events at once. Returns the count of events that
     /// produced a queued action.
-    pub fn handle_batch<'a, I>(&mut self, events: I) -> usize
+    pub fn handle_batch<I>(&mut self, events: I) -> usize
     where
         I: IntoIterator<Item = InputEvent>,
     {
         self.handle_batch_from(events, ActionSource::Terminal)
     }
 
+    /// Translate many input events at once using a custom translator, falling
+    /// back to the current bindings for events the translator ignores.
+    pub fn handle_batch_with<I, F>(&mut self, events: I, translate: F) -> usize
+    where
+        I: IntoIterator<Item = InputEvent>,
+        F: FnMut(InputEvent) -> Option<A>,
+    {
+        self.handle_batch_with_from(events, ActionSource::Terminal, translate)
+    }
+
     /// Translate many input events at once with explicit provenance.
-    pub fn handle_batch_from<'a, I>(&mut self, events: I, source: ActionSource) -> usize
+    pub fn handle_batch_from<I>(&mut self, events: I, source: ActionSource) -> usize
     where
         I: IntoIterator<Item = InputEvent>,
     {
         let mut count = 0;
         for event in events {
             if self.handle_from(event, source) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Translate many input events at once with a custom translator and
+    /// explicit provenance.
+    pub fn handle_batch_with_from<I, F>(
+        &mut self,
+        events: I,
+        source: ActionSource,
+        mut translate: F,
+    ) -> usize
+    where
+        I: IntoIterator<Item = InputEvent>,
+        F: FnMut(InputEvent) -> Option<A>,
+    {
+        let mut count = 0;
+        for event in events {
+            if let Some(action) = translate(event) {
+                self.pending.push_back(QueuedAction::new(action, source));
+                self.total_queued += 1;
+                count += 1;
+            } else if let Some(action) = self.bindings.translate_event(event) {
+                self.pending.push_back(QueuedAction::new(action, source));
+                self.total_queued += 1;
                 count += 1;
             }
         }
@@ -1025,7 +1101,7 @@ impl TextInput {
                     return false;
                 }
                 let byte_pos = self.char_to_byte(self.cursor);
-                self.text.insert_str(byte_pos, &ch.to_string());
+                self.text.insert(byte_pos, ch);
                 self.cursor += 1;
                 self.dirty = true;
                 false
@@ -1035,11 +1111,9 @@ impl TextInput {
             } => {
                 let ch = char.to_ascii_lowercase();
                 match ch {
-                    'a' => {
-                        if self.cursor != 0 {
-                            self.cursor = 0;
-                            self.dirty = true;
-                        }
+                    'a' if self.cursor != 0 => {
+                        self.cursor = 0;
+                        self.dirty = true;
                     }
                     'e' => {
                         let len = self.text.chars().count();
@@ -1048,17 +1122,13 @@ impl TextInput {
                             self.dirty = true;
                         }
                     }
-                    'b' => {
-                        if self.cursor > 0 {
-                            self.cursor -= 1;
-                            self.dirty = true;
-                        }
+                    'b' if self.cursor > 0 => {
+                        self.cursor -= 1;
+                        self.dirty = true;
                     }
-                    'f' => {
-                        if self.cursor < self.text.chars().count() {
-                            self.cursor += 1;
-                            self.dirty = true;
-                        }
+                    'f' if self.cursor < self.text.chars().count() => {
+                        self.cursor += 1;
+                        self.dirty = true;
                     }
                     'u' => self.delete_to_start(),
                     'k' => self.delete_to_end(),
@@ -1402,6 +1472,11 @@ mod tests {
             width: 80,
             height: 24
         }));
+        assert!(!router.handle(InputEvent::MouseScroll {
+            x: 1,
+            y: 1,
+            direction: ScrollDirection::Up,
+        }));
         assert!(router.is_idle());
     }
 
@@ -1440,6 +1515,24 @@ mod tests {
         assert_eq!(
             router.next_queued(),
             Some(QueuedAction::new(Move::Wait, ActionSource::Terminal))
+        );
+    }
+
+    #[test]
+    fn scroll_bindings_enter_the_same_action_queue() {
+        let mut router = bound_router();
+        router
+            .bindings_mut()
+            .bind_scroll(ScrollDirection::Down, Move::Scan(1));
+
+        assert!(router.handle(InputEvent::MouseScroll {
+            x: 2,
+            y: 3,
+            direction: ScrollDirection::Down,
+        }));
+        assert_eq!(
+            router.next_queued(),
+            Some(QueuedAction::new(Move::Scan(1), ActionSource::Terminal))
         );
     }
 
@@ -1787,6 +1880,39 @@ mod tests {
         let queued: Vec<QueuedAction<Move>> = router.drain_queued().collect();
         assert_eq!(queued.len(), 2);
         assert!(queued.iter().all(|q| q.source == ActionSource::Agent));
+    }
+
+    #[test]
+    fn handle_batch_with_prefers_custom_translation() {
+        let mut router = bound_router();
+        let count = router.handle_batch_with(
+            [InputEvent::Key(Key::Up), InputEvent::Key(Key::Right)],
+            |event| match event {
+                InputEvent::Key(Key::Up) => Some(Move::Scan(2)),
+                _ => None,
+            },
+        );
+        assert_eq!(count, 2);
+        assert_eq!(
+            router.drain_queued().collect::<Vec<_>>(),
+            vec![
+                QueuedAction::new(Move::Scan(2), ActionSource::Terminal),
+                QueuedAction::new(Move::East, ActionSource::Terminal),
+            ]
+        );
+    }
+
+    #[test]
+    fn handle_batch_with_from_preserves_source() {
+        let mut router = bound_router();
+        let count = router.handle_batch_with_from(
+            [InputEvent::Key(Key::Up), InputEvent::Key(Key::Down)],
+            ActionSource::Replay,
+            |_| None,
+        );
+        assert_eq!(count, 2);
+        let queued: Vec<QueuedAction<Move>> = router.drain_queued().collect();
+        assert!(queued.iter().all(|q| q.source == ActionSource::Replay));
     }
 
     #[test]

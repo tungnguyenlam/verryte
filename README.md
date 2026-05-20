@@ -24,21 +24,23 @@ those pieces as the first proving game.
   `Schedule::remove_by_name`, and `Schedule::run_system_by_name` for runtime
   schedule management and selective execution, `Schedule::add_conditional` for
   systems gated by a `RunCondition` predicate, `Schedule::add_stage` /
-  `Schedule::run_stage` for named execution phases, `Events::peek` /
+  `Schedule::run_stage` / `Schedule::run_stage_with_hook` for named execution
+  phases with optional per-system observability hooks, `Events::peek` /
   `Events::last` for non-consuming event inspection, bounded
   `MessageLog::with_max`, a `Tag` marker component for entity grouping and
   filtering, `Rng` (seeded xorshift64 RNG) for reproducible randomness in
   tests, replays, and procedural generation (including `weighted_pick` for
   weighted random selection), and `GameClock` for tracking elapsed ticks,
   pause state, and real-time duration.
-- `crates/verryte-input` - terminal-neutral input events, key/mouse bindings,
-  script command bindings, sourced queued actions, replayable `ActionTrace`s,
-  router-level script injection, pending queue snapshots and drain traces, the
-  shared action queue, input context switching via `set_bindings` and
-  `bindings_guard`, a context stack via `InputRouter::push_bindings` /
-  `pop_bindings` for nested modal input, batch event processing
-  (`handle_batch`), custom event translation (`handle_with`) for
-  position-aware inputs, `Bindings::merge` for layering keymaps,
+- `crates/verryte-input` - terminal-neutral input events, key/mouse/scroll
+  bindings, script command bindings, sourced queued actions, replayable
+  `ActionTrace`s, router-level script injection, pending queue snapshots and
+  drain traces, the shared action queue, input context switching via
+  `set_bindings` and `bindings_guard`, a context stack via
+  `InputRouter::push_bindings` / `pop_bindings` for nested modal input, batch
+  event processing (`handle_batch`, `handle_batch_with`), custom event
+  translation (`handle_with`) for position-aware inputs,
+  `Bindings::merge` for layering keymaps,
   `CommandBindings::merge` for layering command sets,
   `Bindings::iter_keys` / `iter_mouse` and `CommandBindings::iter_names` /
   `iter_glyphs` for binding inspection,
@@ -48,7 +50,8 @@ those pieces as the first proving game.
   editing (A/E/B/F/U/W/K), and
   `ActionSource` with `Display`/`FromStr` for serialization and debugging.
 - `crates/verryte-map` - reusable grid/spatial primitives: `Point`,
-  `Direction`, `Direction8`, `Size`, typed `TileGrid<T>`, cardinal and
+  `Direction`, `Direction8` (both with `from_offset` for converting deltas
+  to directions), `Size`, typed `TileGrid<T>`, cardinal and
   8-directional neighbors, line tracing (both `Vec`-returning `line_between`
   and lazy `LineIter`), visibility queries, line-of-sight checks
   (`is_line_of_sight_clear`), recursive shadowcasting field-of-view
@@ -58,8 +61,9 @@ those pieces as the first proving game.
   hazard-distance safety scoring (`safer_neighbors4`), random-walk dungeon
   generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
   (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching`,
-  `TileGrid::find_matching`, `TileGrid::points_matching`, and
-  `TileGrid::density` for map analysis, `TileGrid::bounds` and
+  `TileGrid::find_matching`, `TileGrid::points_in`,
+  `TileGrid::points_matching`, and `TileGrid::density` for map analysis,
+  `TileGrid::bounds` and
   `TileGrid::bounding_box_of` with `Bounds`/`Bounds::clamp_point` plus
   `Bounds::intersects` / `Bounds::intersection` for spatial framing, `SpatialHash<T>`
   for efficient proximity queries on grid-based
@@ -75,10 +79,10 @@ those pieces as the first proving game.
   output (`Grid::to_html_string`) for web/debug viewing, circle drawing and
   filling (`Grid::draw_circle`, `Grid::fill_circle`), diamond/rhombus shapes
   (`Grid::draw_diamond`, `Grid::fill_diamond`), Unicode box-drawing borders
-  (`draw_border_rounded`, `draw_rounded_panel`), horizontal/vertical lines
+  (`draw_border_rounded`, `draw_rounded_panel`, `draw_text_box`), horizontal/vertical lines
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
-  text wrapping utilities (`wrap_text`, `write_wrapped_text`), `Grid::transform`
-  and `Grid::map` for bulk cell modification, row/column helpers
+  text wrapping utilities (`wrap_text`, `write_wrapped_text`, `write_lines`),
+  `Grid::transform` and `Grid::map` for bulk cell modification, row/column helpers
   (`Grid::row_mut`, `Grid::fill_row`, `Grid::fill_col`), `Rect::inset` for
   padded layouts, `Grid::resize` for dynamic grid sizing on terminal resize,
   `Grid::scroll_up` and
@@ -95,7 +99,8 @@ those pieces as the first proving game.
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
   input polling with full modifier key passthrough (Ctrl, Alt, Shift produce
   `Key::Modified` events), Grid rendering with ANSI colors, incremental
-  diff-based rendering (`render_diff`) for efficient frame updates, and
+  diff-based rendering (`render_diff`) with automatic full-render fallback
+  on terminal resize, and
   `terminal_size()` for querying the current terminal dimensions.
 - `prototype/ash-courier` - a small turn-based roguelike prototype that proves
   the engine path through movement, pickup, hazards, win/loss state, rendering,
@@ -155,11 +160,11 @@ cargo run -p ash-courier --bin ash-courier-tty
 
 `verryte-input` command bindings accept both command words and compact glyphs:
 `north`, `south`, `east`, `west`, `wait`, `scan`, `step_package`, `step_goal`,
-`step_safety`, `pickup`, `drop`, `clear_cursor`, `quit`, plus `n`, `s`, `e`, `w`,
-`.`, `x`, `p`, `o`, `v`, `,`, `!`, `c`, and `q`. Scripts can mix whitespace with
-`;` separators and `#` line comments. Ash Courier's script runner also accepts
-parameterized scan tokens (`scan:3`, `scan3`, `x3`) and inspect tokens
-(`inspect:3,4`, `look:3,4`) through `inject_script_with`.
+`step_safety`, `step_cursor`, `pickup`, `drop`, `clear_cursor`, `quit`, plus `n`,
+`s`, `e`, `w`, `.`, `x`, `p`, `o`, `v`, `t`, `,`, `!`, `c`, and `q`. Scripts can
+mix whitespace with `;` separators and `#` line comments. Ash Courier's script
+runner also accepts parameterized scan tokens (`scan:3`, `scan3`, `x3`) and
+inspect tokens (`inspect:3,4`, `look:3,4`) through `inject_script_with`.
 The script runner prints the rendered frame, local viewport, state summary,
 source, action result, event count, visible/reachable tile counts, path lengths,
 shortest distances to package/goal/hazards/chasers, and safer-neighbor counts

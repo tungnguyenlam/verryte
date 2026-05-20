@@ -1217,3 +1217,73 @@ TTY frontend to detect idle states for animation or timeout logic.
 **Gotchas.** `Grid::blit` takes `i32` coordinates, so the new inset-based rect values had to be converted from `u16`. The cursor highlight is invisible in `to_plain_string` output, so tests assert against the underlying cell background instead.
 
 **Follow-ups.** Consider a mouse gesture to clear the cursor and a small overlay glyph option for terminals that do not render background colors reliably.
+
+## 2026-05-21 - autonomous engine run: clippy cleanup, resize-safe diff rendering, stage hooks, direction helpers, text boxes
+
+**Goal.** Continue autonomous Verryte development with improvements to code quality, rendering robustness, schedule observability, spatial ergonomics, and terminal UI convenience — all preserving the shared terminal/script/control path.
+
+**Changes.**
+- `crates/verryte-input/src/lib.rs` - removed unused lifetime parameters from `handle_batch` and `handle_batch_from`; replaced `insert_str` single-char usage with `insert`; converted collapsible `if` blocks inside match arms to match guards for `Ctrl+A/B/F` shortcuts in `TextInput::handle_key`.
+- `crates/verryte-map/src/lib.rs:108` - removed unnecessary `as i16` casts in `LineIter::new` (dx/dy are already `i16`); merged identical `if` blocks in cellular automata smoothing; replaced `rng() % 2 == 0` with `rng().is_multiple_of(2)` for both BSP and corridor generation.
+- `crates/verryte-map/src/lib.rs:155` - added `Direction::from_offset(dx, dy)` for converting unit deltas back to cardinal directions; added `Direction8::from_offset(dx, dy)` for 8-directional conversion. Tests at `:2317` covering roundtrips and invalid-input rejection.
+- `crates/verryte-terminal/src/lib.rs:801` - replaced manual `(n + 1) / 2` with `.div_ceil(2)`; collapsed nested `if` in `draw_line`; removed unnecessary `y as i32` cast in `draw_circle`.
+- `crates/verryte-terminal/src/lib.rs:812` - added `Grid::draw_text_box()` combining `draw_rounded_panel` with word-wrapped text content. Clips to inner border area. Tests at `:2264` covering wrapped rendering, empty text, and clip behavior.
+- `crates/verryte-terminal/src/lib.rs:608` - added `#[allow(clippy::too_many_arguments)]` to `write_aligned` (8 args inherent to the alignment API).
+- `crates/verryte-map/src/lib.rs:1860` - added `#[allow(clippy::too_many_arguments)]` to `cast_light` (12 args inherent to recursive shadowcasting).
+- `crates/verryte-core/src/schedule.rs:250` - added `Schedule::run_stage_with_hook()` for per-stage execution with a system-name callback, complementing `run_stage` and `run_with_hook`. Tests at `:658` covering hook invocation, conditional system skipping, and unknown-stage returns.
+- `crates/verryte-tty/src/lib.rs:92` - updated `render_diff` to detect grid dimension mismatches (terminal resize) and fall back to full `render()`, preventing stale cell artifacts at edges after resize.
+- `README.md` - documented new `run_stage_with_hook`, `Direction::from_offset`, `Direction8::from_offset`, `Grid::draw_text_box`, and resize-safe `render_diff`.
+
+**Reasoning.** The clippy cleanup was the most impactful batch: the workspace had accumulated 17 warnings across four crates, masking real issues behind noise. The `render_diff` resize fallback addresses a real bug where terminal shrinking left stale content at edges because `diff` produces `None`-after changes for cells beyond the new grid's bounds, and the old code skipped those. `run_stage_with_hook` fills the observability gap where `run_with_hook` worked for the full schedule but not for individual stages. `Direction::from_offset` completes the delta↔direction roundtrip that movement systems need. `draw_text_box` combines three existing primitives (border + title + wrapped text) into the most common terminal UI pattern.
+
+**Assumptions.** The `render_diff` resize fallback uses a dimension comparison rather than attempting to clear stale cells individually, which is simpler and correct. `from_offset` returns `None` for zero offsets and out-of-range components, which matches the "unit delta only" contract. `draw_text_box` clips text to the inner rectangle (inside borders), matching the most common panel behavior.
+
+**Gotchas.** The collapsible_if fix for TextInput's Ctrl+A/B/F used match guards, which is correct because unmatched arms fall through to `_ => {}` (same behavior as the original no-op if). The `draw_text_box` test for empty text initially expected 0 lines but `wrap_text("")` returns one empty line — fixed the expectation.
+
+**Follow-ups.** Mouse scroll support (ScrollUp/ScrollDown) would be a natural next input-model improvement for log panel scrolling. `Schedule::run_stage_with_hook` could be integrated into Ash Courier's TTY for per-stage profiling display. The `draw_text_box` could gain alignment options (centered/right-aligned text within the box).
+
+## 2025-01-14 - Autonomous engine run: scroll input, batch routing, map utilities, cursor navigation
+
+**Goal.** Extend Verryte engine with missing input, routing, and navigation features to improve Ash Courier gameplay and testability. Batch work across input handling, map utilities, terminal rendering, and game mechanics in two tranches, verify against test suite and script smoke tests, update documentation.
+
+**Changes.**
+
+Input system (`crates/verryte-input/src/lib.rs`):
+- Added `ScrollDirection` enum with variants Up, Down, Left, Right.
+- Added `InputEvent::MouseScroll { x, y, direction }` variant to support scroll-wheel events.
+- Extended `Bindings<A>` with scroll support: `by_scroll` HashMap, `bind_scroll`, `unbind_scroll`, `translate_scroll` methods.
+- Added `InputRouter::handle_batch_with` and `handle_batch_with_from` to support custom batch translators with fallback to bindings.
+- Added tests: scroll bindings queue correctly, handle_batch_with prefers custom translation, handle_batch_with_from respects action sources.
+
+TTY translation (`crates/verryte-tty/src/lib.rs`):
+- Updated `translate_event` to map crossterm scroll events (ScrollUp, ScrollDown, ScrollLeft, ScrollRight) to `InputEvent::MouseScroll`.
+
+Map utilities (`crates/verryte-map/src/lib.rs`):
+- Added `TileGrid::points_in(bounds)` iterator to enumerate points within a Bounds region, clipped to grid dimensions.
+- Added tests: points_in clips correctly to grid, returns empty when bounds are entirely out-of-bounds.
+
+Terminal rendering (`crates/verryte-terminal/src/lib.rs`):
+- Added `Grid::write_lines()` helper to write multiple lines starting at a given position, clipping to grid height and returning count of lines written.
+- Added tests: write_lines clips to bottom edge, returns 0 when starting below grid.
+- Refactored Ash Courier TTY log rendering in `prototype/ash-courier/src/bin/tty.rs` to use write_lines instead of manual loop.
+
+Game mechanics (`prototype/ash-courier/src/action.rs`, `prototype/ash-courier/src/game.rs`):
+- Added `Action::StepToCursor` enum variant.
+- Bound to keys 't' and 'T' in default_bindings and glyph map.
+- Added command name "step_cursor" and glyphs 't', 'T' to default_commands.
+- Implemented StepToCursor logic in game.rs: filters cursor to in-bounds, finds path via pathfinding, moves one step or returns NoOp.
+- Added tests: step_to_cursor moves toward cursor when set, step_to_cursor is noop without cursor or unreachable cursor.
+
+Documentation (`README.md`, `prototype/ash-courier/README.md`, `prototype/ash-courier/src/bin/script.rs`):
+- Updated root README to document scroll input support, batch_with routing, points_in iterator, write_lines helper.
+- Updated Ash Courier README to list StepToCursor action and keybindings.
+- Updated script runner documentation to mention StepToCursor.
+
+**Reasoning.** The work follows Verryte's core promise: a unified action path where terminal events, scripts, tests, and agents all converge on the same binding/translation system. Adding scroll input required: (1) new event type in InputEvent enum, (2) scroll bindings in Bindings struct, (3) TTY translation layer mapping crossterm scroll events, (4) tests ensuring scroll events flow through same queue as other inputs. Batch processing (`handle_batch_with`) allows custom translators (closures) to intercept events before falling back to bindings, preserving the unified action path while enabling position-aware or context-specific handling. Map and rendering utilities (points_in, write_lines) extract reusable primitives from game-specific needs. StepToCursor demonstrates how Ash Courier can validate new engine features through a small turn-based mechanic instead of inventing abstract engine features in isolation. All changes preserve the smallest useful vertical slice: engine features are tested, Ash Courier uses them, and scripts/TTY/tests all exercise the same paths.
+
+**Assumptions.** The scroll event model assumes each scroll wheel tick produces a discrete InputEvent::MouseScroll; no scroll-by-pixels variant was needed. Batch processing assumes translators return Option<A>, preserving fallback to bindings. StepToCursor uses the same pathfinding infrastructure as StepToGoal/StepToSafety, assuming single-element target slice is a reasonable pattern. Script smoke test ("eeesss,nnneeeesssssss") still wins without involving StepToCursor, validating that new actions do not break existing winning path.
+
+**Gotchas.** Rustfmt line-length preferences required careful handling of multi-line method chains. The Bounds type uses u16 coordinates while Point uses i16—conversion at grid boundaries is handled by clipping logic in points_in. The scroll direction model is keyboard-agnostic: crossterm events map to engine directions, but script or agent input might use different naming; bind_scroll accepts scroll events by direction for consistency. Grid::write_lines saturates at grid bottom to avoid underflow; empty iterators return 0 lines written, matching the expectation that a noop write_lines returns early.
+
+**Follow-ups.** Consider mouse scroll speed/acceleration settings if scroll-wheel control becomes a core interaction. Batch processing could be extended with priorities (e.g., urgent translator runs before fallback). StepToCursor cursor visualization (highlighting path in TTY) could improve UX but is not required for engine validation. Tests for scroll persistence in bindings state might be useful if replay traces need to capture scroll history. The script smoke test should remain part of CI to ensure new features do not break the canonical winning path.
+

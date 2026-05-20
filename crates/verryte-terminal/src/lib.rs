@@ -600,11 +600,36 @@ impl Grid {
         }
     }
 
+    /// Write multiple lines starting at `(x, y)`, clipping to the grid height.
+    ///
+    /// Returns the number of lines written.
+    pub fn write_lines<I, S>(&mut self, x: u16, y: u16, lines: I, fg: Color, bg: Color) -> usize
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        if y >= self.height {
+            return 0;
+        }
+        let mut written = 0;
+        let mut row = y;
+        for line in lines {
+            if row >= self.height {
+                break;
+            }
+            self.write_str(x, row, line.as_ref(), fg, bg);
+            written += 1;
+            row = row.saturating_add(1);
+        }
+        written
+    }
+
     /// Write text aligned within a horizontal range `[x, x + width)`.
     ///
     /// `Alignment::Left` starts at `x`, `Alignment::Center` centers the text,
     /// and `Alignment::Right` right-aligns to `x + width - 1`. Text is clipped
     /// if it exceeds the width.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_aligned(
         &mut self,
         x: u16,
@@ -798,12 +823,44 @@ impl Grid {
             let title_len = title.len() as u16;
             let available = rect.width.saturating_sub(2);
             let title_width = title_len.min(available);
-            let offset = (available.saturating_sub(title_width) + 1) / 2;
+            let offset = available.saturating_sub(title_width).div_ceil(2);
             let x = rect.x + offset;
             if x + title_width <= rect.right() && rect.y < self.height {
                 self.write_str(x, rect.y, title, title_fg, bg);
             }
         }
+    }
+
+    /// Draw a rounded panel with wrapped text content.
+    ///
+    /// Combines [`Self::draw_rounded_panel`] with [`write_wrapped_text`] to
+    /// produce a bordered text box. The text is word-wrapped within the panel's
+    /// inner area (inside the border). Returns the number of lines written.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_box(
+        &mut self,
+        rect: Rect,
+        title: &str,
+        text: &str,
+        border_fg: Color,
+        title_fg: Color,
+        text_fg: Color,
+        bg: Color,
+    ) -> u16 {
+        self.draw_rounded_panel(rect, title, border_fg, title_fg, bg);
+        let inner = rect.inset(1, 1);
+        if inner.is_empty() {
+            return 0;
+        }
+        let lines = wrap_text(text, inner.width as usize);
+        let max_lines = inner.height as usize;
+        for (i, line) in lines.iter().enumerate() {
+            if i >= max_lines {
+                break;
+            }
+            self.write_str(inner.x, inner.y + i as u16, line, text_fg, bg);
+        }
+        lines.len().min(max_lines) as u16
     }
 
     /// Draw a clipped straight line using integer cell coordinates.
@@ -820,10 +877,8 @@ impl Grid {
         let mut count = 0u16;
 
         loop {
-            if x0 >= 0 && y0 >= 0 {
-                if self.put(x0 as u16, y0 as u16, cell) {
-                    count += 1;
-                }
+            if x0 >= 0 && y0 >= 0 && self.put(x0 as u16, y0 as u16, cell) {
+                count += 1;
             }
             if x0 == x1 && y0 == y1 {
                 break;
@@ -1003,7 +1058,7 @@ impl Grid {
         }
         let mut x = 0i32;
         let mut y = radius as i32;
-        let mut d = 1 - y as i32;
+        let mut d = 1 - radius as i32;
 
         let plot = |grid: &mut Grid, px: i32, py: i32| {
             if px >= 0 && py >= 0 {
@@ -1841,6 +1896,22 @@ mod tests {
     }
 
     #[test]
+    fn write_lines_clips_to_bottom_edge() {
+        let mut grid = Grid::new(4, 2);
+        let written = grid.write_lines(0, 0, ["one", "two", "three"], Color::WHITE, Color::BLACK);
+        assert_eq!(written, 2);
+        assert_eq!(grid.to_plain_string(), "one \ntwo ");
+    }
+
+    #[test]
+    fn write_lines_returns_zero_when_starting_below_grid() {
+        let mut grid = Grid::new(4, 2);
+        let written = grid.write_lines(0, 5, ["nope"], Color::WHITE, Color::BLACK);
+        assert_eq!(written, 0);
+        assert_eq!(grid.to_plain_string(), "    \n    ");
+    }
+
+    #[test]
     fn fill_rect_is_clipped_to_grid() {
         let mut grid = Grid::new(4, 3);
         grid.fill_rect(Rect::new(2, 1, 5, 5), Cell::new('x'));
@@ -2218,6 +2289,62 @@ mod tests {
         // Should not panic and should have some border chars (bottom corners survive).
         let s = grid.to_plain_string();
         assert!(s.contains(Grid::BORDER_BL) || s.contains(Grid::BORDER_BR));
+    }
+
+    #[test]
+    fn draw_text_box_renders_wrapped_content() {
+        let mut grid = Grid::new(20, 8);
+        grid.draw_text_box(
+            Rect::new(0, 0, 20, 8),
+            "TITLE",
+            "Hello world this is a test of text wrapping inside a box.",
+            Color::WHITE,
+            Color::YELLOW,
+            Color::WHITE,
+            Color::BLACK,
+        );
+        let s = grid.to_plain_string();
+        let lines: Vec<&str> = s.lines().collect();
+        // Should have a border at top and bottom
+        assert!(lines[0].contains(Grid::BORDER_TL));
+        assert!(lines[7].contains(Grid::BORDER_BL));
+        // Text should be present somewhere inside
+        assert!(s.contains("Hello"));
+    }
+
+    #[test]
+    fn draw_text_box_handles_empty_text() {
+        let mut grid = Grid::new(10, 5);
+        let lines = grid.draw_text_box(
+            Rect::new(0, 0, 10, 5),
+            "OK",
+            "",
+            Color::WHITE,
+            Color::YELLOW,
+            Color::WHITE,
+            Color::BLACK,
+        );
+        // wrap_text("") produces one empty line
+        assert_eq!(lines, 1);
+        // Border should still be drawn
+        let s = grid.to_plain_string();
+        assert!(s.contains(Grid::BORDER_TL));
+    }
+
+    #[test]
+    fn draw_text_box_clips_to_rect() {
+        let mut grid = Grid::new(15, 4);
+        let lines = grid.draw_text_box(
+            Rect::new(0, 0, 15, 4),
+            "",
+            "This is a long text that should be clipped to the available space within the box.",
+            Color::WHITE,
+            Color::YELLOW,
+            Color::WHITE,
+            Color::BLACK,
+        );
+        // Inner height is 2 (4 - 2 for borders)
+        assert!(lines <= 2);
     }
 
     #[test]

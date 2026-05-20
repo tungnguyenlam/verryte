@@ -105,10 +105,10 @@ impl LineIter {
             x1: end.x,
             y1: end.y,
             dx,
-            dy: -(dy as i16),
+            dy: -dy,
             sx,
             sy,
-            err: (dx as i16) - (dy as i16),
+            err: dx - dy,
             done: false,
         }
     }
@@ -195,6 +195,19 @@ impl Direction {
             Direction::West => Direction::South,
             Direction::South => Direction::East,
             Direction::East => Direction::North,
+        }
+    }
+
+    /// Convert a unit offset `(dx, dy)` into a `Direction`.
+    ///
+    /// Returns `None` for non-unit or diagonal offsets.
+    pub fn from_offset(dx: i16, dy: i16) -> Option<Self> {
+        match (dx, dy) {
+            (0, -1) => Some(Direction::North),
+            (0, 1) => Some(Direction::South),
+            (1, 0) => Some(Direction::East),
+            (-1, 0) => Some(Direction::West),
+            _ => None,
         }
     }
 }
@@ -292,6 +305,24 @@ impl Direction8 {
             Direction::East => Direction8::East,
             Direction::South => Direction8::South,
             Direction::West => Direction8::West,
+        }
+    }
+
+    /// Convert an offset `(dx, dy)` into a `Direction8`.
+    ///
+    /// Each component should be -1, 0, or 1. Returns `None` for zero offsets
+    /// or offsets with components outside [-1, 1].
+    pub fn from_offset(dx: i16, dy: i16) -> Option<Self> {
+        match (dx, dy) {
+            (0, -1) => Some(Direction8::North),
+            (1, -1) => Some(Direction8::NorthEast),
+            (1, 0) => Some(Direction8::East),
+            (1, 1) => Some(Direction8::SouthEast),
+            (0, 1) => Some(Direction8::South),
+            (-1, 1) => Some(Direction8::SouthWest),
+            (-1, 0) => Some(Direction8::West),
+            (-1, -1) => Some(Direction8::NorthWest),
+            _ => None,
         }
     }
 }
@@ -598,6 +629,19 @@ impl<T> TileGrid<T> {
         let width = self.size.width as i16;
         let height = self.size.height as i16;
         (0..height).flat_map(move |y| (0..width).map(move |x| Point { x, y }))
+    }
+
+    /// Iterate over points within the provided bounds, clipped to the grid.
+    pub fn points_in(&self, bounds: Bounds) -> impl Iterator<Item = Point> {
+        let x0 = bounds.x.min(self.size.width);
+        let y0 = bounds.y.min(self.size.height);
+        let x1 = bounds.right().min(self.size.width);
+        let y1 = bounds.bottom().min(self.size.height);
+        let x0 = x0 as i16;
+        let y0 = y0 as i16;
+        let x1 = x1 as i16;
+        let y1 = y1 as i16;
+        (y0..y1).flat_map(move |y| (x0..x1).map(move |x| Point { x, y }))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Point, &T)> {
@@ -1395,7 +1439,7 @@ impl<T> TileGrid<T> {
             } else if r.h > r.w {
                 false
             } else {
-                rng() % 2 == 0
+                rng().is_multiple_of(2)
             };
 
             let max_span = if horizontal { r.h } else { r.w };
@@ -1532,7 +1576,7 @@ impl<T> TileGrid<T> {
 
         // Carve corridors as L-shaped passages.
         for (from, to) in corridors {
-            let mid = if rng() % 2 == 0 {
+            let mid = if rng().is_multiple_of(2) {
                 Point::new(to.x, from.y)
             } else {
                 Point::new(from.x, to.y)
@@ -1670,9 +1714,7 @@ impl<T> TileGrid<T> {
         for y in 0..h {
             for x in 0..w {
                 let is_border = x == 0 || y == 0 || x == w - 1 || y == h - 1;
-                let tile = if is_border {
-                    wall.clone()
-                } else if (rng() as f64 / u64::MAX as f64) < fill_chance {
+                let tile = if is_border || (rng() as f64 / u64::MAX as f64) < fill_chance {
                     wall.clone()
                 } else {
                     floor.clone()
@@ -1699,9 +1741,12 @@ impl<T> TileGrid<T> {
                             }
                             let nx = x as i16 + dx;
                             let ny = y as i16 + dy;
-                            if nx < 0 || ny < 0 || nx >= w as i16 || ny >= h as i16 {
-                                wall_count += 1;
-                            } else if self.get(Point::new(nx, ny)).is_none_or(|t| *t == wall) {
+                            if nx < 0
+                                || ny < 0
+                                || nx >= w as i16
+                                || ny >= h as i16
+                                || self.get(Point::new(nx, ny)).is_none_or(|t| *t == wall)
+                            {
                                 wall_count += 1;
                             }
                         }
@@ -1856,6 +1901,7 @@ impl<T> TileGrid<T> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cast_light<F, T>(
     grid: &TileGrid<T>,
     origin: Point,
@@ -2255,6 +2301,37 @@ mod tests {
     }
 
     #[test]
+    fn direction_from_offset_roundtrips() {
+        for d in Direction::ALL {
+            let (dx, dy) = d.delta();
+            assert_eq!(Direction::from_offset(dx, dy), Some(d));
+        }
+    }
+
+    #[test]
+    fn direction_from_offset_rejects_non_unit() {
+        assert_eq!(Direction::from_offset(0, 0), None);
+        assert_eq!(Direction::from_offset(2, 0), None);
+        assert_eq!(Direction::from_offset(1, 1), None);
+        assert_eq!(Direction::from_offset(-1, -1), None);
+    }
+
+    #[test]
+    fn direction8_from_offset_roundtrips() {
+        for d in Direction8::ALL {
+            let (dx, dy) = d.delta();
+            assert_eq!(Direction8::from_offset(dx, dy), Some(d));
+        }
+    }
+
+    #[test]
+    fn direction8_from_offset_rejects_invalid() {
+        assert_eq!(Direction8::from_offset(0, 0), None);
+        assert_eq!(Direction8::from_offset(2, 0), None);
+        assert_eq!(Direction8::from_offset(0, -2), None);
+    }
+
+    #[test]
     fn size_contains_rejects_negative_and_edge_points() {
         let size = Size::new(3, 2);
         assert!(size.contains(Point::new(2, 1)));
@@ -2293,6 +2370,28 @@ mod tests {
     fn tile_grid_bounds_matches_size() {
         let grid = TileGrid::new(3, 2, '.');
         assert_eq!(grid.bounds(), Bounds::new(0, 0, 3, 2));
+    }
+
+    #[test]
+    fn tile_grid_points_in_clips_to_bounds() {
+        let grid = TileGrid::new(3, 2, '.');
+        let points: Vec<Point> = grid.points_in(Bounds::new(1, 0, 4, 3)).collect();
+        assert_eq!(
+            points,
+            vec![
+                Point::new(1, 0),
+                Point::new(2, 0),
+                Point::new(1, 1),
+                Point::new(2, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn tile_grid_points_in_returns_empty_when_out_of_bounds() {
+        let grid = TileGrid::new(2, 2, '.');
+        let points: Vec<Point> = grid.points_in(Bounds::new(5, 5, 2, 2)).collect();
+        assert!(points.is_empty());
     }
 
     #[test]

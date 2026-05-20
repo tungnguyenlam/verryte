@@ -10,6 +10,7 @@ pub enum Action {
     StepToPackage,
     StepToGoal,
     StepToSafety,
+    StepToCursor,
     Wait,
     Scan,
     ScanRadius(u16),
@@ -67,6 +68,8 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('O'), Action::StepToGoal);
     b.bind(Key::Char('r'), Action::StepToSafety);
     b.bind(Key::Char('R'), Action::StepToSafety);
+    b.bind(Key::Char('t'), Action::StepToCursor);
+    b.bind(Key::Char('T'), Action::StepToCursor);
     b.bind(Key::Char('g'), Action::PickUp);
     b.bind(Key::Char(','), Action::PickUp);
     b.bind(Key::Char('D'), Action::Drop);
@@ -96,6 +99,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("step_package", Action::StepToPackage);
     c.bind_name("step_goal", Action::StepToGoal);
     c.bind_name("step_safety", Action::StepToSafety);
+    c.bind_name("step_cursor", Action::StepToCursor);
     c.bind_name("pickup", Action::PickUp);
     c.bind_name("drop", Action::Drop);
     c.bind_name("quit", Action::Quit);
@@ -115,6 +119,8 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('o', Action::StepToGoal);
     c.bind_glyph('v', Action::StepToSafety);
     c.bind_glyph('r', Action::StepToSafety);
+    c.bind_glyph('t', Action::StepToCursor);
+    c.bind_glyph('T', Action::StepToCursor);
     c.bind_glyph(',', Action::PickUp);
     c.bind_glyph('!', Action::Drop);
     c.bind_glyph('D', Action::Drop);

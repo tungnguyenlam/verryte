@@ -577,6 +577,24 @@ impl Game {
                         ActionResult::NoOp
                     }
                 }),
+            Action::StepToCursor => {
+                let cursor = self
+                    .state()
+                    .cursor
+                    .filter(|point| self.map().in_bounds(*point));
+                cursor
+                    .and_then(|point| {
+                        self.next_step_direction_toward_any(std::slice::from_ref(&point))
+                    })
+                    .map_or(ActionResult::NoOp, |direction| {
+                        if self.try_move(direction) {
+                            self.advance_turn();
+                            ActionResult::Advanced
+                        } else {
+                            ActionResult::NoOp
+                        }
+                    })
+            }
             Action::StepToSafety => {
                 self.safety_step_direction()
                     .map_or(ActionResult::NoOp, |direction| {

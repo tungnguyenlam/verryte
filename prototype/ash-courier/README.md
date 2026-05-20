@@ -19,10 +19,10 @@ input/script path. Highlights:
 - Agent-ready restart: `Game::reset`, `reset_from_layout`, `reset_from_cave`,
   `reset_from_bsp` for reusing the same Game instance across multiple runs.
 - An `Action` enum covering `MoveNorth/South/East/West`, `StepToPackage`,
-  `StepToGoal`, `StepToSafety`, `Wait`, `Scan`, `ScanRadius(u16)`,
-  `Inspect(Point)`, `ClearCursor`, `PickUp`, `Drop`, and `Quit`,
-  bound to arrow keys, WASD, vi keys, plus `.` / `x` / `p` / `o` / `r` / `,` /
-  `D` / `c` / `q` / `Esc`, plus `1`-`5` for fixed-radius scans.
+  `StepToGoal`, `StepToSafety`, `StepToCursor`, `Wait`, `Scan`,
+  `ScanRadius(u16)`, `Inspect(Point)`, `ClearCursor`, `PickUp`, `Drop`, and
+  `Quit`, bound to arrow keys, WASD, vi keys, plus `.` / `x` / `p` / `o` / `r` /
+  `t` / `,` / `D` / `c` / `q` / `Esc`, plus `1`-`5` for fixed-radius scans.
   Left mouse press sets an inspection cursor, right mouse press maps to `Scan`,
   and middle mouse press maps to `Wait` through the same router path.
 - A single `Game::apply(action)` spine. Terminal events, scripted injections,

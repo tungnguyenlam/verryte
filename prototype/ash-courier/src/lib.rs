@@ -116,6 +116,26 @@ mod tests {
     }
 
     #[test]
+    fn step_to_cursor_moves_toward_cursor() {
+        let layout = &["#####", "#@..#", "#...#", "#####"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        g.step(Action::Inspect(Position { x: 3, y: 1 }));
+
+        let report = g.step(Action::StepToCursor);
+        assert_eq!(report.result, ActionResult::Advanced);
+        assert_eq!(g.player_position(), Position { x: 2, y: 1 });
+        assert_eq!(g.state().turn, 1);
+    }
+
+    #[test]
+    fn step_to_cursor_is_noop_without_cursor() {
+        let mut g = fresh();
+        let report = g.step(Action::StepToCursor);
+        assert_eq!(report.result, ActionResult::NoOp);
+        assert_eq!(g.state().turn, 0);
+    }
+
+    #[test]
     fn scan_advances_turn_and_reports_visible_state() {
         let layout = &["#######", "#@..hG#", "#..#..#", "#######"];
         let mut g = Game::from_layout(layout, default_bindings()).unwrap();
@@ -553,7 +573,9 @@ mod tests {
 
     #[test]
     fn compact_glyph_scripts_use_engine_command_bindings() {
-        let parsed = default_commands().parse_glyphs("e . W p o v ! c").unwrap();
+        let parsed = default_commands()
+            .parse_glyphs("e . W p o v t ! c")
+            .unwrap();
         assert_eq!(
             parsed,
             vec![
@@ -563,6 +585,7 @@ mod tests {
                 Action::StepToPackage,
                 Action::StepToGoal,
                 Action::StepToSafety,
+                Action::StepToCursor,
                 Action::Drop,
                 Action::ClearCursor
             ]

@@ -54,12 +54,15 @@ impl NamedSystem {
 
 pub struct Schedule {
     systems: Vec<NamedSystem>,
+    /// Stage markers: (name, index_of_first_system_in_stage).
+    stage_markers: Vec<(&'static str, usize)>,
 }
 
 impl Schedule {
     pub fn new() -> Self {
         Self {
             systems: Vec::new(),
+            stage_markers: Vec::new(),
         }
     }
 
@@ -133,9 +136,10 @@ impl Schedule {
         }
     }
 
-    /// Remove all systems from the schedule.
+    /// Remove all systems and stage markers from the schedule.
     pub fn clear(&mut self) {
         self.systems.clear();
+        self.stage_markers.clear();
     }
 
     /// Remove the first system with the given name. Returns `true` if a system
@@ -165,7 +169,12 @@ impl Schedule {
     ///
     /// The replacement keeps the same position in the schedule, preserving
     /// execution order relative to other systems.
-    pub fn replace_by_name(&mut self, name: &str, new_name: &'static str, new_system: System) -> bool {
+    pub fn replace_by_name(
+        &mut self,
+        name: &str,
+        new_name: &'static str,
+        new_system: System,
+    ) -> bool {
         if let Some(pos) = self.systems.iter().position(|s| s.name == name) {
             self.systems[pos] = NamedSystem::new(new_name, new_system);
             true
@@ -194,6 +203,80 @@ impl Schedule {
             }
         }
         false
+    }
+
+    /// Begin a new named stage. All systems added after this call belong to
+    /// this stage until the next `add_stage` call.
+    ///
+    /// Stages group systems into logical phases (e.g., "input", "ai",
+    /// "resolve", "render") while keeping a flat execution order. Use
+    /// [`run_stage`](Self::run_stage) to execute only the systems in one stage.
+    pub fn add_stage(&mut self, name: &'static str) {
+        self.stage_markers.push((name, self.systems.len()));
+    }
+
+    /// Run only the systems belonging to the named stage.
+    ///
+    /// Returns `true` if the stage was found. Systems within the stage respect
+    /// their run conditions as usual.
+    pub fn run_stage(&self, name: &str, world: &mut World) -> bool {
+        let stage_idx = self.stage_markers.iter().position(|(n, _)| *n == name);
+        let stage_idx = match stage_idx {
+            Some(i) => i,
+            None => return false,
+        };
+        let start = self.stage_markers[stage_idx].1;
+        let end = if stage_idx + 1 < self.stage_markers.len() {
+            self.stage_markers[stage_idx + 1].1
+        } else {
+            self.systems.len()
+        };
+        for system in &self.systems[start..end] {
+            if let Some(cond) = system.condition {
+                if !cond(world) {
+                    continue;
+                }
+            }
+            (system.func)(world);
+        }
+        true
+    }
+
+    /// Return the names of all defined stages, in order.
+    pub fn stage_names(&self) -> Vec<&'static str> {
+        self.stage_markers.iter().map(|(name, _)| *name).collect()
+    }
+
+    /// Run only the systems belonging to the named stage, calling the hook
+    /// with each system's name before execution.
+    ///
+    /// Skipped systems (due to run conditions) do not trigger the hook.
+    /// Returns `true` if the stage was found.
+    pub fn run_stage_with_hook<F>(&self, name: &str, world: &mut World, mut on_system: F) -> bool
+    where
+        F: FnMut(&str),
+    {
+        let stage_idx = self.stage_markers.iter().position(|(n, _)| *n == name);
+        let stage_idx = match stage_idx {
+            Some(i) => i,
+            None => return false,
+        };
+        let start = self.stage_markers[stage_idx].1;
+        let end = if stage_idx + 1 < self.stage_markers.len() {
+            self.stage_markers[stage_idx + 1].1
+        } else {
+            self.systems.len()
+        };
+        for system in &self.systems[start..end] {
+            if let Some(cond) = system.condition {
+                if !cond(world) {
+                    continue;
+                }
+            }
+            on_system(system.name);
+            (system.func)(world);
+        }
+        true
     }
 }
 
@@ -467,5 +550,154 @@ mod tests {
         schedule.replace_by_name("double", "bump2", bump);
         schedule.run(&mut world);
         assert_eq!(world.resource::<Counter>().unwrap().0, 3);
+    }
+
+    #[test]
+    fn stage_names_tracks_added_stages() {
+        let mut schedule = Schedule::new();
+        schedule.add_stage("input");
+        schedule.add_named("read_keys", bump);
+        schedule.add_stage("logic");
+        schedule.add_named("update", double);
+        schedule.add_named("resolve", bump);
+        schedule.add_stage("render");
+        schedule.add_named("draw", bump);
+
+        assert_eq!(schedule.stage_names(), vec!["input", "logic", "render"]);
+    }
+
+    #[test]
+    fn run_stage_executes_only_that_stage() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("first");
+        schedule.add_named("bump", bump);
+        schedule.add_stage("second");
+        schedule.add_named("double", double);
+
+        assert!(schedule.run_stage("first", &mut world));
+        assert_eq!(world.resource::<Counter>().unwrap().0, 1);
+
+        assert!(schedule.run_stage("second", &mut world));
+        assert_eq!(world.resource::<Counter>().unwrap().0, 2);
+    }
+
+    #[test]
+    fn run_stage_returns_false_for_unknown_stage() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("alpha");
+        schedule.add_named("bump", bump);
+
+        assert!(!schedule.run_stage("beta", &mut world));
+        assert_eq!(world.resource::<Counter>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn run_stage_respects_conditions() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        world.insert_resource(DebugMode(false));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("logic");
+        schedule.add_named("bump", bump);
+        schedule.add_conditional("debug", debug_bump, is_debug_enabled);
+
+        schedule.run_stage("logic", &mut world);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 1);
+    }
+
+    #[test]
+    fn run_stages_are_independent_of_full_run() {
+        let mut world = World::new();
+        world.insert_resource(Counter(1));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("a");
+        schedule.add_named("bump", bump);
+        schedule.add_stage("b");
+        schedule.add_named("double", double);
+
+        schedule.run_stage("b", &mut world);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 2);
+
+        // Running "a" after "b" still works independently.
+        schedule.run_stage("a", &mut world);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 3);
+    }
+
+    #[test]
+    fn clear_removes_stage_markers() {
+        let mut schedule = Schedule::new();
+        schedule.add_stage("a");
+        schedule.add_named("bump", bump);
+        schedule.add_stage("b");
+        schedule.add_named("double", double);
+        assert_eq!(schedule.stage_names().len(), 2);
+
+        schedule.clear();
+        assert!(schedule.stage_names().is_empty());
+        assert!(schedule.is_empty());
+    }
+
+    #[test]
+    fn systems_without_stages_still_run_normally() {
+        let mut world = World::new();
+        world.insert_resource(Counter(1));
+        let mut schedule = Schedule::new();
+        schedule.add_named("bump", bump);
+        schedule.add_named("double", double);
+
+        // No stages defined — run() still works.
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 4);
+    }
+
+    #[test]
+    fn run_stage_with_hook_calls_hook_for_executed_systems() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("first");
+        schedule.add_named("bump", bump);
+        schedule.add_stage("second");
+        schedule.add_named("double", double);
+
+        let mut names = Vec::new();
+        schedule.run_stage_with_hook("first", &mut world, |name| names.push(name.to_string()));
+        assert_eq!(names, vec!["bump"]);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 1);
+    }
+
+    #[test]
+    fn run_stage_with_hook_skips_conditional_systems() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        world.insert_resource(DebugMode(false));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("logic");
+        schedule.add_named("bump", bump);
+        schedule.add_conditional("debug", debug_bump, is_debug_enabled);
+
+        let mut names = Vec::new();
+        schedule.run_stage_with_hook("logic", &mut world, |name| names.push(name.to_string()));
+        assert_eq!(names, vec!["bump"]);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 1);
+    }
+
+    #[test]
+    fn run_stage_with_hook_returns_false_for_unknown_stage() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("alpha");
+        schedule.add_named("bump", bump);
+
+        let mut names = Vec::new();
+        assert!(!schedule
+            .run_stage_with_hook("beta", &mut world, |name| { names.push(name.to_string()) }));
+        assert!(names.is_empty());
+        assert_eq!(world.resource::<Counter>().unwrap().0, 0);
     }
 }

@@ -152,15 +152,13 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
     } else {
         &msgs[..]
     };
-    for (i, msg) in display_msgs.iter().enumerate() {
-        root.write_str(
-            right_x + 2,
-            1 + i as u16,
-            msg,
-            palette.ui_text,
-            palette.background,
-        );
-    }
+    root.write_lines(
+        right_x + 2,
+        log_rect.y + 1,
+        display_msgs.iter(),
+        palette.ui_text,
+        palette.background,
+    );
 
     // Status panel below log.
     let status_y = log_h + 2;
