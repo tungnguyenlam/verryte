@@ -1418,3 +1418,23 @@ beyond perhaps a seed or layout.
 **Gotchas.** Spawning `SpawnKind::Chaser` maps to entities containing both `Chaser` and `Hazard` components; consequently, the snapshot calculation for nearest hazards includes active chasers, which matches the game's hazard-based loss design.
 
 **Follow-ups.** None. All workspace checks, clippy, and unit tests compile and run flawlessly with 100% clean status.
+
+## 2026-05-22 - Phase 3 Autonomous Engine Improvements: Euclidean Distance, Action History, Custom Weighted Pathfinding, Battery Recharge Stations, Game State Save/Load, Interactive REPL Shell
+
+**Goal.** Complete all remaining 6-point roadmap improvements for the autonomous engine run, addressing core engine ergonomics, state persistence, gameplay mechanics, and CLI interactivity.
+
+**Changes.**
+- `crates/verryte-map/src/lib.rs` - Added straight-line `euclidean_distance()` to `Point`, and implemented high-performance `shortest_path4_weighted()` and `shortest_path8_weighted()` custom weighted pathfinding on `TileGrid` using a generic cost callback and standard `BinaryHeap`.
+- `crates/verryte-input/src/lib.rs` - Implemented action history tracking inside `InputRouter` with `history` queue storage, public getters, and clearers.
+- `prototype/ash-courier/src/components.rs` - Introduced `RechargeStation` tactical components.
+- `prototype/ash-courier/src/game.rs` - Implemented full game state ASCII/YAML annotated serialization via `save_to_string()`, `load_from_string()`, `save_to_file()`, and `load_from_file()`. Also added recharge station spawning, turn-based battery replenishment, and depletion mechanics.
+- `prototype/ash-courier/src/snapshot.rs` - Added straight-line Euclidean distance metric tracking (`euclidean_to_goal`, etc.) to spatial snapshots.
+- `prototype/ash-courier/src/bin/script.rs` - Redesigned the non-interactive runner to support a fully interactive CLI REPL shell when run with no arguments or `--interactive`/`-i`, including manual command support (`help`, `save`, `load`, `q`, action scripts) and identical detailed metric reporting.
+
+**Reasoning.** High-performance weighted pathfinding in `crates/verryte-map` lets agents avoid hazard areas or prioritize paths dynamically. Action history tracking protects unified control traces for replay/agent auditing. Recharge stations introduce crucial spatial resource management to the proving game. Full state serialization permits identical, zero-leak game session roundtrips. Lastly, the CLI REPL shell provides an indispensable manual testing interface that is 100% converged with the main gameplay and input script parsing paths.
+
+**Assumptions.** We assumed replacing `self.world` with a fresh `World::new()` in `load_from_string` is the safest, zero-leak way to cleanly clear all previous entity state and ensure scheduled systems resume correctly.
+
+**Gotchas.** Clippy enforces `approx_constant` checking, meaning that checking float distance to a diagonal step must use `std::f32::consts::SQRT_2` instead of literal `1.4142135`. The REPL command parsing uses `strip_prefix` for `save` and `load` commands to stay clean and warning-free.
+
+**Follow-ups.** None. All 200+ workspace tests, formatting, and clippy checks pass perfectly.

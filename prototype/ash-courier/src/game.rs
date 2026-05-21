@@ -6,6 +6,7 @@ use verryte_terminal::{Cell, ColorPalette, Grid, Rect};
 use crate::action::{default_bindings, Action};
 use crate::components::{
     Battery, BatteryPack, Chaser, GameEvent, GameState, Hazard, Outcome, Package, Player, Position,
+    RechargeStation,
 };
 use crate::map::{Map, Tile};
 use crate::snapshot::{ActionResult, Snapshot, StepReport};
@@ -72,6 +73,7 @@ impl Game {
                     'h' => (Tile::Floor, Some(SpawnKind::Hazard)),
                     'c' => (Tile::Floor, Some(SpawnKind::Chaser)),
                     'b' => (Tile::Floor, Some(SpawnKind::BatteryPack)),
+                    'R' => (Tile::Floor, Some(SpawnKind::RechargeStation)),
                     'G' => (Tile::Goal, None),
                     ' ' => (Tile::Wall, None), // treat padding as wall
                     other => return Err(MapError::UnknownGlyph(other)),
@@ -100,6 +102,13 @@ impl Game {
                         }
                         SpawnKind::BatteryPack => {
                             world.builder().with(pos).with(BatteryPack).build();
+                        }
+                        SpawnKind::RechargeStation => {
+                            world
+                                .builder()
+                                .with(pos)
+                                .with(RechargeStation { charges: 3 })
+                                .build();
                         }
                     }
                 }
@@ -686,6 +695,7 @@ impl Game {
                     }
                 }
             }
+            self.check_recharge_station();
         }
 
         if matches!(result, ActionResult::Advanced)
@@ -750,6 +760,41 @@ impl Game {
                 at: pos,
                 amount: 25,
             });
+        }
+    }
+
+    fn check_recharge_station(&mut self) {
+        if self.is_over() {
+            return;
+        }
+        let pos = self.player_position();
+        let found = self
+            .world
+            .query2::<Position, RechargeStation>()
+            .into_iter()
+            .find_map(|(e, station_pos, station)| (*station_pos == pos).then_some((e, *station)));
+        if let Some((entity, station)) = found {
+            let mut recharged = false;
+            if let Some(battery) = self.world.get_mut::<Battery>(self.player) {
+                if battery.current < battery.max {
+                    battery.current = (battery.current + 25).min(battery.max);
+                    recharged = true;
+                }
+            }
+            let next_charges = station.charges.saturating_sub(1);
+            if next_charges == 0 {
+                self.world.despawn(entity);
+            } else {
+                if let Some(s) = self.world.get_mut::<RechargeStation>(entity) {
+                    s.charges = next_charges;
+                }
+            }
+            if recharged {
+                self.send_event(GameEvent::PickedUpBattery {
+                    at: pos,
+                    amount: 25,
+                });
+            }
         }
     }
 
@@ -869,6 +914,436 @@ impl Game {
             })
     }
 
+    pub fn save_to_string(&self) -> String {
+        let mut out = String::new();
+        out.push_str("--- VERB SAVE STATE ---\n");
+        out.push_str("version: 1\n");
+
+        let clock = self.clock();
+        out.push_str(&format!("clock_ticks: {}\n", clock.elapsed_ticks()));
+
+        let rng = self.world.resource::<Rng>().unwrap();
+        out.push_str(&format!("rng_seed: {}\n", rng.seed_value()));
+
+        let state = self.state();
+        out.push_str(&format!("state_turn: {}\n", state.turn));
+
+        let outcome_str = match state.outcome {
+            Outcome::Playing => "Playing",
+            Outcome::Won => "Won",
+            Outcome::Lost => "Lost",
+            Outcome::Quit => "Quit",
+        };
+        out.push_str(&format!("state_outcome: {}\n", outcome_str));
+        out.push_str(&format!("state_has_package: {}\n", state.has_package));
+        out.push_str(&format!("state_scans: {}\n", state.scans));
+
+        if let Some(cursor) = state.cursor {
+            out.push_str(&format!("state_cursor: {},{}\n", cursor.x, cursor.y));
+        } else {
+            out.push_str("state_cursor: None\n");
+        }
+        out.push_str(&format!("state_camera_zoom: {}\n", state.camera_zoom));
+        out.push_str(&format!("state_show_log: {}\n", state.show_log));
+
+        out.push_str("messages:\n");
+        if let Some(log) = self.world.resource::<MessageLog>() {
+            for msg in log.messages() {
+                out.push_str(&format!("- {}\n", msg));
+            }
+        }
+
+        let map = self.map();
+        out.push_str("map:\n");
+        out.push_str(&format!("  width: {}\n", map.width));
+        out.push_str(&format!("  height: {}\n", map.height));
+        out.push_str("  grid:\n");
+        for y in 0..map.height {
+            out.push_str("  ");
+            for x in 0..map.width {
+                let ch = match map.tile(x as i16, y as i16) {
+                    Tile::Wall => '#',
+                    Tile::Floor => '.',
+                    Tile::Goal => 'G',
+                };
+                out.push(ch);
+            }
+            out.push('\n');
+        }
+
+        out.push_str("entities:\n");
+        // Player
+        let player_pos = self.player_position();
+        if let Some(battery) = self.world.get::<Battery>(self.player) {
+            out.push_str("- kind: Player\n");
+            out.push_str(&format!("  x: {}\n", player_pos.x));
+            out.push_str(&format!("  y: {}\n", player_pos.y));
+            out.push_str(&format!("  battery_current: {}\n", battery.current));
+            out.push_str(&format!("  battery_max: {}\n", battery.max));
+        }
+
+        // Package
+        for (_, pos, _) in self.world.query2::<Position, Package>() {
+            out.push_str("- kind: Package\n");
+            out.push_str(&format!("  x: {}\n", pos.x));
+            out.push_str(&format!("  y: {}\n", pos.y));
+        }
+
+        // Chasers (which are also Hazards)
+        let chaser_entities = self
+            .world
+            .query2::<Position, Chaser>()
+            .into_iter()
+            .map(|(e, _, _)| e)
+            .collect::<std::collections::HashSet<_>>();
+
+        // Hazards (excluding Chasers)
+        for (e, pos, _) in self.world.query2::<Position, Hazard>() {
+            if !chaser_entities.contains(&e) {
+                out.push_str("- kind: Hazard\n");
+                out.push_str(&format!("  x: {}\n", pos.x));
+                out.push_str(&format!("  y: {}\n", pos.y));
+            }
+        }
+
+        // Chasers
+        for (_, pos, _) in self.world.query2::<Position, Chaser>() {
+            out.push_str("- kind: Chaser\n");
+            out.push_str(&format!("  x: {}\n", pos.x));
+            out.push_str(&format!("  y: {}\n", pos.y));
+        }
+
+        // BatteryPack
+        for (_, pos, _) in self.world.query2::<Position, BatteryPack>() {
+            out.push_str("- kind: BatteryPack\n");
+            out.push_str(&format!("  x: {}\n", pos.x));
+            out.push_str(&format!("  y: {}\n", pos.y));
+        }
+
+        // RechargeStation
+        for (_, pos, s) in self.world.query2::<Position, RechargeStation>() {
+            out.push_str("- kind: RechargeStation\n");
+            out.push_str(&format!("  x: {}\n", pos.x));
+            out.push_str(&format!("  y: {}\n", pos.y));
+            out.push_str(&format!("  charges: {}\n", s.charges));
+        }
+
+        out
+    }
+
+    pub fn load_from_string(&mut self, s: &str) -> Result<(), String> {
+        let mut clock_ticks = 0u64;
+        let mut rng_seed = 1u64;
+        let mut state_turn = 0u32;
+        let mut state_outcome = Outcome::Playing;
+        let mut state_has_package = false;
+        let mut state_scans = 0u32;
+        let mut state_cursor: Option<Position> = None;
+        let mut state_camera_zoom = 0i16;
+        let mut state_show_log = true;
+
+        let mut messages = Vec::new();
+
+        let mut map_width = 0u16;
+        let mut map_height = 0u16;
+        let mut map_rows = Vec::new();
+
+        #[derive(Debug)]
+        struct RawEntity {
+            kind: String,
+            x: i16,
+            y: i16,
+            battery_current: Option<u32>,
+            battery_max: Option<u32>,
+            charges: Option<u32>,
+        }
+
+        let mut entities = Vec::new();
+        let mut current_entity: Option<RawEntity> = None;
+
+        let mut section = "";
+
+        for line in s.lines() {
+            let line_trimmed = line.trim_end();
+            if line_trimmed.is_empty() || line_trimmed.starts_with("---") {
+                continue;
+            }
+
+            if line_trimmed == "messages:" {
+                section = "messages";
+                continue;
+            } else if line_trimmed == "map:" {
+                section = "map";
+                continue;
+            } else if line_trimmed == "entities:" {
+                section = "entities";
+                continue;
+            }
+
+            if section == "messages" {
+                if let Some(stripped) = line_trimmed.strip_prefix("- ") {
+                    messages.push(stripped.to_string());
+                }
+                continue;
+            } else if section == "map" {
+                if line_trimmed.starts_with("  grid:") {
+                    section = "map_grid";
+                    continue;
+                }
+                let trimmed = line_trimmed.trim();
+                if let Some((k, v)) = trimmed.split_once(':') {
+                    let k = k.trim();
+                    let v = v.trim();
+                    match k {
+                        "width" => {
+                            map_width =
+                                v.parse().map_err(|e| format!("invalid map width: {}", e))?
+                        }
+                        "height" => {
+                            map_height = v
+                                .parse()
+                                .map_err(|e| format!("invalid map height: {}", e))?
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            } else if section == "map_grid" {
+                if let Some(stripped) = line_trimmed.strip_prefix("  ") {
+                    let row_str = stripped.to_string();
+                    map_rows.push(row_str);
+                    if map_rows.len() as u16 == map_height {
+                        section = "";
+                    }
+                }
+                continue;
+            } else if section == "entities" {
+                let trimmed = line_trimmed.trim();
+                if trimmed.starts_with("- ") {
+                    if let Some(ent) = current_entity.take() {
+                        entities.push(ent);
+                    }
+                    if let Some((_k, v)) = trimmed.split_once(':') {
+                        current_entity = Some(RawEntity {
+                            kind: v.trim().to_string(),
+                            x: 0,
+                            y: 0,
+                            battery_current: None,
+                            battery_max: None,
+                            charges: None,
+                        });
+                    }
+                } else if let Some((k, v)) = trimmed.split_once(':') {
+                    let k = k.trim();
+                    let v = v.trim();
+                    if let Some(ref mut ent) = current_entity {
+                        match k {
+                            "x" => {
+                                ent.x = v.parse().map_err(|e| format!("invalid entity x: {}", e))?
+                            }
+                            "y" => {
+                                ent.y = v.parse().map_err(|e| format!("invalid entity y: {}", e))?
+                            }
+                            "battery_current" => {
+                                ent.battery_current = Some(
+                                    v.parse()
+                                        .map_err(|e| format!("invalid battery_current: {}", e))?,
+                                )
+                            }
+                            "battery_max" => {
+                                ent.battery_max = Some(
+                                    v.parse()
+                                        .map_err(|e| format!("invalid battery_max: {}", e))?,
+                                )
+                            }
+                            "charges" => {
+                                ent.charges =
+                                    Some(v.parse().map_err(|e| format!("invalid charges: {}", e))?)
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if let Some((k, v)) = line_trimmed.split_once(':') {
+                let k = k.trim();
+                let v = v.trim();
+                match k {
+                    "clock_ticks" => {
+                        clock_ticks = v
+                            .parse()
+                            .map_err(|e| format!("invalid clock_ticks: {}", e))?
+                    }
+                    "rng_seed" => {
+                        rng_seed = v.parse().map_err(|e| format!("invalid rng_seed: {}", e))?
+                    }
+                    "state_turn" => {
+                        state_turn = v
+                            .parse()
+                            .map_err(|e| format!("invalid state_turn: {}", e))?
+                    }
+                    "state_outcome" => {
+                        state_outcome = match v {
+                            "Playing" => Outcome::Playing,
+                            "Won" => Outcome::Won,
+                            "Lost" => Outcome::Lost,
+                            "Quit" => Outcome::Quit,
+                            _ => return Err(format!("unknown state_outcome: {}", v)),
+                        };
+                    }
+                    "state_has_package" => {
+                        state_has_package = v
+                            .parse()
+                            .map_err(|e| format!("invalid state_has_package: {}", e))?
+                    }
+                    "state_scans" => {
+                        state_scans = v
+                            .parse()
+                            .map_err(|e| format!("invalid state_scans: {}", e))?
+                    }
+                    "state_cursor" => {
+                        if v == "None" {
+                            state_cursor = None;
+                        } else if let Some((xs, ys)) = v.split_once(',') {
+                            let x = xs.parse().map_err(|e| format!("invalid cursor x: {}", e))?;
+                            let y = ys.parse().map_err(|e| format!("invalid cursor y: {}", e))?;
+                            state_cursor = Some(Position { x, y });
+                        }
+                    }
+                    "state_camera_zoom" => {
+                        state_camera_zoom = v
+                            .parse()
+                            .map_err(|e| format!("invalid state_camera_zoom: {}", e))?
+                    }
+                    "state_show_log" => {
+                        state_show_log = v
+                            .parse()
+                            .map_err(|e| format!("invalid state_show_log: {}", e))?
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if let Some(ent) = current_entity.take() {
+            entities.push(ent);
+        }
+
+        if map_width == 0 || map_height == 0 || map_rows.len() as u16 != map_height {
+            return Err("missing or invalid map grid".to_string());
+        }
+
+        let mut new_world = World::new();
+
+        let mut map = Map::new(map_width, map_height);
+        for (y, row) in map_rows.iter().enumerate() {
+            for (x, ch) in row.chars().enumerate() {
+                let tile = match ch {
+                    '#' => Tile::Wall,
+                    '.' => Tile::Floor,
+                    'G' => Tile::Goal,
+                    _ => return Err(format!("unknown tile character: {}", ch)),
+                };
+                map.set(x as u16, y as u16, tile);
+            }
+        }
+
+        let mut clock = GameClock::new();
+        clock.set_elapsed_ticks(clock_ticks);
+        new_world.insert_resource(clock);
+
+        new_world.insert_resource(Rng::seed(rng_seed));
+
+        let game_state = GameState {
+            turn: state_turn,
+            outcome: state_outcome,
+            has_package: state_has_package,
+            scans: state_scans,
+            cursor: state_cursor,
+            camera_zoom: state_camera_zoom,
+            show_log: state_show_log,
+        };
+        new_world.insert_resource(game_state);
+
+        new_world.insert_resource(Events::<GameEvent>::with_capacity(16));
+
+        let mut log = MessageLog::with_max(50);
+        for msg in messages {
+            log.push(msg);
+        }
+        new_world.insert_resource(log);
+
+        new_world.insert_resource(map);
+
+        let mut player_entity_opt = None;
+        for ent in entities {
+            let pos = Position { x: ent.x, y: ent.y };
+            match ent.kind.as_str() {
+                "Player" => {
+                    let battery_current = ent.battery_current.unwrap_or(100);
+                    let battery_max = ent.battery_max.unwrap_or(100);
+                    let player = new_world
+                        .builder()
+                        .with(pos)
+                        .with(Player)
+                        .with(Battery {
+                            current: battery_current,
+                            max: battery_max,
+                        })
+                        .build();
+                    player_entity_opt = Some(player);
+                }
+                "Package" => {
+                    new_world.builder().with(pos).with(Package).build();
+                }
+                "Hazard" => {
+                    new_world.builder().with(pos).with(Hazard).build();
+                }
+                "Chaser" => {
+                    new_world
+                        .builder()
+                        .with(pos)
+                        .with(Hazard)
+                        .with(Chaser)
+                        .build();
+                }
+                "BatteryPack" => {
+                    new_world.builder().with(pos).with(BatteryPack).build();
+                }
+                "RechargeStation" => {
+                    let charges = ent.charges.unwrap_or(3);
+                    new_world
+                        .builder()
+                        .with(pos)
+                        .with(RechargeStation { charges })
+                        .build();
+                }
+                _ => return Err(format!("unknown entity kind: {}", ent.kind)),
+            }
+        }
+
+        let player =
+            player_entity_opt.ok_or_else(|| "missing Player entity in save state".to_string())?;
+
+        self.world = new_world;
+        self.player = player;
+
+        Ok(())
+    }
+
+    pub fn save_to_file(&self, path: &str) -> std::io::Result<()> {
+        let content = self.save_to_string();
+        std::fs::write(path, content)
+    }
+
+    pub fn load_from_file(&mut self, path: &str) -> Result<(), String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read save file: {}", e))?;
+        self.load_from_string(&content)
+    }
+
     /// Render the current state to a [`Grid`].
     pub fn render(&self) -> Grid {
         self.render_with_palette(&ColorPalette::dark_dungeon())
@@ -908,6 +1383,20 @@ impl Game {
                 pos.x as u16,
                 pos.y as u16,
                 Cell::new('p').with_fg(palette.item),
+            );
+        }
+        for (_, pos, _) in self.world.query2::<Position, BatteryPack>() {
+            grid.put(
+                pos.x as u16,
+                pos.y as u16,
+                Cell::new('b').with_fg(palette.item),
+            );
+        }
+        for (_, pos, _) in self.world.query2::<Position, RechargeStation>() {
+            grid.put(
+                pos.x as u16,
+                pos.y as u16,
+                Cell::new('R').with_fg(palette.item),
             );
         }
         let player_pos = self.player_position();
@@ -1008,6 +1497,24 @@ impl Game {
             packages.iter().map(|p| player.chebyshev_distance(*p)).min();
         let chebyshev_to_nearest_chaser =
             chasers.iter().map(|c| player.chebyshev_distance(*c)).min();
+
+        let euclidean_to_goal = goals
+            .iter()
+            .map(|g| player.euclidean_distance(*g))
+            .min_by(|a, b| a.partial_cmp(b).unwrap());
+        let euclidean_to_nearest_hazard = hazards
+            .iter()
+            .map(|h| player.euclidean_distance(*h))
+            .min_by(|a, b| a.partial_cmp(b).unwrap());
+        let euclidean_to_nearest_package = packages
+            .iter()
+            .map(|p| player.euclidean_distance(*p))
+            .min_by(|a, b| a.partial_cmp(b).unwrap());
+        let euclidean_to_nearest_chaser = chasers
+            .iter()
+            .map(|c| player.euclidean_distance(*c))
+            .min_by(|a, b| a.partial_cmp(b).unwrap());
+
         let battery = self
             .world
             .get::<Battery>(self.player)
@@ -1050,6 +1557,10 @@ impl Game {
             chebyshev_to_nearest_hazard,
             chebyshev_to_nearest_package,
             chebyshev_to_nearest_chaser,
+            euclidean_to_goal,
+            euclidean_to_nearest_hazard,
+            euclidean_to_nearest_package,
+            euclidean_to_nearest_chaser,
         }
     }
 }
@@ -1066,6 +1577,7 @@ enum SpawnKind {
     Hazard,
     Chaser,
     BatteryPack,
+    RechargeStation,
 }
 
 fn centered_origin(center: i16, span: u16, limit: u16) -> u16 {

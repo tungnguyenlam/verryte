@@ -764,6 +764,7 @@ pub struct InputRouter<A: Clone> {
     pending: VecDeque<QueuedAction<A>>,
     total_queued: usize,
     context_stack: Vec<Bindings<A>>,
+    history: Vec<QueuedAction<A>>,
 }
 
 impl<A: Clone> InputRouter<A> {
@@ -773,6 +774,7 @@ impl<A: Clone> InputRouter<A> {
             pending: VecDeque::new(),
             total_queued: 0,
             context_stack: Vec::new(),
+            history: Vec::new(),
         }
     }
 
@@ -1069,20 +1071,35 @@ impl<A: Clone> InputRouter<A> {
     }
 
     pub fn next_queued(&mut self) -> Option<QueuedAction<A>> {
-        self.pending.pop_front()
+        let action = self.pending.pop_front();
+        if let Some(ref act) = action {
+            self.history.push(act.clone());
+        }
+        action
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = A> + '_ {
-        self.drain_queued().map(QueuedAction::into_action)
+        self.history.extend(self.pending.iter().cloned());
+        self.pending.drain(..).map(QueuedAction::into_action)
     }
 
     pub fn drain_queued(&mut self) -> vec_deque::Drain<'_, QueuedAction<A>> {
+        self.history.extend(self.pending.iter().cloned());
         self.pending.drain(..)
     }
 
     /// Drain the pending queue into a replayable trace, preserving sources.
     pub fn drain_trace(&mut self) -> ActionTrace<A> {
+        self.history.extend(self.pending.iter().cloned());
         ActionTrace::from_steps(self.pending.drain(..))
+    }
+
+    pub fn history(&self) -> &[QueuedAction<A>] {
+        &self.history
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
     }
 
     pub fn pending(&self) -> usize {
@@ -1599,6 +1616,29 @@ mod tests {
         bindings.bind(Key::Right, Move::East);
         bindings.bind(Key::Char('.'), Move::Wait);
         InputRouter::new(bindings)
+    }
+
+    #[test]
+    fn test_router_history_tracking() {
+        let mut router = bound_router();
+        assert!(router.history().is_empty());
+
+        router.inject_from(Move::North, ActionSource::Terminal);
+        router.inject_from(Move::Wait, ActionSource::Script);
+        assert!(router.history().is_empty()); // not popped yet
+
+        let a1 = router.next_queued().unwrap();
+        assert_eq!(a1.action, Move::North);
+        assert_eq!(router.history().len(), 1);
+        assert_eq!(router.history()[0].action, Move::North);
+
+        let a2 = router.next_queued().unwrap();
+        assert_eq!(a2.action, Move::Wait);
+        assert_eq!(router.history().len(), 2);
+        assert_eq!(router.history()[1].action, Move::Wait);
+
+        router.clear_history();
+        assert!(router.history().is_empty());
     }
 
     #[test]

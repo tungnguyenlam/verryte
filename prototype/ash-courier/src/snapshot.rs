@@ -3,7 +3,7 @@ use crate::components::{GameEvent, Outcome, Position};
 use crate::map::Tile;
 use verryte_input::ActionSource;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     pub turn: u32,
     pub outcome: Outcome,
@@ -44,10 +44,14 @@ pub struct Snapshot {
     pub chebyshev_to_nearest_hazard: Option<u16>,
     pub chebyshev_to_nearest_package: Option<u16>,
     pub chebyshev_to_nearest_chaser: Option<u16>,
+    pub euclidean_to_goal: Option<f32>,
+    pub euclidean_to_nearest_hazard: Option<f32>,
+    pub euclidean_to_nearest_package: Option<f32>,
+    pub euclidean_to_nearest_chaser: Option<f32>,
 }
 
 /// One applied action and the observable state before/after it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StepReport {
     pub action: Action,
     pub source: ActionSource,

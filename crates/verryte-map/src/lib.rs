@@ -52,6 +52,13 @@ impl Point {
         self.x.abs_diff(other.x).max(self.y.abs_diff(other.y))
     }
 
+    /// Straight-line Euclidean distance.
+    pub fn euclidean_distance(self, other: Point) -> f32 {
+        let dx = (self.x as f32) - (other.x as f32);
+        let dy = (self.y as f32) - (other.y as f32);
+        (dx * dx + dy * dy).sqrt()
+    }
+
     pub fn neighbors4(self) -> [Point; 4] {
         Direction::ALL.map(|direction| self.step(direction))
     }
@@ -891,6 +898,145 @@ impl<T> TileGrid<T> {
                     return Some(path);
                 }
                 frontier.push_back(neighbor);
+            }
+        }
+
+        None
+    }
+
+    /// Find the shortest cardinal path between two in-bounds points with custom costs.
+    ///
+    /// The returned path includes `start` and `goal`. `passable` is consulted
+    /// for neighbor tiles; `start` is allowed even if its tile is not passable.
+    /// `cost` is a function taking `from`, `to`, and the tile at `to`, returning
+    /// the step cost.
+    pub fn shortest_path4_weighted<F, C>(
+        &self,
+        start: Point,
+        goal: Point,
+        passable: F,
+        cost: C,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+    {
+        if !self.in_bounds(start) || !self.in_bounds(goal) {
+            return None;
+        }
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+        frontier.push(std::cmp::Reverse((0u32, start)));
+
+        while let Some(std::cmp::Reverse((current_cost, current))) = frontier.pop() {
+            if current == goal {
+                let mut path = vec![goal];
+                let mut step = goal;
+                while step != start {
+                    step = came_from[&step];
+                    path.push(step);
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            if current_cost > *g_score.get(&current).unwrap_or(&u32::MAX) {
+                continue;
+            }
+
+            for neighbor in current.neighbors4() {
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = cost(current, neighbor, tile);
+                let tentative_g = current_cost + step_cost;
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current);
+                    g_score.insert(neighbor, tentative_g);
+                    frontier.push(std::cmp::Reverse((tentative_g, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find the shortest 8-directional path between two in-bounds points with custom costs.
+    ///
+    /// The returned path includes `start` and `goal`. `passable` is consulted
+    /// for neighbor tiles; `start` is allowed even if its tile is not passable.
+    /// `cost` is a function taking `from`, `to`, and the tile at `to`, returning
+    /// the step cost.
+    pub fn shortest_path8_weighted<F, C>(
+        &self,
+        start: Point,
+        goal: Point,
+        passable: F,
+        cost: C,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+    {
+        if !self.in_bounds(start) || !self.in_bounds(goal) {
+            return None;
+        }
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+        frontier.push(std::cmp::Reverse((0u32, start)));
+
+        while let Some(std::cmp::Reverse((current_cost, current))) = frontier.pop() {
+            if current == goal {
+                let mut path = vec![goal];
+                let mut step = goal;
+                while step != start {
+                    step = came_from[&step];
+                    path.push(step);
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            if current_cost > *g_score.get(&current).unwrap_or(&u32::MAX) {
+                continue;
+            }
+
+            for direction in Direction8::ALL {
+                let neighbor = current.step8(direction);
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = cost(current, neighbor, tile);
+                let tentative_g = current_cost + step_cost;
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current);
+                    g_score.insert(neighbor, tentative_g);
+                    frontier.push(std::cmp::Reverse((tentative_g, neighbor)));
+                }
             }
         }
 
@@ -2709,6 +2855,52 @@ mod tests {
     }
 
     #[test]
+    fn test_shortest_path_weighted_avoids_mud() {
+        let grid =
+            TileGrid::from_vec(3, 3, vec!['.', 'M', '.', '.', '.', '.', '.', '.', '.']).unwrap();
+
+        let path = grid
+            .shortest_path4_weighted(
+                Point::new(0, 0),
+                Point::new(2, 0),
+                |_, _| true,
+                |_, _, &tile| if tile == 'M' { 10 } else { 1 },
+            )
+            .unwrap();
+
+        assert_eq!(
+            path,
+            vec![
+                Point::new(0, 0),
+                Point::new(0, 1),
+                Point::new(1, 1),
+                Point::new(2, 1),
+                Point::new(2, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_shortest_path8_weighted_avoids_mud() {
+        let grid =
+            TileGrid::from_vec(3, 3, vec!['.', 'M', '.', '.', '.', '.', '.', '.', '.']).unwrap();
+
+        let path = grid
+            .shortest_path8_weighted(
+                Point::new(0, 0),
+                Point::new(2, 0),
+                |_, _| true,
+                |_, _, &tile| if tile == 'M' { 10 } else { 1 },
+            )
+            .unwrap();
+
+        assert_eq!(
+            path,
+            vec![Point::new(0, 0), Point::new(1, 1), Point::new(2, 0),]
+        );
+    }
+
+    #[test]
     fn nearest_path4_chooses_shortest_reachable_target() {
         let grid = TileGrid::from_vec(
             5,
@@ -2907,6 +3099,14 @@ mod tests {
         assert_eq!(a.chebyshev_distance(Point::new(3, 3)), 3);
         assert_eq!(a.chebyshev_distance(Point::new(5, 2)), 5);
         assert_eq!(a.chebyshev_distance(Point::new(0, 7)), 7);
+    }
+
+    #[test]
+    fn euclidean_distance_is_straight_line() {
+        let a = Point::new(0, 0);
+        assert_eq!(a.euclidean_distance(Point::new(3, 4)), 5.0);
+        assert_eq!(a.euclidean_distance(Point::new(0, 0)), 0.0);
+        assert!((a.euclidean_distance(Point::new(1, 1)) - std::f32::consts::SQRT_2).abs() < 1e-5);
     }
 
     #[test]

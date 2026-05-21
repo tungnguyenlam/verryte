@@ -23,6 +23,11 @@ pub struct Battery {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BatteryPack;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RechargeStation {
+    pub charges: u32,
+}
+
 /// Tracks the chaser's position from the previous tick to avoid backtracking.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PreviousPosition(pub Position);

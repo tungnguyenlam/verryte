@@ -30,6 +30,90 @@ mod tests {
     }
 
     #[test]
+    fn test_recharge_station_charges_player() {
+        use crate::components::{Battery, RechargeStation};
+
+        let layout = &["###", "#@#", "#R#", "###"];
+        let bindings = verryte_input::Bindings::new();
+        let mut g = Game::from_layout(layout, bindings).unwrap();
+
+        if let Some(battery) = g.world.get_mut::<Battery>(g.player_entity()) {
+            battery.current = 50;
+        }
+
+        assert_eq!(g.player_position(), Position { x: 1, y: 1 });
+
+        let _report = g.step(Action::MoveSouth);
+
+        assert_eq!(g.player_position(), Position { x: 1, y: 2 });
+        let battery = g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(battery.current, 74);
+
+        let station = g
+            .world
+            .query2::<Position, RechargeStation>()
+            .into_iter()
+            .find_map(|(_, _, s)| Some(*s))
+            .unwrap();
+        assert_eq!(station.charges, 2);
+
+        g.step(Action::Wait);
+        let battery = g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(battery.current, 98);
+
+        let station = g
+            .world
+            .query2::<Position, RechargeStation>()
+            .into_iter()
+            .find_map(|(_, _, s)| Some(*s))
+            .unwrap();
+        assert_eq!(station.charges, 1);
+
+        g.step(Action::Wait);
+        let battery = g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(battery.current, 100);
+
+        let has_station = g
+            .world
+            .query2::<Position, RechargeStation>()
+            .into_iter()
+            .next()
+            .is_some();
+        assert!(!has_station);
+    }
+
+    #[test]
+    fn test_save_load_roundtrip() {
+        use crate::components::Battery;
+
+        let mut g = Game::new();
+        g.step(Action::MoveEast);
+        g.step(Action::Wait);
+        g.step(Action::MoveSouth);
+
+        let initial_pos = g.player_position();
+        let initial_turn = g.state().turn;
+        let initial_battery = g.world.get::<Battery>(g.player_entity()).unwrap().current;
+
+        let saved_str = g.save_to_string();
+
+        g.step(Action::MoveSouth);
+        g.step(Action::MoveEast);
+
+        assert_ne!(g.player_position(), initial_pos);
+
+        g.load_from_string(&saved_str).unwrap();
+
+        assert_eq!(g.player_position(), initial_pos);
+        assert_eq!(g.state().turn, initial_turn);
+        assert_eq!(
+            g.world.get::<Battery>(g.player_entity()).unwrap().current,
+            initial_battery
+        );
+        assert_eq!(g.outcome(), Outcome::Playing);
+    }
+
+    #[test]
     fn default_map_spawns_player_at_top_left() {
         let g = fresh();
         assert_eq!(g.player_position(), Position { x: 1, y: 1 });
