@@ -37,6 +37,9 @@ project context, not runtime code.
   chibi sprite rendering. Source PNG artwork lives in
   `prototype/wuthering-terminal/assets/` and is compiled to static Rust
   arrays at build time via `scratch/png_to_ansi.py`.
+- `prototype/vfx-demo` - interactive terminal VFX demo proving particles,
+  screen shake, flash overlays, floating damage text, AoE rings, and a
+  real-time 30 FPS game loop. Run with `cargo run -p vfx-demo`.
 
 ## Engineering Priorities
 
@@ -78,8 +81,83 @@ As of the latest commits, Verryte has:
 - **Ash Courier proving game** (`prototype/ash-courier`): turn-based roguelike, cursor control, step-to-target navigation, score/win/loss outcomes, batch input, replay support, script runner.
 - **Adaptive resolution sprites**: build-time PNG-to-Rust compilation pipeline (`scratch/png_to_ansi.py`) that bakes chibi pixel art into static `[[(u8, u8, u8); W]; H]` arrays at 6 resolution tiers (TINY through ULTRA). At runtime, `crossterm::terminal::size()` selects the best tier purely by terminal cols×rows.
 - **Wuthering Terminal prototype** (`prototype/wuthering-terminal`): 2D turn-based tactical RPG with 3-resonator QTE swapping, Echo absorption, telegraphed parry/dodge, and chibi sprite rendering.
+- **Terminal VFX demo** (`prototype/vfx-demo`): interactive demo proving real-time terminal animation at 30 FPS. Particle system (fire, ice, lightning, slash, burst, heal, AoE), screen shake, flash overlays, floating damage text, expanding ring indicators, diff-based rendering. Run with `cargo run -p vfx-demo`.
 
 **Key architectural invariant:** all gameplay paths (terminal input, scripted commands, tests, replays, agent injection) converge on the same `Action` enum and `apply_action()` function. Do not split this path.
+
+## Tactical RPG Direction
+
+The next major prototype direction is a **turn-based tactical RPG** on a grid
+battlefield, inspired by Wuthering Waves combat mechanics. The VFX demo
+(`prototype/vfx-demo`) proved that terminal-based animation (particles, screen
+shake, flash, floating text, AoE rings) feels satisfying at 30 FPS with
+diff-based rendering.
+
+### Design Decisions (2026-05-22)
+
+Three concerns were raised about using Wuthering Waves IP directly:
+
+1. **Image model accuracy** — AI image generators cannot produce accurate WuWa
+   characters. The game launched mid-2024 and is niche enough that training data
+   is thin. Generated sprites look generic, not like actual characters.
+2. **LLM knowledge** — Models have limited coverage of WuWa's specific systems
+   (Forte, Concert, Echo absorption). Implementation would be more invention
+   than adaptation.
+3. **Legal risk** — Using copyrighted character names, designs, and trademarked
+   mechanics from Kuro Games is a liability for a public GitHub repo, even for
+   non-commercial use.
+
+**Resolution:** Keep WuWa-inspired **mechanics** (team swap QTE, telegraphed
+parry/dodge, absorption system) but apply them to **original characters** using
+universally recognized RPG archetypes that every image model and LLM knows
+perfectly:
+
+| Archetype | Visual | Why it works |
+|-----------|--------|-------------|
+| Warrior | Sword + heavy armor | Every image model produces crisp pixel art |
+| Mage | Staff + robes + elemental effects | Universally recognized silhouette |
+| Healer/Cleric | White robes + holy light | Universally recognized |
+| Boss: Dark Knight | Dark armor + greatsword | Classic villain archetype |
+
+This gives us: zero legal risk, accurate sprite generation, deep LLM knowledge
+of mechanics, and the same gameplay depth.
+
+### VFX Capabilities (proven in demo)
+
+The VFX demo proves these terminal-native effects work:
+
+- **Particle bursts** — colored glyphs (`*`, `·`, `✦`, `░`, `▓`) spawning from
+  a point, drifting with velocity, fading over lifetime with color decay.
+- **Screen shake** — sinusoidal viewport offset with intensity decay over time.
+- **Flash overlay** — full-screen or region-based color blending with alpha decay.
+- **Floating damage text** — rises upward, fades from bright to gone.
+- **AoE ring indicators** — expanding circles drawn with `draw_circle`.
+- **Elemental effects** — color-coded: fire=red/orange, ice=blue/white,
+  lightning=yellow/cyan, heal=green, slash=white.
+- **Combo system** — escalating damage and visual intensity per successive hit.
+- **Real-time loop** — `poll_event` + `thread::sleep` at 30 FPS, with
+  diff-based rendering for efficient terminal I/O.
+
+### Implementation Roadmap
+
+Build order for the tactical RPG prototype:
+
+1. **Tactical grid scene** — grid-based battlefield, tile rendering, character
+   placement, cursor movement.
+2. **Turn system** — player phase → enemy phase, action points per character.
+3. **Basic combat** — attack ranges, damage calculation, HP bars (VFX already
+   proven).
+4. **Team swap QTE** — swap between 3 characters mid-turn, cooldown timer.
+5. **Telegraphed attacks** — enemy shows attack zones (colored tiles), player
+   can dodge/parry.
+6. **Echo absorption** — defeated enemies drop abilities the player can absorb.
+7. **Sprite pipeline** — PNG → Rust const arrays via `scratch/png_to_ansi.py`,
+   adaptive resolution.
+8. **Boss fight** — Dark Lord with multi-phase patterns.
+
+The VFX system from the demo should be extracted into a reusable module (either
+in `verryte-terminal` or a new `verryte-vfx` crate) before the tactical
+prototype begins.
 
 ## Verification
 

@@ -1789,7 +1789,10 @@ pub fn default_visual_registry() -> verryte_terminal::VisualRegistry {
     let floor_bg = Color(15, 15, 20);
 
     // Walls (solid visual block)
-    registry.register("wall", make_custom_asset('█', Color(70, 70, 85), Color(35, 35, 45)));
+    registry.register(
+        "wall",
+        make_custom_asset('█', Color(70, 70, 85), Color(35, 35, 45)),
+    );
     registry.register_single_cell("wall_fallback", '#', Color::GREY, Color::BLACK);
 
     // Floors (clean center dot dotting)
@@ -1801,31 +1804,52 @@ pub fn default_visual_registry() -> verryte_terminal::VisualRegistry {
     registry.register_single_cell("goal_fallback", 'G', Color::YELLOW, Color::BLACK);
 
     // Player without package (glowing cyan hexagon)
-    registry.register("player", make_custom_asset('⬢', Color(0, 255, 255), floor_bg));
+    registry.register(
+        "player",
+        make_custom_asset('⬢', Color(0, 255, 255), floor_bg),
+    );
     registry.register_single_cell("player_fallback", '@', Color::CYAN, Color::BLACK);
 
     // Player with package (glowing gold hexagon)
-    registry.register("player_carrying", make_custom_asset('⬢', Color(255, 165, 0), floor_bg));
+    registry.register(
+        "player_carrying",
+        make_custom_asset('⬢', Color(255, 165, 0), floor_bg),
+    );
     registry.register_single_cell("player_carrying_fallback", '@', Color::YELLOW, Color::BLACK);
 
     // Hazard (warning red spike)
-    registry.register("hazard", make_custom_asset('▲', Color(220, 20, 60), floor_bg));
+    registry.register(
+        "hazard",
+        make_custom_asset('▲', Color(220, 20, 60), floor_bg),
+    );
     registry.register_single_cell("hazard_fallback", 'h', Color::RED, Color::BLACK);
 
     // Chaser (magenta skull)
-    registry.register("chaser", make_custom_asset('☠', Color(255, 0, 255), floor_bg));
+    registry.register(
+        "chaser",
+        make_custom_asset('☠', Color(255, 0, 255), floor_bg),
+    );
     registry.register_single_cell("chaser_fallback", 'c', Color::MAGENTA, Color::BLACK);
 
     // Package (lime box/cargo block)
-    registry.register("package", make_custom_asset('■', Color(50, 205, 50), floor_bg));
+    registry.register(
+        "package",
+        make_custom_asset('■', Color(50, 205, 50), floor_bg),
+    );
     registry.register_single_cell("package_fallback", 'p', Color::GREEN, Color::BLACK);
 
     // Battery pack (yellow/lime lightning bolt)
-    registry.register("battery_pack", make_custom_asset('⚡', Color(173, 255, 47), floor_bg));
+    registry.register(
+        "battery_pack",
+        make_custom_asset('⚡', Color(173, 255, 47), floor_bg),
+    );
     registry.register_single_cell("battery_pack_fallback", 'b', Color::GREEN, Color::BLACK);
 
     // Recharge station (blue energy junction/diamond circular)
-    registry.register("recharge_station", make_custom_asset('⛯', Color(30, 144, 255), floor_bg));
+    registry.register(
+        "recharge_station",
+        make_custom_asset('⛯', Color(30, 144, 255), floor_bg),
+    );
     registry.register_single_cell("recharge_station_fallback", 'R', Color::BLUE, Color::BLACK);
 
     registry

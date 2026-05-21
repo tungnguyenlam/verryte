@@ -508,6 +508,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vfx-demo"
+version = "0.0.1"
+dependencies = [
+ "verryte-terminal",
+ "verryte-tty",
+]
+
+[[package]]
 name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

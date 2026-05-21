@@ -130,6 +130,11 @@ those pieces as the first proving game.
   resolution chibi sprite system that scales visual fidelity to the user's
   terminal size. Sprites are compiled from PNG pixel art into static Rust
   arrays at build time using half-block sub-pixel packing.
+- `prototype/vfx-demo` - interactive terminal VFX demo proving real-time
+  animation at 30 FPS. Features a particle system (fire, ice, lightning,
+  slash, burst, heal, AoE), screen shake, flash overlays, floating damage
+  text, expanding ring indicators, combo counter, and diff-based rendering.
+  Run with `cargo run -p vfx-demo`.
 
 ## Control Model
 
