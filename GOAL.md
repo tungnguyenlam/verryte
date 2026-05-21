@@ -22,9 +22,46 @@ The developer experience should feel lightweight: bring the engine into `main`, 
 
 Verryte is ECS-oriented, data-first, and terminal-native.
 
-The engine is built around the idea that a terminal cell is the basic visual unit. Every part of the design should respect that constraint and turn it into an advantage: readable grids, layered presentation, clear spatial reasoning, and compact state.
+The engine is built around the idea that a terminal cell is the basic visual unit. Every part of the design should respect that constraint and turn it into an advantage: readable grids, layered presentation, clear spatial reasoning, compact state, and visual identity that belongs to the terminal instead of apologizing for it.
 
 Game behavior should be expressed through ordinary Rust data and systems. The engine can provide structure, scheduling, storage, and conventions, but the user's game should remain visible and debuggable.
+
+---
+
+## Visual Direction
+
+Verryte should make terminal games look intentional, not symbolic by default. A player character should not have to be `@`, a wall should not have to be `#`, and a monster should not have to be a single letter unless that is the game's chosen art direction. The engine should support games whose characters, terrain, objects, effects, and UI are recognizable terminal art with shape, color, animation, lighting, and style.
+
+The cornerstone is a data-driven terminal graphics system:
+
+```text
+game state -> semantic visual id -> terminal sprite/layer -> cell grid
+```
+
+Gameplay remains semantic: an entity is still a courier, gate, hazard, relic, or map tile. Rendering maps that meaning to visual assets. This keeps gameplay, scripts, tests, replays, and agents independent from the exact glyphs used on screen, while still allowing the player-facing TUI to look rich.
+
+Verryte should support several levels of terminal-native presentation:
+
+- **Single-cell glyphs** for compact maps, debug views, logs, tests, and fallback modes.
+- **Multi-cell ASCII sprites** for recognizable silhouettes, props, architecture, effects, and title art.
+- **Unicode block sprites** using block elements such as half-blocks and full blocks when a game opts into higher-fidelity terminal graphics.
+- **TrueColor palettes** for terminals that support 24-bit color, with graceful degradation to simpler palettes when needed.
+- **Layered rendering** for terrain, actors, lighting, fog, particles, targeting cursors, inspection overlays, and UI.
+- **Animation frames** for movement, smoke, impact, doors, weather, status effects, and other short-lived presentation details.
+
+Image-derived or prompt-derived visuals are allowed, but they should become inspectable assets before runtime. A tool may convert a source image, sprite sheet, sketch, or user description into terminal sprites by using density gradients, edge-aware ASCII, dithering, or Unicode half-block cells where one terminal cell represents a top and bottom color pair. The result should be baked into plain asset data that the engine can load, diff, test, snapshot, and render deterministically.
+
+For example, a high-fidelity block sprite may encode two vertical source pixels into one terminal cell:
+
+```text
+top pixel color    -> foreground color
+bottom pixel color -> background color
+glyph              -> upper half block
+```
+
+This is still terminal-native rendering. It is not GPU graphics, a GUI window, or a hidden image layer. The final frame is always a grid of cells with glyphs, foreground colors, background colors, and attributes.
+
+The visual system should stay honest about terminal constraints. It should provide fallbacks for plain ASCII, low-color terminals, small terminal sizes, and test output. Rich rendering should improve the player experience without making the game state opaque or splitting visual behavior away from the shared engine model.
 
 ---
 
@@ -124,13 +161,14 @@ This enables agents, bots, and external tools to drive games through the same pa
 
 ## Design Principles
 
-1. **Terminal first** - embrace cells, glyphs, color, and constrained space
-2. **Data first** - keep game state explicit, inspectable, and efficient
-3. **Composable parts** - prefer focused modules that work together cleanly
-4. **Extensible defaults** - provide useful behavior without closing escape hatches
-5. **No hidden ownership** - the engine supports the game; it does not swallow it
-6. **Agent-ready** - games should be scriptable, testable, and reproducible
-7. **Rust-native** - APIs should feel natural, honest, and boring in the best way
+1. **Terminal first** - embrace cells, glyphs, color, constrained space, and terminal-native visual style
+2. **Expressive by default** - support recognizable sprites, palettes, layers, animation, and fallbacks instead of forcing symbolic placeholders
+3. **Data first** - keep game state, visual mappings, and assets explicit, inspectable, and efficient
+4. **Composable parts** - prefer focused modules that work together cleanly
+5. **Extensible defaults** - provide useful behavior without closing escape hatches
+6. **No hidden ownership** - the engine supports the game; it does not swallow it
+7. **Agent-ready** - games should be scriptable, testable, and reproducible
+8. **Rust-native** - APIs should feel natural, honest, and boring in the best way
 
 ---
 

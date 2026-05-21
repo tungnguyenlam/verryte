@@ -1438,3 +1438,21 @@ beyond perhaps a seed or layout.
 **Gotchas.** Clippy enforces `approx_constant` checking, meaning that checking float distance to a diagonal step must use `std::f32::consts::SQRT_2` instead of literal `1.4142135`. The REPL command parsing uses `strip_prefix` for `save` and `load` commands to stay clean and warning-free.
 
 **Follow-ups.** None. All 200+ workspace tests, formatting, and clippy checks pass perfectly.
+
+## 2026-05-22 - Establish terminal-native visual asset direction in GOAL.md
+
+**Goal.** Capture the user's direction that Verryte should not settle for symbolic roguelike placeholders like `@` for the player. The project goal now treats rich terminal-native visual presentation as a cornerstone of the engine.
+
+**Changes.**
+- `GOAL.md:25` - Expanded the core terminal-cell statement to include visual identity as a first-class engine concern.
+- `GOAL.md:31` - Added a new Visual Direction section describing data-driven terminal graphics, semantic visual IDs, multi-cell ASCII sprites, optional Unicode block sprites, TrueColor palettes, layered rendering, animation, and fallback modes.
+- `GOAL.md:51` - Documented image-derived and prompt-derived asset conversion as an offline or pre-baked content pipeline that produces inspectable terminal sprite data.
+- `GOAL.md:164` - Updated the design principles to add expressive visual defaults and explicit visual asset inspectability.
+
+**Reasoning.** The goal needed to say more than "terminal-native"; it needed to explain what kind of terminal-native visual ambition the engine is pursuing. The chosen framing keeps the user's desired realism and richer presentation while preserving Verryte's existing architecture: gameplay remains semantic and shared, rendering maps semantic visual IDs to terminal cells, and converted assets become deterministic data instead of opaque runtime behavior.
+
+**Assumptions.** Unicode block rendering and 24-bit color are allowed as opt-in high-fidelity terminal modes, while strict ASCII and low-color fallbacks remain required. Prompt-derived visuals are treated as content authoring inputs, not as a mandatory runtime dependency.
+
+**Gotchas.** The half-block technique is technically terminal graphics rather than strict ASCII, so the goal describes it as optional Unicode block sprite rendering and keeps plain ASCII as a fallback. The section intentionally avoids promising GPU, GUI, or hidden image rendering because that would conflict with the project's terminal boundary.
+
+**Follow-ups.** A future implementation milestone should introduce visual asset data structures, sprite anchoring/clipping rules, and an Ash Courier proof replacing symbolic player rendering with a recognizable courier sprite while preserving script/test observability.
