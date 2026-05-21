@@ -1456,3 +1456,23 @@ beyond perhaps a seed or layout.
 **Gotchas.** The half-block technique is technically terminal graphics rather than strict ASCII, so the goal describes it as optional Unicode block sprite rendering and keeps plain ASCII as a fallback. The section intentionally avoids promising GPU, GUI, or hidden image rendering because that would conflict with the project's terminal boundary.
 
 **Follow-ups.** A future implementation milestone should introduce visual asset data structures, sprite anchoring/clipping rules, and an Ash Courier proof replacing symbolic player rendering with a recognizable courier sprite while preserving script/test observability.
+
+## 2026-05-22 - Phase 4: High-Fidelity Visual Asset System & Layered Compositing rendering
+
+**Goal.** Migrate Verryte engine and Ash Courier proving game to a high-fidelity visual asset rendering system supporting sub-pixel upper half block (▀) conversions, a centralized registry, and layered compositing with standard ASCII fallbacks.
+
+**Changes.**
+- `crates/verryte-terminal/Cargo.toml` - Added the `image` library dependency for pre-baked/offline PNG compilation.
+- `crates/verryte-terminal/src/lib.rs` - Implemented high-fidelity `image_to_grid` sub-pixel upper half block compilation, the `VisualAsset` variant enum, and the centralized `VisualRegistry` struct with robust unit tests.
+- `prototype/ash-courier/src/components.rs` - Added `high_fidelity` boolean toggle state to `GameState` (defaulting to true).
+- `prototype/ash-courier/src/action.rs` - Added `ToggleHighFidelity` action, command bindings (`fidelity`, `toggle_high_fidelity`), and shortcut keys (`f`/`F`).
+- `prototype/ash-courier/src/game.rs` - Integrated a default pre-baked `VisualRegistry` preloaded with premium sub-pixel block sprites for player, walls, floors, goal, hazards, battery packs, and recharge stations. Fully rewrote `render_with_palette` to execute layered semantic compositing in high-fidelity mode.
+- `prototype/ash-courier/src/lib.rs` - Disabled high-fidelity by default in the `fresh()` test helper to maintain 100% backward-compatibility for existing tests, and added `test_high_fidelity_rendering_toggles` to verify high-fidelity rendering and fallbacks.
+
+**Reasoning.** The sub-pixel upper half block compilation technique double vertical resolution by mapping two pixels to a single character cell, bringing highly realistic, premium visuals to terminal boundaries without requiring graphical rendering engines. Visual registry and fallback systems cleanly separate game logic from display rendering, while a boolean state flag maintains simple and robust backward compatibility.
+
+**Assumptions.** We assumed high-fidelity rendering should default to true to offer users the premium visual theme immediately out-of-the-box, whilst setting it to false in test configurations ensures ASCII assertions continue to succeed.
+
+**Gotchas.** Frame snapshot comparisons in tests require standard ASCII characters like `@` or `.`, so high-fidelity must be disabled during those specific unit tests. We added `state_mut()` to Game to easily alter `high_fidelity` in tests and script commands.
+
+**Follow-ups.** None. All 220+ workspace checks, unit tests, clippy lints, and format rules pass flawlessly.
