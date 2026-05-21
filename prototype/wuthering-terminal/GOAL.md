@@ -167,7 +167,10 @@ Every gameplay path must converge on the same action system:
 ### Assets
 
 - Character sprites: `assets/kael.png`, `assets/lyra.png`, `assets/mira.png`,
-  `assets/blight-sovereign.png` (source PNGs, compiled at runtime via `image_to_grid`)
+  `assets/blight-sovereign.png` (loaded at runtime via `image_to_grid()`,
+  resized and chroma-keyed on startup. The `image` crate is a runtime
+  dependency. Build-time const array compilation via `scratch/png_to_ansi.py`
+  is the long-term plan but not needed for the prototype.)
 - No external runtime dependencies — all rendering is terminal-native
 
 ## What This Prototype Does NOT Do

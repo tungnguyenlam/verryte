@@ -34,8 +34,8 @@ project context, not runtime code.
 - `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
   Validates the engine on complex mechanics: team swapping, Echo absorption,
   parry/dodge, and adaptive-resolution sprite rendering. Source PNG artwork
-  lives in `prototype/wuthering-terminal/assets/` and is compiled to static
-  Rust arrays at build time via `scratch/png_to_ansi.py`.
+  lives in `prototype/wuthering-terminal/assets/` and is loaded at runtime
+  via `image_to_grid()` with chroma-key transparency.
 - `prototype/vfx-demo` - interactive terminal VFX demo proving particles,
   screen shake, flash overlays, floating damage text, AoE rings, and a
   real-time 30 FPS game loop. Loads PNG character sprites (Kael, Mira,
