@@ -132,6 +132,7 @@ impl Game {
         world.insert_resource(Rng::seed(seed));
         world.insert_resource(Events::<GameEvent>::with_capacity(16));
         world.insert_resource(MessageLog::with_max(50));
+        world.insert_resource(default_visual_registry());
 
         let mut schedule = Schedule::new();
         schedule.add_named("chaser", crate::systems::chaser_system);
@@ -322,6 +323,7 @@ impl Game {
         world.insert_resource(Rng::seed(seed));
         world.insert_resource(Events::<GameEvent>::with_capacity(16));
         world.insert_resource(MessageLog::with_max(50));
+        world.insert_resource(default_visual_registry());
 
         let mut schedule = Schedule::new();
         schedule.add_named("chaser", crate::systems::chaser_system);
@@ -398,6 +400,12 @@ impl Game {
     pub fn state(&self) -> &GameState {
         self.world
             .resource::<GameState>()
+            .expect("game state resource")
+    }
+
+    pub fn state_mut(&mut self) -> &mut GameState {
+        self.world
+            .resource_mut::<GameState>()
             .expect("game state resource")
     }
 
@@ -660,6 +668,11 @@ impl Game {
             Action::ToggleLog => {
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.show_log = !state.show_log;
+                ActionResult::Updated
+            }
+            Action::ToggleHighFidelity => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                state.high_fidelity = !state.high_fidelity;
                 ActionResult::Updated
             }
             mv => mv.direction().map_or(ActionResult::NoOp, |direction| {
@@ -945,6 +958,7 @@ impl Game {
         }
         out.push_str(&format!("state_camera_zoom: {}\n", state.camera_zoom));
         out.push_str(&format!("state_show_log: {}\n", state.show_log));
+        out.push_str(&format!("state_high_fidelity: {}\n", state.high_fidelity));
 
         out.push_str("messages:\n");
         if let Some(log) = self.world.resource::<MessageLog>() {
@@ -1041,6 +1055,7 @@ impl Game {
         let mut state_cursor: Option<Position> = None;
         let mut state_camera_zoom = 0i16;
         let mut state_show_log = true;
+        let mut state_high_fidelity = true;
 
         let mut messages = Vec::new();
 
@@ -1222,6 +1237,11 @@ impl Game {
                             .parse()
                             .map_err(|e| format!("invalid state_show_log: {}", e))?
                     }
+                    "state_high_fidelity" => {
+                        state_high_fidelity = v
+                            .parse()
+                            .map_err(|e| format!("invalid state_high_fidelity: {}", e))?
+                    }
                     _ => {}
                 }
             }
@@ -1264,6 +1284,7 @@ impl Game {
             cursor: state_cursor,
             camera_zoom: state_camera_zoom,
             show_log: state_show_log,
+            high_fidelity: state_high_fidelity,
         };
         new_world.insert_resource(game_state);
 
@@ -1276,6 +1297,7 @@ impl Game {
         new_world.insert_resource(log);
 
         new_world.insert_resource(map);
+        new_world.insert_resource(default_visual_registry());
 
         let mut player_entity_opt = None;
         for ent in entities {
@@ -1353,63 +1375,182 @@ impl Game {
     pub fn render_with_palette(&self, palette: &ColorPalette) -> Grid {
         let map = self.map();
         let mut grid = Grid::new(map.width, map.height);
+
+        let registry = self.world.resource::<verryte_terminal::VisualRegistry>();
+        let high_fidelity = self.state().high_fidelity;
+
+        // Render terrain
         for y in 0..map.height {
             for x in 0..map.width {
-                let cell = match map.tile(x as i16, y as i16) {
-                    Tile::Wall => Cell::new('#').with_fg(palette.wall),
-                    Tile::Floor => Cell::new('.').with_fg(palette.floor),
-                    Tile::Goal => Cell::new('G').with_fg(palette.goal),
+                let cell = if high_fidelity {
+                    if let Some(reg) = registry {
+                        let key = match map.tile(x as i16, y as i16) {
+                            Tile::Wall => "wall",
+                            Tile::Floor => "floor",
+                            Tile::Goal => "goal",
+                        };
+                        if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
+                            reg.get(key)
+                        {
+                            *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+                        } else {
+                            match map.tile(x as i16, y as i16) {
+                                Tile::Wall => Cell::new('#').with_fg(palette.wall),
+                                Tile::Floor => Cell::new('.').with_fg(palette.floor),
+                                Tile::Goal => Cell::new('G').with_fg(palette.goal),
+                            }
+                        }
+                    } else {
+                        match map.tile(x as i16, y as i16) {
+                            Tile::Wall => Cell::new('#').with_fg(palette.wall),
+                            Tile::Floor => Cell::new('.').with_fg(palette.floor),
+                            Tile::Goal => Cell::new('G').with_fg(palette.goal),
+                        }
+                    }
+                } else {
+                    match map.tile(x as i16, y as i16) {
+                        Tile::Wall => Cell::new('#').with_fg(palette.wall),
+                        Tile::Floor => Cell::new('.').with_fg(palette.floor),
+                        Tile::Goal => Cell::new('G').with_fg(palette.goal),
+                    }
                 };
                 grid.put(x, y, cell);
             }
         }
+
         // Layer order: hazards, packages, player on top.
         for (_, pos, _) in self.world.query2::<Position, Hazard>() {
-            grid.put(
-                pos.x as u16,
-                pos.y as u16,
-                Cell::new('h').with_fg(palette.hazard),
-            );
+            let cell = if high_fidelity {
+                if let Some(reg) = registry {
+                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
+                        reg.get("hazard")
+                    {
+                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+                    } else {
+                        Cell::new('h').with_fg(palette.hazard)
+                    }
+                } else {
+                    Cell::new('h').with_fg(palette.hazard)
+                }
+            } else {
+                Cell::new('h').with_fg(palette.hazard)
+            };
+            grid.put(pos.x as u16, pos.y as u16, cell);
         }
+
         for (_, pos, _) in self.world.query2::<Position, Chaser>() {
-            grid.put(
-                pos.x as u16,
-                pos.y as u16,
-                Cell::new('c').with_fg(palette.player),
-            );
+            let cell = if high_fidelity {
+                if let Some(reg) = registry {
+                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
+                        reg.get("chaser")
+                    {
+                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+                    } else {
+                        Cell::new('c').with_fg(palette.player)
+                    }
+                } else {
+                    Cell::new('c').with_fg(palette.player)
+                }
+            } else {
+                Cell::new('c').with_fg(palette.player)
+            };
+            grid.put(pos.x as u16, pos.y as u16, cell);
         }
+
         for (_, pos, _) in self.world.query2::<Position, Package>() {
-            grid.put(
-                pos.x as u16,
-                pos.y as u16,
-                Cell::new('p').with_fg(palette.item),
-            );
+            let cell = if high_fidelity {
+                if let Some(reg) = registry {
+                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
+                        reg.get("package")
+                    {
+                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+                    } else {
+                        Cell::new('p').with_fg(palette.item)
+                    }
+                } else {
+                    Cell::new('p').with_fg(palette.item)
+                }
+            } else {
+                Cell::new('p').with_fg(palette.item)
+            };
+            grid.put(pos.x as u16, pos.y as u16, cell);
         }
+
         for (_, pos, _) in self.world.query2::<Position, BatteryPack>() {
-            grid.put(
-                pos.x as u16,
-                pos.y as u16,
-                Cell::new('b').with_fg(palette.item),
-            );
+            let cell = if high_fidelity {
+                if let Some(reg) = registry {
+                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
+                        reg.get("battery_pack")
+                    {
+                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+                    } else {
+                        Cell::new('b').with_fg(palette.item)
+                    }
+                } else {
+                    Cell::new('b').with_fg(palette.item)
+                }
+            } else {
+                Cell::new('b').with_fg(palette.item)
+            };
+            grid.put(pos.x as u16, pos.y as u16, cell);
         }
+
         for (_, pos, _) in self.world.query2::<Position, RechargeStation>() {
-            grid.put(
-                pos.x as u16,
-                pos.y as u16,
-                Cell::new('R').with_fg(palette.item),
-            );
+            let cell = if high_fidelity {
+                if let Some(reg) = registry {
+                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
+                        reg.get("recharge_station")
+                    {
+                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+                    } else {
+                        Cell::new('R').with_fg(palette.item)
+                    }
+                } else {
+                    Cell::new('R').with_fg(palette.item)
+                }
+            } else {
+                Cell::new('R').with_fg(palette.item)
+            };
+            grid.put(pos.x as u16, pos.y as u16, cell);
         }
+
         let player_pos = self.player_position();
-        let player_color = if self.state().has_package {
-            palette.player
+        let player_cell = if high_fidelity {
+            if let Some(reg) = registry {
+                let key = if self.state().has_package {
+                    "player_carrying"
+                } else {
+                    "player"
+                };
+                if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) = reg.get(key)
+                {
+                    *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+                } else {
+                    let player_color = if self.state().has_package {
+                        palette.player
+                    } else {
+                        palette.foreground
+                    };
+                    Cell::new('@').with_fg(player_color)
+                }
+            } else {
+                let player_color = if self.state().has_package {
+                    palette.player
+                } else {
+                    palette.foreground
+                };
+                Cell::new('@').with_fg(player_color)
+            }
         } else {
-            palette.foreground
+            let player_color = if self.state().has_package {
+                palette.player
+            } else {
+                palette.foreground
+            };
+            Cell::new('@').with_fg(player_color)
         };
-        grid.put(
-            player_pos.x as u16,
-            player_pos.y as u16,
-            Cell::new('@').with_fg(player_color),
-        );
+        grid.put(player_pos.x as u16, player_pos.y as u16, player_cell);
+
         if let Some(cursor) = self.state().cursor {
             if self.map().in_bounds(cursor) {
                 let x = cursor.x as u16;
@@ -1624,3 +1765,75 @@ pub const DEFAULT_MAP: &[&str] = &[
     "#.......G#",
     "##########",
 ];
+
+pub fn default_visual_registry() -> verryte_terminal::VisualRegistry {
+    use verryte_terminal::{Cell, CellAttrs, Color, Grid, VisualAsset, VisualRegistry};
+
+    let mut registry = VisualRegistry::new();
+
+    let make_block = |fg: Color, bg: Color| {
+        let mut g = Grid::new(1, 1);
+        g.put(
+            0,
+            0,
+            Cell {
+                glyph: '▀',
+                fg,
+                bg,
+                attrs: CellAttrs::NONE,
+            },
+        );
+        VisualAsset::BlockSprite(g)
+    };
+
+    // Walls
+    registry.register("wall", make_block(Color(70, 70, 85), Color(35, 35, 45)));
+    registry.register_single_cell("wall_fallback", '#', Color::GREY, Color::BLACK);
+
+    // Floors
+    registry.register("floor", make_block(Color(25, 25, 30), Color(15, 15, 20)));
+    registry.register_single_cell("floor_fallback", '.', Color::DARK_GREY, Color::BLACK);
+
+    // Goal
+    registry.register("goal", make_block(Color(255, 215, 0), Color(184, 134, 11)));
+    registry.register_single_cell("goal_fallback", 'G', Color::YELLOW, Color::BLACK);
+
+    // Player (without package)
+    registry.register("player", make_block(Color(0, 255, 255), Color(0, 100, 150)));
+    registry.register_single_cell("player_fallback", '@', Color::CYAN, Color::BLACK);
+
+    // Player with package
+    registry.register(
+        "player_carrying",
+        make_block(Color(255, 165, 0), Color(139, 69, 19)),
+    );
+    registry.register_single_cell("player_carrying_fallback", '@', Color::YELLOW, Color::BLACK);
+
+    // Hazard
+    registry.register("hazard", make_block(Color(220, 20, 60), Color(100, 0, 10)));
+    registry.register_single_cell("hazard_fallback", 'h', Color::RED, Color::BLACK);
+
+    // Chaser
+    registry.register("chaser", make_block(Color(255, 0, 255), Color(100, 0, 100)));
+    registry.register_single_cell("chaser_fallback", 'c', Color::MAGENTA, Color::BLACK);
+
+    // Package
+    registry.register("package", make_block(Color(50, 205, 50), Color(0, 80, 20)));
+    registry.register_single_cell("package_fallback", 'p', Color::GREEN, Color::BLACK);
+
+    // Battery pack
+    registry.register(
+        "battery_pack",
+        make_block(Color(173, 255, 47), Color(0, 100, 50)),
+    );
+    registry.register_single_cell("battery_pack_fallback", 'b', Color::GREEN, Color::BLACK);
+
+    // Recharge station
+    registry.register(
+        "recharge_station",
+        make_block(Color(30, 144, 255), Color(0, 0, 128)),
+    );
+    registry.register_single_cell("recharge_station_fallback", 'R', Color::BLUE, Color::BLACK);
+
+    registry
+}

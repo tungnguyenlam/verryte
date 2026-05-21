@@ -26,7 +26,9 @@ mod tests {
     use verryte_terminal::ColorPalette;
 
     fn fresh() -> Game {
-        Game::new()
+        let mut g = Game::new();
+        g.state_mut().high_fidelity = false;
+        g
     }
 
     #[test]
@@ -1282,5 +1284,35 @@ mod tests {
 
         g.step(Action::ToggleLog);
         assert!(g.state().show_log);
+    }
+
+    #[test]
+    fn test_high_fidelity_rendering_toggles() {
+        let layout = &["#######", "#@...G#", "#######"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        // 1. By default, high_fidelity is true.
+        assert!(g.state().high_fidelity);
+
+        // Render viewport in high-fidelity
+        let frame_high = g.render();
+        // Wall/floor tiles in high fidelity use the half block character '▀'
+        let wall_cell = frame_high.get(0, 0).unwrap();
+        assert_eq!(wall_cell.glyph, '▀');
+        let floor_cell = frame_high.get(2, 1).unwrap();
+        assert_eq!(floor_cell.glyph, '▀');
+
+        // 2. Toggle high-fidelity
+        g.step(Action::ToggleHighFidelity);
+        assert!(!g.state().high_fidelity);
+
+        // Render viewport in low-fidelity (ASCII fallback)
+        let frame_low = g.render();
+        let wall_cell_low = frame_low.get(0, 0).unwrap();
+        assert_eq!(wall_cell_low.glyph, '#');
+        let floor_cell_low = frame_low.get(2, 1).unwrap();
+        assert_eq!(floor_cell_low.glyph, '.');
+        let player_cell_low = frame_low.get(1, 1).unwrap();
+        assert_eq!(player_cell_low.glyph, '@');
     }
 }

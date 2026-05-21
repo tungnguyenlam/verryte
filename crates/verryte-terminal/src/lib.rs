@@ -2134,9 +2134,161 @@ impl Grid {
     }
 }
 
+/// Translates a graphical image into a terminal cell grid using half-block characters (`▀`).
+/// Each cell represents two vertical pixels: the foreground color matches the top pixel,
+/// and the background color matches the bottom pixel.
+pub fn image_to_grid(img: &image::DynamicImage) -> Grid {
+    use image::GenericImageView;
+    let (width, height) = img.dimensions();
+    let grid_width = width as u16;
+    let grid_height = ((height + 1) / 2) as u16;
+    let mut grid = Grid::new(grid_width, grid_height);
+
+    for y in 0..grid_height {
+        for x in 0..grid_width {
+            let img_x = x as u32;
+            let img_y_top = (y * 2) as u32;
+            let img_y_bottom = (y * 2 + 1) as u32;
+
+            let top_pixel = img.get_pixel(img_x, img_y_top);
+            let top_fg = Color(top_pixel[0], top_pixel[1], top_pixel[2]);
+
+            let bottom_bg = if img_y_bottom < height {
+                let bottom_pixel = img.get_pixel(img_x, img_y_bottom);
+                Color(bottom_pixel[0], bottom_pixel[1], bottom_pixel[2])
+            } else {
+                Color::BLACK
+            };
+
+            let cell = Cell {
+                glyph: '▀',
+                fg: top_fg,
+                bg: bottom_bg,
+                attrs: CellAttrs::NONE,
+            };
+            grid.put(x, y, cell);
+        }
+    }
+
+    grid
+}
+
+/// Represents a visual asset mapping to different fidelity levels.
+#[derive(Clone, Debug)]
+pub enum VisualAsset {
+    SingleCell { glyph: char, fg: Color, bg: Color },
+    BlockSprite(Grid),
+    Animated(Sprite),
+}
+
+/// A registry mapping semantic keys to visual assets.
+#[derive(Clone, Debug)]
+pub struct VisualRegistry {
+    assets: std::collections::HashMap<String, VisualAsset>,
+}
+
+impl VisualRegistry {
+    pub fn new() -> Self {
+        Self {
+            assets: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn register(&mut self, name: &str, asset: VisualAsset) {
+        self.assets.insert(name.to_string(), asset);
+    }
+
+    pub fn register_single_cell(&mut self, name: &str, glyph: char, fg: Color, bg: Color) {
+        self.register(name, VisualAsset::SingleCell { glyph, fg, bg });
+    }
+
+    pub fn get(&self, name: &str) -> Option<&VisualAsset> {
+        self.assets.get(name)
+    }
+}
+
+impl Default for VisualRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_image_to_grid_conversion() {
+        use image::{DynamicImage, Rgb, RgbImage};
+        let mut img_buf = RgbImage::new(2, 4);
+        // Column 0, top pair: (0,0) red, (0,1) green
+        img_buf.put_pixel(0, 0, Rgb([255, 0, 0]));
+        img_buf.put_pixel(0, 1, Rgb([0, 255, 0]));
+        // Column 0, bottom pair: (0,2) blue, (0,3) yellow
+        img_buf.put_pixel(0, 2, Rgb([0, 0, 255]));
+        img_buf.put_pixel(0, 3, Rgb([255, 255, 0]));
+
+        // Column 1, top pair: (1,0) white, (1,1) black
+        img_buf.put_pixel(1, 0, Rgb([255, 255, 255]));
+        img_buf.put_pixel(1, 1, Rgb([0, 0, 0]));
+        // Column 1, bottom pair: (1,2) cyan, (1,3) magenta
+        img_buf.put_pixel(1, 2, Rgb([0, 255, 255]));
+        img_buf.put_pixel(1, 3, Rgb([255, 0, 255]));
+
+        let img = DynamicImage::ImageRgb8(img_buf);
+        let grid = image_to_grid(&img);
+
+        assert_eq!(grid.width(), 2);
+        assert_eq!(grid.height(), 2);
+
+        // Check cell at (0, 0)
+        let cell_0_0 = grid.get(0, 0).unwrap();
+        assert_eq!(cell_0_0.glyph, '▀');
+        assert_eq!(cell_0_0.fg, Color(255, 0, 0));
+        assert_eq!(cell_0_0.bg, Color(0, 255, 0));
+
+        // Check cell at (0, 1)
+        let cell_0_1 = grid.get(0, 1).unwrap();
+        assert_eq!(cell_0_1.glyph, '▀');
+        assert_eq!(cell_0_1.fg, Color(0, 0, 255));
+        assert_eq!(cell_0_1.bg, Color(255, 255, 0));
+
+        // Check cell at (1, 0)
+        let cell_1_0 = grid.get(1, 0).unwrap();
+        assert_eq!(cell_1_0.glyph, '▀');
+        assert_eq!(cell_1_0.fg, Color(255, 255, 255));
+        assert_eq!(cell_1_0.bg, Color(0, 0, 0));
+
+        // Check cell at (1, 1)
+        let cell_1_1 = grid.get(1, 1).unwrap();
+        assert_eq!(cell_1_1.glyph, '▀');
+        assert_eq!(cell_1_1.fg, Color(0, 255, 255));
+        assert_eq!(cell_1_1.bg, Color(255, 0, 255));
+    }
+
+    #[test]
+    fn test_visual_registry_lookups() {
+        let mut registry = VisualRegistry::new();
+        registry.register_single_cell("test", '@', Color::RED, Color::BLACK);
+
+        let grid = Grid::new(2, 2);
+        registry.register("block", VisualAsset::BlockSprite(grid.clone()));
+
+        if let Some(VisualAsset::SingleCell { glyph, fg, bg }) = registry.get("test") {
+            assert_eq!(*glyph, '@');
+            assert_eq!(*fg, Color::RED);
+            assert_eq!(*bg, Color::BLACK);
+        } else {
+            panic!("Expected SingleCell");
+        }
+
+        if let Some(VisualAsset::BlockSprite(g)) = registry.get("block") {
+            assert_eq!(g.width(), 2);
+            assert_eq!(g.height(), 2);
+        } else {
+            panic!("Expected BlockSprite");
+        }
+    }
 
     #[test]
     fn put_and_get_within_bounds() {

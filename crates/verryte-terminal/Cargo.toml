@@ -7,3 +7,6 @@ description = "Terminal-cell primitives for Verryte: Color, Cell, Grid, layered 
 
 [lints]
 workspace = true
+
+[dependencies]
+image = "0.24"

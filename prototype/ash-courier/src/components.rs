@@ -53,6 +53,7 @@ pub struct GameState {
     pub cursor: Option<Position>,
     pub camera_zoom: i16,
     pub show_log: bool,
+    pub high_fidelity: bool,
 }
 
 impl Default for GameState {
@@ -65,6 +66,7 @@ impl Default for GameState {
             cursor: None,
             camera_zoom: 0,
             show_log: true,
+            high_fidelity: true,
         }
     }
 }

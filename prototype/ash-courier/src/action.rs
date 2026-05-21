@@ -21,6 +21,7 @@ pub enum Action {
     Quit,
     ZoomCamera(i16),
     ToggleLog,
+    ToggleHighFidelity,
 }
 
 impl Action {
@@ -82,6 +83,8 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('['), Action::ZoomCamera(-1));
     b.bind(Key::Char(']'), Action::ZoomCamera(1));
     b.bind(Key::Tab, Action::ToggleLog);
+    b.bind(Key::Char('f'), Action::ToggleHighFidelity);
+    b.bind(Key::Char('F'), Action::ToggleHighFidelity);
     b.bind_mouse(MouseButton::Right, true, Action::Scan);
     b.bind_mouse(MouseButton::Middle, true, Action::Wait);
     b
@@ -110,6 +113,8 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("quit", Action::Quit);
     c.bind_name("clear_cursor", Action::ClearCursor);
     c.bind_name("toggle_log", Action::ToggleLog);
+    c.bind_name("toggle_high_fidelity", Action::ToggleHighFidelity);
+    c.bind_name("fidelity", Action::ToggleHighFidelity);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('N', Action::MoveNorth);
@@ -133,6 +138,8 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('q', Action::Quit);
     c.bind_glyph('c', Action::ClearCursor);
     c.bind_glyph('C', Action::ClearCursor);
+    c.bind_glyph('f', Action::ToggleHighFidelity);
+    c.bind_glyph('F', Action::ToggleHighFidelity);
     c
 }
 
@@ -148,6 +155,9 @@ pub fn default_commands() -> CommandBindings<Action> {
 pub fn resolve_command_token(token: &str) -> Option<Action> {
     if token == "toggle_log" {
         return Some(Action::ToggleLog);
+    }
+    if token == "toggle_high_fidelity" || token == "fidelity" {
+        return Some(Action::ToggleHighFidelity);
     }
     if let Some(zoom_str) = token.strip_prefix("zoom:") {
         if let Ok(amount) = zoom_str.parse::<i16>() {
