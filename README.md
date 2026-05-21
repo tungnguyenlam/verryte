@@ -20,7 +20,9 @@ those pieces as the first proving game.
   `World::resource_or_insert` / `World::resource_or_insert_with` for lazy
   resource setup,
   `World::entities()` for iterating all live entities, `World::spawn_batch` for
-  bulk entity creation with shared components, `Schedule::clear`,
+  bulk entity creation with shared components, `World::query_mut` for mutable
+  single-component queries, `Entity::is_invalid` for sentinel checks,
+  `Entity` with `Display` (`index#generation`), `Schedule::clear`,
   `Schedule::remove_by_name`, and `Schedule::run_system_by_name` for runtime
   schedule management and selective execution, `Schedule::add_conditional` for
   systems gated by a `RunCondition` predicate, `Schedule::add_stage` /
@@ -44,14 +46,18 @@ those pieces as the first proving game.
   `CommandBindings::merge` for layering command sets,
   `Bindings::iter_keys` / `iter_mouse` and `CommandBindings::iter_names` /
   `iter_glyphs` for binding inspection,
+  `Bindings::clear` / `CommandBindings::clear` for removing all bindings,
   `InputRouter::total_actions_queued()` for lifetime action metrics,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
   movement, insertion, deletion, max length, dirty tracking, and Ctrl shortcut
   editing (A/E/B/F/U/W/K), and
   `ActionSource` with `Display`/`FromStr` for serialization and debugging.
-- `crates/verryte-map` - reusable grid/spatial primitives: `Point`,
-  `Direction`, `Direction8` (both with `from_offset` for converting deltas
-  to directions), `Size`, typed `TileGrid<T>`, cardinal and
+  `Key`, `MouseButton`, and `ScrollDirection` have `Display` for logging.
+- `crates/verryte-map` - reusable grid/spatial primitives: `Point`
+  (with `Display`, `From<(i16,i16)>`), `Direction` (with `Display`,
+  `From<Direction> for Direction8`), `Direction8` (with `Display`,
+  `TryFrom<Direction8> for Direction`, both with `from_offset` for converting
+  deltas to directions), `Size` (with `Display`, `From<(u16,u16)>`), typed `TileGrid<T>`, cardinal and
   8-directional neighbors, line tracing (both `Vec`-returning `line_between`
   and lazy `LineIter`), visibility queries, line-of-sight checks
   (`is_line_of_sight_clear`), recursive shadowcasting field-of-view
@@ -64,7 +70,7 @@ those pieces as the first proving game.
   `TileGrid::find_matching`, `TileGrid::points_in`,
   `TileGrid::points_matching`, and `TileGrid::density` for map analysis,
   `TileGrid::bounds` and
-  `TileGrid::bounding_box_of` with `Bounds`/`Bounds::clamp_point` plus
+  `TileGrid::bounding_box_of` with `Bounds` (with `Display`) / `Bounds::clamp_point` plus
   `Bounds::intersects` / `Bounds::intersection` for spatial framing, `SpatialHash<T>`
   for efficient proximity queries on grid-based
   entities, cellular automata cave
@@ -94,7 +100,10 @@ those pieces as the first proving game.
   and `draw_sparkline` for inline data visualization with Unicode block
   characters.
   `CellAttrs` supports all attribute combinations (bold, dim, italic, underline,
-  blink, reverse) with correct ANSI escape code generation. `Grid::fill_background`
+  blink, reverse) with correct ANSI escape code generation, plus
+  inspection getters (`is_bold`, `is_underline`, `is_dim`, `is_italic`,
+  `is_reverse`, `is_blink`, `is_empty`). `Color` has `Display` (`#RRGGBB`),
+  `From<(u8,u8,u8)>`. `Rect` has `Display` and `From<(u16,u16,u16,u16)>`. `Grid::fill_background`
   sets the background color across all cells without changing glyphs.
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
   input polling with full modifier key passthrough (Ctrl, Alt, Shift produce

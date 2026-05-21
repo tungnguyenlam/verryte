@@ -26,6 +26,24 @@ impl Color {
     pub const DARK_GREY: Color = Color(60, 60, 60);
 }
 
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#{:02X}{:02X}{:02X}", self.0, self.1, self.2)
+    }
+}
+
+impl From<(u8, u8, u8)> for Color {
+    fn from((r, g, b): (u8, u8, u8)) -> Self {
+        Color(r, g, b)
+    }
+}
+
+impl From<Color> for (u8, u8, u8) {
+    fn from(c: Color) -> Self {
+        (c.0, c.1, c.2)
+    }
+}
+
 /// Bitflags for terminal cell text attributes.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CellAttrs {
@@ -75,6 +93,35 @@ impl CellAttrs {
     pub fn blink(mut self) -> Self {
         self.blink = true;
         self
+    }
+
+    pub fn is_bold(self) -> bool {
+        self.bold
+    }
+
+    pub fn is_underline(self) -> bool {
+        self.underline
+    }
+
+    pub fn is_dim(self) -> bool {
+        self.dim
+    }
+
+    pub fn is_italic(self) -> bool {
+        self.italic
+    }
+
+    pub fn is_reverse(self) -> bool {
+        self.reverse
+    }
+
+    pub fn is_blink(self) -> bool {
+        self.blink
+    }
+
+    /// Returns `true` if no attributes are set.
+    pub fn is_empty(self) -> bool {
+        self == Self::NONE
     }
 
     /// Convert to ANSI escape sequences. Returns an empty string if no attributes are set.
@@ -307,6 +354,22 @@ impl Rect {
     }
 }
 
+impl std::fmt::Display for Rect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Rect({},{} {}x{})",
+            self.x, self.y, self.width, self.height
+        )
+    }
+}
+
+impl From<(u16, u16, u16, u16)> for Rect {
+    fn from((x, y, w, h): (u16, u16, u16, u16)) -> Self {
+        Rect::new(x, y, w, h)
+    }
+}
+
 /// Horizontal text alignment within a bounded width.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Alignment {
@@ -314,6 +377,16 @@ pub enum Alignment {
     Left,
     Center,
     Right,
+}
+
+impl std::fmt::Display for Alignment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Alignment::Left => write!(f, "Left"),
+            Alignment::Center => write!(f, "Center"),
+            Alignment::Right => write!(f, "Right"),
+        }
+    }
 }
 
 /// A fixed-size rectangular cell buffer.
@@ -598,6 +671,197 @@ impl Grid {
             );
             cx = cx.saturating_add(1);
         }
+    }
+
+    /// Write a string containing markup styling tags directly into standard grid cells.
+    ///
+    /// Supported tags:
+    /// - `[b]` (bold), `[u]` (underline), `[d]` (dim), `[i]` (italic), `[r]` (reverse)
+    /// - `[fg:#rrggbb]` or `[fg:color_name]` to set foreground color
+    /// - `[bg:#rrggbb]` or `[bg:color_name]` to set background color
+    /// - `[/b]`, `[/u]`, `[/d]`, `[/i]`, `[/r]`, `[/fg]`, `[/bg]` to close/restore tags
+    /// - `[/]` to reset all formatting back to the root default state
+    /// - `[[` to render a literal `[`
+    ///
+    /// Returns the number of cells/glyphs written or an error string if markup is malformed.
+    pub fn write_rich(&mut self, x: u16, y: u16, markup: &str) -> Result<u16, String> {
+        #[derive(Clone, Debug)]
+        struct MarkupState {
+            bold: bool,
+            underline: bool,
+            dim: bool,
+            italic: bool,
+            reverse: bool,
+            fg: Color,
+            bg: Color,
+        }
+
+        let mut state_stack = vec![MarkupState {
+            bold: false,
+            underline: false,
+            dim: false,
+            italic: false,
+            reverse: false,
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+        }];
+
+        let parse_color = |s: &str| -> Result<Color, String> {
+            if s.starts_with('#') {
+                if s.len() != 7 {
+                    return Err(format!("Invalid hex color length: {}", s));
+                }
+                let r = u8::from_str_radix(&s[1..3], 16).map_err(|e| e.to_string())?;
+                let g = u8::from_str_radix(&s[3..5], 16).map_err(|e| e.to_string())?;
+                let b = u8::from_str_radix(&s[5..7], 16).map_err(|e| e.to_string())?;
+                Ok(Color(r, g, b))
+            } else {
+                match s.to_ascii_lowercase().as_str() {
+                    "black" => Ok(Color::BLACK),
+                    "white" => Ok(Color::WHITE),
+                    "red" => Ok(Color::RED),
+                    "green" => Ok(Color::GREEN),
+                    "blue" => Ok(Color::BLUE),
+                    "yellow" => Ok(Color::YELLOW),
+                    "cyan" => Ok(Color::CYAN),
+                    "magenta" => Ok(Color::MAGENTA),
+                    "grey" | "gray" => Ok(Color::GREY),
+                    "dark_grey" | "dark_gray" | "darkgrey" | "darkgray" => Ok(Color::DARK_GREY),
+                    _ => Err(format!("Unknown color name: {}", s)),
+                }
+            }
+        };
+
+        let mut chars = markup.chars().peekable();
+        let mut cx = x;
+        let mut written_count = 0;
+
+        while let Some(ch) = chars.next() {
+            if ch == '[' {
+                if chars.peek() == Some(&'[') {
+                    // Escaped '['
+                    chars.next();
+                    let current = state_stack.last().unwrap();
+                    let mut attrs = CellAttrs::NONE;
+                    attrs.bold = current.bold;
+                    attrs.underline = current.underline;
+                    attrs.dim = current.dim;
+                    attrs.italic = current.italic;
+                    attrs.reverse = current.reverse;
+
+                    if cx < self.width {
+                        self.put(
+                            cx,
+                            y,
+                            Cell {
+                                glyph: '[',
+                                fg: current.fg,
+                                bg: current.bg,
+                                attrs,
+                            },
+                        );
+                        cx += 1;
+                    }
+                    written_count += 1;
+                } else {
+                    // Parse tag
+                    let mut tag_content = String::new();
+                    let mut closed = false;
+                    while let Some(&next_ch) = chars.peek() {
+                        if next_ch == ']' {
+                            chars.next();
+                            closed = true;
+                            break;
+                        } else {
+                            tag_content.push(chars.next().unwrap());
+                        }
+                    }
+
+                    if !closed {
+                        return Err("Unclosed markup tag".to_string());
+                    }
+
+                    let current = state_stack.last().unwrap().clone();
+                    match tag_content.as_str() {
+                        "b" => {
+                            let mut next_state = current;
+                            next_state.bold = true;
+                            state_stack.push(next_state);
+                        }
+                        "u" => {
+                            let mut next_state = current;
+                            next_state.underline = true;
+                            state_stack.push(next_state);
+                        }
+                        "d" => {
+                            let mut next_state = current;
+                            next_state.dim = true;
+                            state_stack.push(next_state);
+                        }
+                        "i" => {
+                            let mut next_state = current;
+                            next_state.italic = true;
+                            state_stack.push(next_state);
+                        }
+                        "r" => {
+                            let mut next_state = current;
+                            next_state.reverse = true;
+                            state_stack.push(next_state);
+                        }
+                        "/b" | "/u" | "/d" | "/i" | "/r" | "/fg" | "/bg" => {
+                            if state_stack.len() > 1 {
+                                state_stack.pop();
+                            }
+                        }
+                        "/" => {
+                            while state_stack.len() > 1 {
+                                state_stack.pop();
+                            }
+                        }
+                        other => {
+                            if let Some(rest) = other.strip_prefix("fg:") {
+                                let color = parse_color(rest)?;
+                                let mut next_state = current;
+                                next_state.fg = color;
+                                state_stack.push(next_state);
+                            } else if let Some(rest) = other.strip_prefix("bg:") {
+                                let color = parse_color(rest)?;
+                                let mut next_state = current;
+                                next_state.bg = color;
+                                state_stack.push(next_state);
+                            } else {
+                                return Err(format!("Unknown markup tag: {}", other));
+                            }
+                        }
+                    }
+                }
+            } else {
+                let current = state_stack.last().unwrap();
+                let mut attrs = CellAttrs::NONE;
+                attrs.bold = current.bold;
+                attrs.underline = current.underline;
+                attrs.dim = current.dim;
+                attrs.italic = current.italic;
+                attrs.reverse = current.reverse;
+
+                if cx < self.width {
+                    self.put(
+                        cx,
+                        y,
+                        Cell {
+                            glyph: ch,
+                            fg: current.fg,
+                            bg: current.bg,
+                            attrs,
+                        },
+                    );
+                    cx += 1;
+                }
+                written_count += 1;
+            }
+        }
+
+        Ok(written_count)
     }
 
     /// Write multiple lines starting at `(x, y)`, clipping to the grid height.
@@ -3294,5 +3558,136 @@ mod tests {
         };
         let ansi = attrs.to_ansi();
         assert_eq!(ansi, "\x1b[1;2;3;4;5;7m");
+    }
+
+    #[test]
+    fn color_display() {
+        assert_eq!(format!("{}", Color(255, 128, 0)), "#FF8000");
+        assert_eq!(format!("{}", Color::BLACK), "#000000");
+        assert_eq!(format!("{}", Color::WHITE), "#E6E6E6");
+    }
+
+    #[test]
+    fn color_from_tuple_roundtrip() {
+        let c = Color::from((100, 200, 50));
+        assert_eq!(c, Color(100, 200, 50));
+        let (r, g, b): (u8, u8, u8) = c.into();
+        assert_eq!((r, g, b), (100, 200, 50));
+    }
+
+    #[test]
+    fn rect_display() {
+        let r = Rect::new(10, 5, 80, 24);
+        assert_eq!(format!("{}", r), "Rect(10,5 80x24)");
+    }
+
+    #[test]
+    fn rect_from_tuple() {
+        let r = Rect::from((1, 2, 3, 4));
+        assert_eq!(r, Rect::new(1, 2, 3, 4));
+    }
+
+    #[test]
+    fn alignment_display() {
+        assert_eq!(format!("{}", Alignment::Left), "Left");
+        assert_eq!(format!("{}", Alignment::Center), "Center");
+        assert_eq!(format!("{}", Alignment::Right), "Right");
+    }
+
+    #[test]
+    fn cell_attrs_getters() {
+        let none = CellAttrs::NONE;
+        assert!(!none.is_bold());
+        assert!(!none.is_underline());
+        assert!(!none.is_dim());
+        assert!(!none.is_italic());
+        assert!(!none.is_reverse());
+        assert!(!none.is_blink());
+        assert!(none.is_empty());
+
+        let bold_italic = CellAttrs::NONE.bold().italic();
+        assert!(bold_italic.is_bold());
+        assert!(bold_italic.is_italic());
+        assert!(!bold_italic.is_underline());
+        assert!(!bold_italic.is_empty());
+    }
+
+    #[test]
+    fn test_grid_write_rich_simple() {
+        let mut grid = Grid::new(10, 1);
+        let written = grid.write_rich(0, 0, "[b]hello[/b]").unwrap();
+        assert_eq!(written, 5);
+        let cell = grid.get(0, 0).unwrap();
+        assert_eq!(cell.glyph, 'h');
+        assert!(cell.attrs.is_bold());
+    }
+
+    #[test]
+    fn test_grid_write_rich_nested() {
+        let mut grid = Grid::new(20, 1);
+        let written = grid
+            .write_rich(0, 0, "[b]bold [i]italic[/i] bold[/b]")
+            .unwrap();
+        assert_eq!(written, 16);
+
+        // "bold "
+        let c1 = grid.get(0, 0).unwrap();
+        assert!(c1.attrs.is_bold());
+        assert!(!c1.attrs.is_italic());
+
+        // "italic"
+        let c2 = grid.get(5, 0).unwrap();
+        assert!(c2.attrs.is_bold());
+        assert!(c2.attrs.is_italic());
+
+        // " bold"
+        let c3 = grid.get(12, 0).unwrap();
+        assert!(c3.attrs.is_bold());
+        assert!(!c3.attrs.is_italic());
+    }
+
+    #[test]
+    fn test_grid_write_rich_colors() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_rich(0, 0, "[fg:#FF0000]red[bg:blue]blue[/bg][/fg]")
+            .unwrap();
+
+        let c_red = grid.get(0, 0).unwrap();
+        assert_eq!(c_red.fg, Color(255, 0, 0));
+        assert_eq!(c_red.bg, Color::BLACK);
+
+        let c_blue = grid.get(3, 0).unwrap();
+        assert_eq!(c_blue.fg, Color(255, 0, 0));
+        assert_eq!(c_blue.bg, Color::BLUE);
+    }
+
+    #[test]
+    fn test_grid_write_rich_reset() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_rich(0, 0, "[b][fg:red]test[/]plain").unwrap();
+
+        let c_test = grid.get(0, 0).unwrap();
+        assert!(c_test.attrs.is_bold());
+        assert_eq!(c_test.fg, Color::RED);
+
+        let c_plain = grid.get(4, 0).unwrap();
+        assert!(!c_plain.attrs.is_bold());
+        assert_eq!(c_plain.fg, Color::WHITE);
+    }
+
+    #[test]
+    fn test_grid_write_rich_escaped() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_rich(0, 0, "[[hello").unwrap();
+        let cell = grid.get(0, 0).unwrap();
+        assert_eq!(cell.glyph, '[');
+    }
+
+    #[test]
+    fn test_grid_write_rich_errors() {
+        let mut grid = Grid::new(10, 1);
+        assert!(grid.write_rich(0, 0, "[unclosed").is_err());
+        assert!(grid.write_rich(0, 0, "[fg:invalid]").is_err());
+        assert!(grid.write_rich(0, 0, "[invalid_tag]text").is_err());
     }
 }

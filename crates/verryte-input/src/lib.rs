@@ -82,12 +82,65 @@ impl Key {
     }
 }
 
+impl std::fmt::Display for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Key::Char(c) => write!(f, "{c}"),
+            Key::Enter => write!(f, "Enter"),
+            Key::Esc => write!(f, "Esc"),
+            Key::Tab => write!(f, "Tab"),
+            Key::Backspace => write!(f, "Backspace"),
+            Key::Space => write!(f, "Space"),
+            Key::Up => write!(f, "Up"),
+            Key::Down => write!(f, "Down"),
+            Key::Left => write!(f, "Left"),
+            Key::Right => write!(f, "Right"),
+            Key::Home => write!(f, "Home"),
+            Key::End => write!(f, "End"),
+            Key::PageUp => write!(f, "PageUp"),
+            Key::PageDown => write!(f, "PageDown"),
+            Key::Insert => write!(f, "Insert"),
+            Key::Delete => write!(f, "Delete"),
+            Key::F(n) => write!(f, "F{n}"),
+            Key::Modified {
+                char: c,
+                ctrl,
+                alt,
+                shift,
+            } => {
+                let mut parts = Vec::new();
+                if *ctrl {
+                    parts.push("Ctrl");
+                }
+                if *alt {
+                    parts.push("Alt");
+                }
+                if *shift {
+                    parts.push("Shift");
+                }
+                parts.push("");
+                write!(f, "{}{c}", parts.join("+"))
+            }
+        }
+    }
+}
+
 /// Mouse buttons in a terminal-friendly shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
     Right,
     Middle,
+}
+
+impl std::fmt::Display for MouseButton {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MouseButton::Left => write!(f, "Left"),
+            MouseButton::Right => write!(f, "Right"),
+            MouseButton::Middle => write!(f, "Middle"),
+        }
+    }
 }
 
 /// Mouse wheel scroll direction.
@@ -97,6 +150,17 @@ pub enum ScrollDirection {
     Down,
     Left,
     Right,
+}
+
+impl std::fmt::Display for ScrollDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScrollDirection::Up => write!(f, "Up"),
+            ScrollDirection::Down => write!(f, "Down"),
+            ScrollDirection::Left => write!(f, "Left"),
+            ScrollDirection::Right => write!(f, "Right"),
+        }
+    }
 }
 
 /// A coarse mouse binding key.
@@ -243,6 +307,57 @@ impl<A> ActionTrace<A> {
     pub fn into_steps(self) -> Vec<QueuedAction<A>> {
         self.steps
     }
+
+    /// Serialize the action trace to a detailed string using a custom formatter for action values.
+    ///
+    /// Each step is written on its own line in the format: `Source:ActionString`.
+    pub fn to_detailed_string<F>(&self, mut format_action: F) -> String
+    where
+        F: FnMut(&A) -> String,
+    {
+        let mut out = String::new();
+        for step in &self.steps {
+            out.push_str(&format!(
+                "{}:{}\n",
+                step.source,
+                format_action(&step.action)
+            ));
+        }
+        out
+    }
+
+    /// Deserialize an action trace from a detailed string using a custom action parser.
+    ///
+    /// The string should have one action per line in the format: `Source:ActionString`.
+    /// Empty lines and lines starting with `#` are ignored as comments.
+    pub fn from_detailed_string<F>(s: &str, mut parse_action: F) -> Result<Self, String>
+    where
+        F: FnMut(&str) -> Option<A>,
+    {
+        let mut steps = Vec::new();
+        for (line_idx, line) in s.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let (source_str, action_str) = trimmed.split_once(':').ok_or_else(|| {
+                format!("invalid line {} (missing ':'): {:?}", line_idx + 1, trimmed)
+            })?;
+            let source = source_str
+                .trim()
+                .parse::<ActionSource>()
+                .map_err(|e| format!("invalid source on line {}: {}", line_idx + 1, e))?;
+            let action = parse_action(action_str.trim()).ok_or_else(|| {
+                format!(
+                    "unrecognized action on line {}: {:?}",
+                    line_idx + 1,
+                    action_str
+                )
+            })?;
+            steps.push(QueuedAction::new(action, source));
+        }
+        Ok(Self { steps })
+    }
 }
 
 impl<A: Clone> ActionTrace<A> {
@@ -385,6 +500,13 @@ impl<A: Clone> Bindings<A> {
         for (direction, action) in other.by_scroll {
             self.by_scroll.insert(direction, action);
         }
+    }
+
+    /// Remove all key, mouse, and scroll bindings.
+    pub fn clear(&mut self) {
+        self.by_key.clear();
+        self.by_mouse.clear();
+        self.by_scroll.clear();
     }
 }
 
@@ -571,6 +693,12 @@ impl<A: Clone> CommandBindings<A> {
         for (glyph, action) in other.by_glyph {
             self.by_glyph.insert(glyph, action);
         }
+    }
+
+    /// Remove all name and glyph command bindings.
+    pub fn clear(&mut self) {
+        self.by_name.clear();
+        self.by_glyph.clear();
     }
 }
 
@@ -1447,6 +1575,50 @@ mod tests {
         bindings.bind(Key::Right, Move::East);
         bindings.bind(Key::Char('.'), Move::Wait);
         InputRouter::new(bindings)
+    }
+
+    #[test]
+    fn action_trace_serialization_round_trip() {
+        let mut trace = ActionTrace::new();
+        trace.push(Move::North, ActionSource::Terminal);
+        trace.push(Move::Wait, ActionSource::Script);
+        trace.push(Move::Scan(3), ActionSource::Agent);
+
+        let format_move = |m: &Move| match m {
+            Move::North => "north".to_owned(),
+            Move::South => "south".to_owned(),
+            Move::East => "east".to_owned(),
+            Move::West => "west".to_owned(),
+            Move::Wait => "wait".to_owned(),
+            Move::Scan(r) => format!("scan:{}", r),
+        };
+
+        let parse_move = |s: &str| match s {
+            "north" => Some(Move::North),
+            "south" => Some(Move::South),
+            "east" => Some(Move::East),
+            "west" => Some(Move::West),
+            "wait" => Some(Move::Wait),
+            other => {
+                if let Some(r_str) = other.strip_prefix("scan:") {
+                    r_str.parse::<u16>().ok().map(Move::Scan)
+                } else {
+                    None
+                }
+            }
+        };
+
+        let serialized = trace.to_detailed_string(format_move);
+        assert_eq!(serialized, "Terminal:north\nScript:wait\nAgent:scan:3\n");
+
+        let deserialized = ActionTrace::from_detailed_string(&serialized, parse_move).unwrap();
+        assert_eq!(deserialized, trace);
+
+        // Check comments and blank lines are ignored
+        let comment_str = "# this is a comment\n\nTerminal:north\n  # inner comment\nScript:wait\n";
+        let parsed_comments = ActionTrace::from_detailed_string(comment_str, parse_move).unwrap();
+        assert_eq!(parsed_comments.len(), 2);
+        assert_eq!(parsed_comments.into_steps()[0].action, Move::North);
     }
 
     #[test]
@@ -2608,5 +2780,62 @@ mod tests {
         router.pop_bindings();
         assert!(router.handle(InputEvent::Key(Key::Up)));
         assert!(!router.handle(InputEvent::Key(Key::Char('a'))));
+    }
+
+    #[test]
+    fn key_display() {
+        assert_eq!(format!("{}", Key::Char('a')), "a");
+        assert_eq!(format!("{}", Key::Enter), "Enter");
+        assert_eq!(format!("{}", Key::F(5)), "F5");
+        assert_eq!(
+            format!("{}", Key::modified('x', true, false, false)),
+            "Ctrl+x"
+        );
+        assert_eq!(
+            format!("{}", Key::modified('a', true, true, false)),
+            "Ctrl+Alt+a"
+        );
+    }
+
+    #[test]
+    fn mouse_button_display() {
+        assert_eq!(format!("{}", MouseButton::Left), "Left");
+        assert_eq!(format!("{}", MouseButton::Right), "Right");
+    }
+
+    #[test]
+    fn scroll_direction_display() {
+        assert_eq!(format!("{}", ScrollDirection::Up), "Up");
+        assert_eq!(format!("{}", ScrollDirection::Down), "Down");
+    }
+
+    #[test]
+    fn bindings_clear_removes_all() {
+        let mut bindings = Bindings::new();
+        bindings.bind(Key::Char('a'), 1);
+        bindings.bind(Key::Char('b'), 2);
+        bindings.bind_mouse(MouseButton::Left, true, 3);
+        bindings.bind_scroll(ScrollDirection::Up, 4);
+        assert_eq!(bindings.len(), 4);
+
+        bindings.clear();
+        assert!(bindings.is_empty());
+        assert_eq!(bindings.len(), 0);
+        assert_eq!(bindings.translate(Key::Char('a')), None);
+    }
+
+    #[test]
+    fn command_bindings_clear_removes_all() {
+        let mut cmds = CommandBindings::new();
+        cmds.bind_name("north", 1);
+        cmds.bind_glyph('n', 1);
+        assert_eq!(cmds.name_count(), 1);
+        assert_eq!(cmds.glyph_count(), 1);
+
+        cmds.clear();
+        assert_eq!(cmds.name_count(), 0);
+        assert_eq!(cmds.glyph_count(), 0);
+        assert_eq!(cmds.translate_name("north"), None);
+        assert_eq!(cmds.translate_glyph('n'), None);
     }
 }

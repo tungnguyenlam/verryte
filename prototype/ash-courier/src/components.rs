@@ -88,3 +88,19 @@ pub enum GameEvent {
     },
     OutcomeChanged(Outcome),
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChaserBehavior {
+    Patrol {
+        waypoints: Vec<Position>,
+        current: usize,
+    },
+    ScentTracker {
+        max_scent_age: usize,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScentTrail {
+    pub positions: Vec<Position>,
+}

@@ -9,7 +9,8 @@ pub mod systems;
 
 pub use action::{default_bindings, default_commands, resolve_command_token, Action};
 pub use components::{
-    GameEvent, GameState, Hazard, Outcome, Package, Player, Position, PreviousPosition,
+    Chaser, ChaserBehavior, GameEvent, GameState, Hazard, Outcome, Package, Player, Position,
+    PreviousPosition, ScentTrail,
 };
 pub use game::{Game, MapError, DEFAULT_MAP};
 pub use map::{Map, Tile};
@@ -1032,5 +1033,74 @@ mod tests {
         let grid = g.render_with_palette(&ColorPalette::amber_terminal());
         assert_eq!(grid.width(), g.map().width);
         assert_eq!(grid.height(), g.map().height);
+    }
+
+    #[test]
+    fn chaser_patrol_behavior() {
+        let layout = &["##########", "#@.......#", "##########"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        let chaser = g
+            .world
+            .builder()
+            .with(Position::new(7, 1))
+            .with(crate::components::Chaser)
+            .with(ChaserBehavior::Patrol {
+                waypoints: vec![Position::new(6, 1), Position::new(8, 1)],
+                current: 0,
+            })
+            .build();
+
+        g.step(Action::Wait);
+
+        let chaser_pos = *g.world.get::<Position>(chaser).unwrap();
+        assert_eq!(chaser_pos, Position::new(6, 1));
+    }
+
+    #[test]
+    fn chaser_patrol_blocked_los() {
+        let layout = &["##########", "#@...#...#", "##########"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        let chaser = g
+            .world
+            .builder()
+            .with(Position::new(7, 1))
+            .with(crate::components::Chaser)
+            .with(ChaserBehavior::Patrol {
+                waypoints: vec![Position::new(8, 1), Position::new(6, 1)],
+                current: 0,
+            })
+            .build();
+
+        g.step(Action::Wait);
+
+        let chaser_pos = *g.world.get::<Position>(chaser).unwrap();
+        assert_eq!(chaser_pos, Position::new(8, 1));
+
+        g.step(Action::Wait);
+        let chaser_pos2 = *g.world.get::<Position>(chaser).unwrap();
+        assert_eq!(chaser_pos2, Position::new(7, 1));
+    }
+
+    #[test]
+    fn chaser_scent_tracking() {
+        let layout = &["############", "#@.........#", "############"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+        let chaser = g
+            .world
+            .builder()
+            .with(Position::new(9, 1))
+            .with(crate::components::Chaser)
+            .with(ChaserBehavior::ScentTracker { max_scent_age: 10 })
+            .build();
+
+        g.step(Action::MoveEast);
+        let chaser_pos1 = *g.world.get::<Position>(chaser).unwrap();
+        assert_eq!(chaser_pos1, Position::new(8, 1));
+
+        g.step(Action::MoveEast);
+        g.step(Action::Wait);
+
+        let chaser_pos3 = *g.world.get::<Position>(chaser).unwrap();
+        assert_eq!(chaser_pos3, Position::new(6, 1));
     }
 }

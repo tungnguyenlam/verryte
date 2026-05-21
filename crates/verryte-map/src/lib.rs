@@ -67,6 +67,24 @@ impl Point {
     }
 }
 
+impl std::fmt::Display for Point {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{}", self.x, self.y)
+    }
+}
+
+impl From<(i16, i16)> for Point {
+    fn from((x, y): (i16, i16)) -> Self {
+        Point { x, y }
+    }
+}
+
+impl From<Point> for (i16, i16) {
+    fn from(p: Point) -> Self {
+        (p.x, p.y)
+    }
+}
+
 /// Integer points on a straight line, including both endpoints.
 ///
 /// Uses Bresenham stepping so terminal games can ask map questions like line of
@@ -212,6 +230,23 @@ impl Direction {
     }
 }
 
+impl std::fmt::Display for Direction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Direction::North => write!(f, "North"),
+            Direction::South => write!(f, "South"),
+            Direction::East => write!(f, "East"),
+            Direction::West => write!(f, "West"),
+        }
+    }
+}
+
+impl From<Direction> for Direction8 {
+    fn from(d: Direction) -> Self {
+        Direction8::from_direction(d)
+    }
+}
+
 /// Eight-directional movement on a 2D grid (cardinal + diagonal).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Direction8 {
@@ -327,6 +362,28 @@ impl Direction8 {
     }
 }
 
+impl std::fmt::Display for Direction8 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Direction8::North => write!(f, "N"),
+            Direction8::NorthEast => write!(f, "NE"),
+            Direction8::East => write!(f, "E"),
+            Direction8::SouthEast => write!(f, "SE"),
+            Direction8::South => write!(f, "S"),
+            Direction8::SouthWest => write!(f, "SW"),
+            Direction8::West => write!(f, "W"),
+            Direction8::NorthWest => write!(f, "NW"),
+        }
+    }
+}
+
+impl TryFrom<Direction8> for Direction {
+    type Error = ();
+    fn try_from(d: Direction8) -> Result<Self, ()> {
+        d.to_direction().ok_or(())
+    }
+}
+
 /// Width and height of a rectangular grid.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Size {
@@ -348,6 +405,24 @@ impl Size {
             && point.y >= 0
             && (point.x as u16) < self.width
             && (point.y as u16) < self.height
+    }
+}
+
+impl std::fmt::Display for Size {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
+}
+
+impl From<(u16, u16)> for Size {
+    fn from((width, height): (u16, u16)) -> Self {
+        Size { width, height }
+    }
+}
+
+impl From<Size> for (u16, u16) {
+    fn from(s: Size) -> Self {
+        (s.width, s.height)
     }
 }
 
@@ -1899,6 +1974,86 @@ impl<T> TileGrid<T> {
 
         visible
     }
+
+    /// Returns integer points on the straight line from `start` to `end`,
+    /// including both endpoints.
+    pub fn raycast(&self, start: Point, end: Point) -> Vec<Point> {
+        line_between(start, end)
+    }
+
+    /// Casts a ray from `start` to `end` until it hits an opaque tile or goes out of bounds.
+    ///
+    /// The starting point is always included and is not checked for opacity.
+    /// Returns a tuple containing the path of points traversed (including the first
+    /// blocked point, if any) and a boolean indicating whether the ray was blocked.
+    pub fn raycast_opaque<F>(
+        &self,
+        start: Point,
+        end: Point,
+        mut is_opaque: F,
+    ) -> (Vec<Point>, bool)
+    where
+        F: FnMut(Point, &T) -> bool,
+    {
+        let mut path = Vec::new();
+        let mut blocked = false;
+        for p in LineIter::new(start, end) {
+            path.push(p);
+            if p == start {
+                continue;
+            }
+            if let Some(tile) = self.get(p) {
+                if is_opaque(p, tile) {
+                    blocked = true;
+                    break;
+                }
+            } else {
+                blocked = true;
+                break;
+            }
+        }
+        (path, blocked)
+    }
+
+    /// Flood-fills from a starting point, returning all connected passable points.
+    ///
+    /// Performs a breadth-first search using 4-way cardinal connectivity.
+    pub fn flood_fill<F>(
+        &self,
+        start: Point,
+        mut is_passable: F,
+    ) -> std::collections::HashSet<Point>
+    where
+        F: FnMut(Point, &T) -> bool,
+    {
+        let mut visited = std::collections::HashSet::new();
+        if !self.in_bounds(start) {
+            return visited;
+        }
+        if let Some(tile) = self.get(start) {
+            if !is_passable(start, tile) {
+                return visited;
+            }
+        }
+
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(start);
+        visited.insert(start);
+
+        while let Some(current) = queue.pop_front() {
+            for neighbor in current.neighbors4() {
+                if !visited.contains(&neighbor) {
+                    if let Some(tile) = self.get(neighbor) {
+                        if is_passable(neighbor, tile) {
+                            visited.insert(neighbor);
+                            queue.push_back(neighbor);
+                        }
+                    }
+                }
+            }
+        }
+        visited
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2093,6 +2248,12 @@ impl Bounds {
             self.x as i16 + (self.width / 2) as i16,
             self.y as i16 + (self.height / 2) as i16,
         )
+    }
+}
+
+impl std::fmt::Display for Bounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({},{} {}x{})", self.x, self.y, self.width, self.height)
     }
 }
 
@@ -3543,5 +3704,113 @@ mod tests {
         assert_eq!(cropped.width(), 0);
         assert_eq!(cropped.height(), 0);
         assert!(cropped.is_empty());
+    }
+
+    #[test]
+    fn point_display() {
+        assert_eq!(format!("{}", Point::new(3, 5)), "3,5");
+        assert_eq!(format!("{}", Point::new(-1, 0)), "-1,0");
+        assert_eq!(format!("{}", Point::ZERO), "0,0");
+    }
+
+    #[test]
+    fn point_from_tuple_roundtrip() {
+        let p = Point::from((7, -3));
+        assert_eq!(p, Point::new(7, -3));
+        let (x, y): (i16, i16) = p.into();
+        assert_eq!((x, y), (7, -3));
+    }
+
+    #[test]
+    fn direction_display() {
+        assert_eq!(format!("{}", Direction::North), "North");
+        assert_eq!(format!("{}", Direction::East), "East");
+    }
+
+    #[test]
+    fn direction_from_into_direction8() {
+        let d8: Direction8 = Direction::South.into();
+        assert_eq!(d8, Direction8::South);
+    }
+
+    #[test]
+    fn direction8_display() {
+        assert_eq!(format!("{}", Direction8::NorthEast), "NE");
+        assert_eq!(format!("{}", Direction8::SouthWest), "SW");
+    }
+
+    #[test]
+    fn direction8_try_into_direction_cardinal() {
+        let d: Direction = Direction8::East.try_into().unwrap();
+        assert_eq!(d, Direction::East);
+    }
+
+    #[test]
+    fn direction8_try_into_direction_diagonal_fails() {
+        let result: Result<Direction, ()> = Direction8::NorthEast.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn size_display() {
+        assert_eq!(format!("{}", Size::new(80, 24)), "80x24");
+    }
+
+    #[test]
+    fn size_from_tuple_roundtrip() {
+        let s = Size::from((10, 20));
+        assert_eq!(s, Size::new(10, 20));
+        let (w, h): (u16, u16) = s.into();
+        assert_eq!((w, h), (10, 20));
+    }
+
+    #[test]
+    fn bounds_display() {
+        let b = Bounds::new(10, 5, 30, 20);
+        assert_eq!(format!("{}", b), "(10,5 30x20)");
+    }
+
+    #[test]
+    fn test_tilegrid_raycast() {
+        let grid = TileGrid::new(5, 5, '.');
+        let path = grid.raycast(Point::new(0, 0), Point::new(3, 3));
+        assert_eq!(path.len(), 4);
+        assert_eq!(path[0], Point::new(0, 0));
+        assert_eq!(path[3], Point::new(3, 3));
+    }
+
+    #[test]
+    fn test_tilegrid_raycast_opaque() {
+        let ascii = "\
+.....
+.###.
+.....";
+        let grid = TileGrid::from_ascii(ascii, |ch, _, _| ch);
+        let (path, blocked) =
+            grid.raycast_opaque(Point::new(0, 1), Point::new(4, 1), |_, &tile| tile == '#');
+        assert!(blocked);
+        assert_eq!(path.len(), 2);
+        assert_eq!(path[0], Point::new(0, 1));
+        assert_eq!(path[1], Point::new(1, 1));
+    }
+
+    #[test]
+    fn test_tilegrid_flood_fill() {
+        let closed_ascii = "\
+###
+#.#
+###";
+        let closed_grid = TileGrid::from_ascii(closed_ascii, |ch, _, _| ch);
+        let filled = closed_grid.flood_fill(Point::new(1, 1), |_, &tile| tile == '.');
+        assert_eq!(filled.len(), 1);
+        assert!(filled.contains(&Point::new(1, 1)));
+
+        let open_ascii = "\
+...
+..#
+###";
+        let open_grid = TileGrid::from_ascii(open_ascii, |ch, _, _| ch);
+        let open_filled = open_grid.flood_fill(Point::new(0, 0), |_, &tile| tile == '.');
+        assert_eq!(open_filled.len(), 5);
     }
 }

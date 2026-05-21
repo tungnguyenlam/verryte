@@ -195,6 +195,46 @@ impl World {
         self.alive.iter().filter(|a| **a).count()
     }
 
+    /// Despawn every live entity in the world, dropping all their components.
+    ///
+    /// Returns the number of entities removed. Useful for wiping the game world
+    /// between levels or test setups without discarding global resources.
+    pub fn despawn_all(&mut self) -> usize {
+        let entities: Vec<Entity> = self.entities().collect();
+        let count = entities.len();
+        for entity in entities {
+            self.despawn(entity);
+        }
+        count
+    }
+
+    /// Spawn a new entity with a single component immediately.
+    ///
+    /// This is an ergonomic alternative to the builder pattern for simple
+    /// single-component entities like tags, simple markers, or resources.
+    pub fn spawn_with1<A>(&mut self, component: A) -> Entity
+    where
+        A: 'static + Send + Sync,
+    {
+        let entity = self.spawn();
+        self.insert(entity, component);
+        entity
+    }
+
+    /// Spawn a new entity with two components immediately.
+    ///
+    /// Extremely common for basic spatial entities: `spawn_with2(Position, Marker)`.
+    pub fn spawn_with2<A, B>(&mut self, comp_a: A, comp_b: B) -> Entity
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+    {
+        let entity = self.spawn();
+        self.insert(entity, comp_a);
+        self.insert(entity, comp_b);
+        entity
+    }
+
     /// Iterate over all live entities.
     pub fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
         self.alive.iter().enumerate().filter_map(|(idx, &alive)| {
@@ -588,6 +628,36 @@ impl World {
                 }
             }
         }
+    }
+
+    /// Collect every live `(entity, &mut component)` pair for a given
+    /// component type. The mutable variant of [`query`](Self::query).
+    ///
+    /// This is useful when systems need to collect mutable references for
+    /// later processing rather than applying changes inside a `for_each_mut`
+    /// closure.
+    pub fn query_mut<T: 'static + Send + Sync>(&mut self) -> Vec<(Entity, &mut T)> {
+        let mut out = Vec::new();
+        let Some(column) = self.columns.get_mut(&TypeId::of::<T>()) else {
+            return out;
+        };
+        let Some(typed) = column.as_any_mut().downcast_mut::<TypedColumn<T>>() else {
+            return out;
+        };
+        for (i, slot) in typed.slots.iter_mut().enumerate() {
+            if let Some((gen, value)) = slot.as_mut() {
+                if i < self.alive.len() && self.alive[i] {
+                    out.push((
+                        Entity {
+                            index: i as u32,
+                            generation: *gen,
+                        },
+                        value,
+                    ));
+                }
+            }
+        }
+        out
     }
 
     /// Visit every live entity that has both `A` and `B`, yielding mutable
@@ -1647,5 +1717,97 @@ mod tests {
         let entities = world.spawn_batch(0, Counter(1));
         assert!(entities.is_empty());
         assert_eq!(world.entity_count(), 0);
+    }
+
+    #[test]
+    fn entity_display() {
+        let e = Entity {
+            index: 3,
+            generation: 2,
+        };
+        assert_eq!(format!("{}", e), "3#2");
+    }
+
+    #[test]
+    fn entity_is_invalid() {
+        assert!(Entity::INVALID.is_invalid());
+        let e = Entity {
+            index: 0,
+            generation: 1,
+        };
+        assert!(!e.is_invalid());
+    }
+
+    #[test]
+    fn query_mut_returns_mutable_refs() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Counter(10));
+        world.insert(b, Counter(20));
+
+        for (_, c) in world.query_mut::<Counter>() {
+            c.0 *= 2;
+        }
+
+        assert_eq!(world.get::<Counter>(a).unwrap().0, 20);
+        assert_eq!(world.get::<Counter>(b).unwrap().0, 40);
+    }
+
+    #[test]
+    fn query_mut_excludes_dead_entities() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Counter(1));
+        world.insert(b, Counter(2));
+        world.despawn(b);
+
+        let results = world.query_mut::<Counter>();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1 .0, 1);
+    }
+
+    #[test]
+    fn query_mut_empty_when_no_column() {
+        let mut world = World::new();
+        world.spawn();
+        assert!(world.query_mut::<Counter>().is_empty());
+    }
+
+    #[test]
+    fn world_despawn_all() {
+        let mut world = World::new();
+        world.spawn_with1(Counter(10));
+        world.spawn_with2(Counter(20), Pos(1, 2));
+        assert_eq!(world.entity_count(), 2);
+
+        let removed = world.despawn_all();
+        assert_eq!(removed, 2);
+        assert_eq!(world.entity_count(), 0);
+    }
+
+    #[test]
+    fn world_clear_resets_everything() {
+        let mut world = World::new();
+        world.spawn_with1(Counter(10));
+        world.insert_resource(Pos(3, 4));
+        assert_eq!(world.entity_count(), 1);
+        assert!(world.resource::<Pos>().is_some());
+
+        world.clear();
+        assert_eq!(world.entity_count(), 0);
+        assert!(world.resource::<Pos>().is_none());
+    }
+
+    #[test]
+    fn world_spawn_with_helpers() {
+        let mut world = World::new();
+        let e1 = world.spawn_with1(Counter(100));
+        let e2 = world.spawn_with2(Counter(200), Pos(5, 6));
+
+        assert_eq!(world.get::<Counter>(e1), Some(&Counter(100)));
+        assert_eq!(world.get::<Counter>(e2), Some(&Counter(200)));
+        assert_eq!(world.get::<Pos>(e2), Some(&Pos(5, 6)));
     }
 }

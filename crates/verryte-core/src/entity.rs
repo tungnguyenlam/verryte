@@ -29,4 +29,15 @@ impl Entity {
     pub fn generation(self) -> u32 {
         self.generation
     }
+
+    /// Returns `true` if this is the [`INVALID`](Self::INVALID) sentinel.
+    pub fn is_invalid(self) -> bool {
+        self.index == u32::MAX && self.generation == u32::MAX
+    }
+}
+
+impl std::fmt::Display for Entity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{}", self.index, self.generation)
+    }
 }
