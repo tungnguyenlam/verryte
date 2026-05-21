@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Batch preview all chibi sprites at multiple resolutions for visual QA."""
+
 import os, sys
+
 sys.path.insert(0, os.path.dirname(__file__))
 from png_to_ansi import png_to_ansi
 
-ASSETS = os.path.join(os.path.dirname(__file__), "..", "prototype", "wuthering-terminal", "assets")
+ASSETS = os.path.join(
+    os.path.dirname(__file__), "..", "prototype", "wuthering-terminal", "assets"
+)
 
 sprites = {
-    "ROVER": None,
-    "JIYAN": None,
-    "BAIZHI": None,
-    "CROWNLESS": None,
+    "KAEL": None,
+    "LYRA": None,
+    "MIRA": None,
+    "BLIGHT-SOVEREIGN": None,
 }
 
 # Find files by prefix match
@@ -27,9 +31,9 @@ RESOLUTIONS = [
 ]
 
 for res_label, w, h in RESOLUTIONS:
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  RESOLUTION: {res_label}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for name, path in sprites.items():
         if path is None:
             print(f"\n  [{name}] -- NOT FOUND")
@@ -43,6 +47,7 @@ for res_label, w, h in RESOLUTIONS:
 print("\n--- SIDE-BY-SIDE at 12x16 (12x8 cells) ---")
 # Render all 4 side by side at the standard 12x16 resolution
 from PIL import Image
+
 
 def get_pixel_grid(path, w, h, bg=(15, 15, 20)):
     img = Image.open(path).convert("RGBA")
@@ -60,8 +65,10 @@ def get_pixel_grid(path, w, h, bg=(15, 15, 20)):
         grid.append(row)
     return grid
 
+
 def ansi_block(top, bot):
     return f"\033[38;2;{top[0]};{top[1]};{top[2]}m\033[48;2;{bot[0]};{bot[1]};{bot[2]}m▀\033[0m"
+
 
 W, H = 12, 16
 SPACER = "  "

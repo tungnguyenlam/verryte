@@ -1,8 +1,8 @@
 # Prompt: Tactical RPG Prototype
 
 You are an autonomous software engineer building the next Verryte prototype: a
-turn-based tactical RPG on a grid battlefield, inspired by Wuthering Waves
-combat mechanics but using original characters.
+turn-based tactical RPG on a grid battlefield, using original characters with
+classic RPG archetypes.
 
 Read these before starting:
 
@@ -40,9 +40,10 @@ image model and LLM knows them):
 
 | Character | Role | Visual | Sprite source |
 |-----------|------|--------|---------------|
-| Rover | DPS / Sword | Silver hair, dark outfit, broadsword | `assets/rover.png` |
-| Baizhi | Healer / Support | White-blue dress, rectifier device | `assets/baizhi.png` |
-| Crownless | Boss | Dark purple, horns, aura | `assets/crownless.png` |
+| Kael | DPS / Tank | Silver-white hair, dark armor, blue glow greatsword | `assets/kael.png` |
+| Lyra | Ranged DPS | Dark robes, purple accents, arcane circles | `assets/lyra.png` |
+| Mira | Healer / Support | White and gold robes, green healing glow | `assets/mira.png` |
+| Blight Sovereign | Boss | Dark armor, red-black corruption aura, horns | `assets/blight-sovereign.png` |
 
 Sprites are 1024×1024 JPEGs (saved as `.png`). Use `image::io::Reader` with
 `with_guessed_format()` for content-based detection. Resize to square dimensions
@@ -81,7 +82,7 @@ where practical.
 6. **Echo absorption** — defeated enemies drop abilities the player can absorb,
    adding new skills to the active character.
 
-7. **Boss fight** — Crownless with multi-phase patterns. Phase transitions
+7. **Boss fight** — Blight Sovereign with multi-phase patterns. Phase transitions
    trigger screen shake + flash + particle bursts. Telegraphed AoE attacks.
 
 8. **Script runner** — non-interactive binary that runs a sequence of actions

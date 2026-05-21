@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-# Visualize a premium compact 12x16 chibi-style Rover portrait with dynamic color gradients
+# Visualize a premium compact 12x16 chibi-style Kael portrait with dynamic color gradients
+
 
 def lerp_color(c1, c2, t):
     t = max(0.0, min(1.0, t))
     return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
+
 
 # Color Palette Anchors
 BG_TOP = (15, 15, 25)
@@ -31,40 +33,46 @@ for r in range(16):
     # Vertical gradient factors
     y_factor = r / 15.0
     bg_color = lerp_color(BG_TOP, BG_BOTTOM, y_factor)
-    
+
     # Hair gradient interpolation
     hair_color = lerp_color(HAIR_TIP, HAIR_BASE, y_factor)
     hair_shadow_color = lerp_color(HAIR_BASE, HAIR_SHADOW, y_factor)
-    
+
     # Skin gradient interpolation
     skin_color = lerp_color(SKIN_LIGHT, SKIN_SHADOW, y_factor)
-    
+
     # Cloak gradient interpolation
     cloak_color = lerp_color(CLOAK_LIGHT, CLOAK_DARK, y_factor)
-    
+
     # Weapon flame gradient (Core -> Glow -> Edge)
     weapon_outer = lerp_color(WEAPON_GLOW, WEAPON_EDGE, y_factor)
     weapon_inner = lerp_color(WEAPON_CORE, WEAPON_GLOW, y_factor)
-    
+
     # Gold armor gradient
     gold_color = lerp_color(GOLD_BRIGHT, GOLD_DARK, y_factor)
 
     for c in range(12):
         # Center horizontal distance
         x_factor = abs(c - 5.5) / 5.5
-        
-        # 16-row Chibi Rover layout
+
+        # 16-row Chibi Kael layout
         if r < 3:
             # Spikey big hair head top
-            if (r == 0 and c in [3, 4, 5, 6, 7, 8]) or \
-               (r == 1 and c in [2, 3, 4, 5, 6, 7, 8, 9]) or \
-               (r == 2 and c in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
+            if (
+                (r == 0 and c in [3, 4, 5, 6, 7, 8])
+                or (r == 1 and c in [2, 3, 4, 5, 6, 7, 8, 9])
+                or (r == 2 and c in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+            ):
                 row.append(lerp_color(hair_color, HAIR_TIP, 1.0 - x_factor))
             else:
                 row.append(bg_color)
         elif r < 8:
             # Cute big head, giant eyes and face skin
-            if c in [0, 11] or (r == 3 and c in [1, 10]) or (r == 7 and c in [1, 2, 9, 10]):
+            if (
+                c in [0, 11]
+                or (r == 3 and c in [1, 10])
+                or (r == 7 and c in [1, 2, 9, 10])
+            ):
                 row.append(hair_shadow_color)
             elif c in [1, 2, 9, 10] and r < 6:
                 row.append(hair_shadow_color)
@@ -72,7 +80,7 @@ for r in range(16):
                 # Face Area
                 if r in [4, 5] and c in [3, 4, 7, 8]:
                     # Giant cute eyes
-                    eye_t = (r - 4)
+                    eye_t = r - 4
                     row.append(lerp_color(EYE_GLOW, EYE_DARK, eye_t))
                 elif r == 6 and c in [5, 6]:
                     row.append((255, 150, 150))  # Cute little blush mouth
@@ -110,11 +118,13 @@ for r in range(16):
                 row.append(fold_color)
             else:
                 row.append(bg_color)
-                
+
     portrait_pixels.append(row)
+
 
 def ansi_block(top_rgb, bottom_rgb):
     return f"\033[38;2;{top_rgb[0]};{top_rgb[1]};{top_rgb[2]}m\033[48;2;{bottom_rgb[0]};{bottom_rgb[1]};{bottom_rgb[2]}m▀\033[0m"
+
 
 def render_portrait():
     for cell_row in range(8):
@@ -122,6 +132,7 @@ def render_portrait():
         bottom_pixels = portrait_pixels[cell_row * 2 + 1]
         line = "".join(ansi_block(t, b) for t, b in zip(top_pixels, bottom_pixels))
         print("  " + line)
+
 
 print("\n=== CHIBI ROVER 12x16 GRADIENT PORTRAIT (12x8 cells) ===")
 render_portrait()

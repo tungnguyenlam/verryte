@@ -65,7 +65,7 @@ identity, and personality archetype that every model recognizes instantly.
 - Visual: White and gold robes, gentle expression, green healing glow
 - Element: Nature
 - Personality: Compassionate, determined, quietly fierce
-- Archetype: The white mage / cleric (Aerith, Baizhi, Rem)
+- Archetype: The white mage / cleric (Aerith, Yuna, Rem)
 
 ### Antagonist
 
@@ -166,8 +166,8 @@ Every gameplay path must converge on the same action system:
 
 ### Assets
 
-- Character sprites: `assets/rover.png`, `assets/baizhi.png`,
-  `assets/crownless.png` (source PNGs, compiled at runtime via `image_to_grid`)
+- Character sprites: `assets/kael.png`, `assets/lyra.png`, `assets/mira.png`,
+  `assets/blight-sovereign.png` (source PNGs, compiled at runtime via `image_to_grid`)
 - No external runtime dependencies — all rendering is terminal-native
 
 ## What This Prototype Does NOT Do

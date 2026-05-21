@@ -31,17 +31,16 @@ project context, not runtime code.
 - `prototype/ash-courier` - the first proving game. Use it to validate engine
   behavior through a small turn-based roguelike instead of inventing abstract
   engine features in isolation.
-- `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype
-  inspired by Wuthering Waves. Validates the engine on complex mechanics:
-  team swapping, Echo absorption, parry/dodge, and adaptive-resolution
-  chibi sprite rendering. Source PNG artwork lives in
-  `prototype/wuthering-terminal/assets/` and is compiled to static Rust
-  arrays at build time via `scratch/png_to_ansi.py`.
+- `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
+  Validates the engine on complex mechanics: team swapping, Echo absorption,
+  parry/dodge, and adaptive-resolution sprite rendering. Source PNG artwork
+  lives in `prototype/wuthering-terminal/assets/` and is compiled to static
+  Rust arrays at build time via `scratch/png_to_ansi.py`.
 - `prototype/vfx-demo` - interactive terminal VFX demo proving particles,
   screen shake, flash overlays, floating damage text, AoE rings, and a
-  real-time 30 FPS game loop. Loads PNG character sprites (Rover, Baizhi,
-  Crownless) from `wuthering-terminal/assets/` via `image_to_grid()` with
-  chroma-key transparency. Run with `cargo run -p vfx-demo`.
+  real-time 30 FPS game loop. Loads PNG character sprites (Kael, Mira,
+  Blight Sovereign) from `wuthering-terminal/assets/` via `image_to_grid()`
+  with chroma-key transparency. Run with `cargo run -p vfx-demo`.
 
 ## Engineering Priorities
 
@@ -82,15 +81,15 @@ As of the latest commits, Verryte has:
 - **TTY frontend** (`verryte-tty`): crossterm integration, real-time input translation, incremental cell-diff rendering.
 - **Ash Courier proving game** (`prototype/ash-courier`): turn-based roguelike, cursor control, step-to-target navigation, score/win/loss outcomes, batch input, replay support, script runner.
 - **Adaptive resolution sprites**: build-time PNG-to-Rust compilation pipeline (`scratch/png_to_ansi.py`) that bakes chibi pixel art into static `[[(u8, u8, u8); W]; H]` arrays at 6 resolution tiers (TINY through ULTRA). At runtime, `crossterm::terminal::size()` selects the best tier purely by terminal cols×rows.
-- **Wuthering Terminal prototype** (`prototype/wuthering-terminal`): 2D turn-based tactical RPG with 3-resonator QTE swapping, Echo absorption, telegraphed parry/dodge, and chibi sprite rendering.
-- **Terminal VFX demo** (`prototype/vfx-demo`): interactive demo proving real-time terminal animation at 30 FPS. Particle system (fire, ice, lightning, slash, burst, heal, AoE), screen shake, flash overlays, floating damage text, expanding ring indicators, diff-based rendering. Loads PNG character sprites (Rover, Baizhi, Crownless) from `wuthering-terminal/assets/` via `image_to_grid()` with chroma-key transparency. Run with `cargo run -p vfx-demo`.
+- **Wuthering Terminal prototype** (`prototype/wuthering-terminal`): 2D turn-based tactical RPG with team-swapping, Echo absorption, telegraphed parry/dodge, and adaptive-resolution sprite rendering.
+- **Terminal VFX demo** (`prototype/vfx-demo`): interactive demo proving real-time terminal animation at 30 FPS. Particle system (fire, ice, lightning, slash, burst, heal, AoE), screen shake, flash overlays, floating damage text, expanding ring indicators, diff-based rendering. Loads PNG character sprites (Kael, Mira, Blight Sovereign) from `wuthering-terminal/assets/` via `image_to_grid()` with chroma-key transparency. Run with `cargo run -p vfx-demo`.
 
 **Key architectural invariant:** all gameplay paths (terminal input, scripted commands, tests, replays, agent injection) converge on the same `Action` enum and `apply_action()` function. Do not split this path.
 
 ## Tactical RPG Direction
 
 The next major prototype direction is a **turn-based tactical RPG** on a grid
-battlefield, inspired by Wuthering Waves combat mechanics. The VFX demo
+battlefield. The VFX demo
 (`prototype/vfx-demo`) proved that terminal-based animation (particles, screen
 shake, flash, floating text, AoE rings) feels satisfying at 30 FPS with
 diff-based rendering.
@@ -114,12 +113,12 @@ parry/dodge, absorption system) but apply them to **original characters** using
 universally recognized RPG archetypes that every image model and LLM knows
 perfectly:
 
-| Archetype | Visual | Why it works |
-|-----------|--------|-------------|
-| Warrior | Sword + heavy armor | Every image model produces crisp pixel art |
-| Mage | Staff + robes + elemental effects | Universally recognized silhouette |
-| Healer/Cleric | White robes + holy light | Universally recognized |
-| Boss: Dark Knight | Dark armor + greatsword | Classic villain archetype |
+| Archetype | Visual | Character | Why it works |
+|-----------|--------|-----------|-------------|
+| Warrior | Sword + heavy armor | Kael | Every image model produces crisp pixel art |
+| Mage | Staff + robes + elemental effects | Lyra | Universally recognized silhouette |
+| Healer/Cleric | White robes + holy light | Mira | Universally recognized |
+| Boss: Dark Knight | Dark armor + greatsword | Blight Sovereign | Classic villain archetype |
 
 This gives us: zero legal risk, accurate sprite generation, deep LLM knowledge
 of mechanics, and the same gameplay depth.
@@ -149,13 +148,14 @@ Build order for the tactical RPG prototype:
 2. **Turn system** — player phase → enemy phase, action points per character.
 3. **Basic combat** — attack ranges, damage calculation, HP bars (VFX already
    proven).
-4. **Team swap QTE** — swap between 3 characters mid-turn, cooldown timer.
+4. **Team swap QTE** — swap between Kael, Lyra, and Mira mid-turn, cooldown
+   timer.
 5. **Telegraphed attacks** — enemy shows attack zones (colored tiles), player
    can dodge/parry.
 6. **Echo absorption** — defeated enemies drop abilities the player can absorb.
 7. **Sprite pipeline** — PNG → Rust const arrays via `scratch/png_to_ansi.py`,
    adaptive resolution.
-8. **Boss fight** — Dark Lord with multi-phase patterns.
+8. **Boss fight** — Blight Sovereign with multi-phase patterns.
 
 The VFX system from the demo should be extracted into a reusable module (either
 in `verryte-terminal` or a new `verryte-vfx` crate) before the tactical

@@ -575,51 +575,51 @@ struct Scene {
     vfx: VfxSystem,
     frame_count: u64,
     time: f32,
-    rover_hp: i32,
-    rover_max_hp: i32,
-    baizhi_hp: i32,
-    baizhi_max_hp: i32,
+    kael_hp: i32,
+    kael_max_hp: i32,
+    mira_hp: i32,
+    mira_max_hp: i32,
     enemy_hp: i32,
     enemy_max_hp: i32,
-    rover_flash: u32,
-    baizhi_flash: u32,
+    kael_flash: u32,
+    mira_flash: u32,
     enemy_flash: u32,
     log_lines: Vec<String>,
     combo_counter: u32,
-    sprite_rover: Grid,
-    sprite_baizhi: Grid,
-    sprite_crownless: Grid,
-    sprite_rover_white: Grid,
-    sprite_baizhi_white: Grid,
-    sprite_crownless_white: Grid,
+    sprite_kael: Grid,
+    sprite_mira: Grid,
+    sprite_blight: Grid,
+    sprite_kael_white: Grid,
+    sprite_mira_white: Grid,
+    sprite_blight_white: Grid,
 }
 
 impl Scene {
     fn new() -> Self {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let asset_dir = format!("{}/../wuthering-terminal/assets", manifest_dir);
-        let sprite_rover = load_sprite(&format!("{}/rover.png", asset_dir), 12, 12);
-        let sprite_baizhi = load_sprite(&format!("{}/baizhi.png", asset_dir), 12, 12);
-        let sprite_crownless = load_sprite(&format!("{}/crownless.png", asset_dir), 16, 16);
-        let sprite_rover_white = tint_grid_white(&sprite_rover);
-        let sprite_baizhi_white = tint_grid_white(&sprite_baizhi);
-        let sprite_crownless_white = tint_grid_white(&sprite_crownless);
+        let sprite_kael = load_sprite(&format!("{}/kael.png", asset_dir), 12, 12);
+        let sprite_mira = load_sprite(&format!("{}/mira.png", asset_dir), 12, 12);
+        let sprite_blight = load_sprite(&format!("{}/blight-sovereign.png", asset_dir), 16, 16);
+        let sprite_kael_white = tint_grid_white(&sprite_kael);
+        let sprite_mira_white = tint_grid_white(&sprite_mira);
+        let sprite_blight_white = tint_grid_white(&sprite_blight);
 
         Self {
             vfx: VfxSystem::new(),
             frame_count: 0,
             time: 0.0,
-            rover_hp: 120,
-            rover_max_hp: 120,
-            baizhi_hp: 90,
-            baizhi_max_hp: 90,
+            kael_hp: 120,
+            kael_max_hp: 120,
+            mira_hp: 90,
+            mira_max_hp: 90,
             enemy_hp: 250,
             enemy_max_hp: 250,
-            rover_flash: 0,
-            baizhi_flash: 0,
+            kael_flash: 0,
+            mira_flash: 0,
             enemy_flash: 0,
             log_lines: vec![
-                "VFX Demo - Wuthering Waves".to_string(),
+                "VFX Demo - Tactical RPG".to_string(),
                 "".to_string(),
                 "Keys:".to_string(),
                 "  1 - Fire burst (particles)".to_string(),
@@ -635,12 +635,12 @@ impl Scene {
                 "  q - Quit".to_string(),
             ],
             combo_counter: 0,
-            sprite_rover,
-            sprite_baizhi,
-            sprite_crownless,
-            sprite_rover_white,
-            sprite_baizhi_white,
-            sprite_crownless_white,
+            sprite_kael,
+            sprite_mira,
+            sprite_blight,
+            sprite_kael_white,
+            sprite_mira_white,
+            sprite_blight_white,
         }
     }
 
@@ -784,8 +784,8 @@ impl Scene {
             ),
         ));
         let heal = 20;
-        self.baizhi_hp = (self.baizhi_hp + heal).min(self.baizhi_max_hp);
-        self.baizhi_flash = 6;
+        self.mira_hp = (self.mira_hp + heal).min(self.mira_max_hp);
+        self.mira_flash = 6;
         self.vfx.floating_texts.push(FloatingText {
             x: cx - 1.0,
             y: cy - 3.0,
@@ -796,7 +796,7 @@ impl Scene {
             max_lifetime: 1.5,
             bold: true,
         });
-        self.add_log(format!("Baizhi heals! +{} HP", heal));
+        self.add_log(format!("Mira heals! +{} HP", heal));
     }
 
     fn trigger_shake(&mut self) {
@@ -953,11 +953,11 @@ impl Scene {
         self.frame_count += 1;
         self.vfx.update(dt);
 
-        if self.rover_flash > 0 {
-            self.rover_flash -= 1;
+        if self.kael_flash > 0 {
+            self.kael_flash -= 1;
         }
-        if self.baizhi_flash > 0 {
-            self.baizhi_flash -= 1;
+        if self.mira_flash > 0 {
+            self.mira_flash -= 1;
         }
         if self.enemy_flash > 0 {
             self.enemy_flash -= 1;
@@ -1014,26 +1014,26 @@ impl Scene {
         // ── Characters ────────────────────────────────────────────────────
         let rover_x = (w as f32 * 0.08) as i32;
         let rover_y = (h as f32 * 0.22) as i32;
-        if self.rover_flash > 0 {
-            grid.blit(&self.sprite_rover_white, rover_x, rover_y);
+        if self.kael_flash > 0 {
+            grid.blit(&self.sprite_kael_white, rover_x, rover_y);
         } else {
-            grid.blit(&self.sprite_rover, rover_x, rover_y);
+            grid.blit(&self.sprite_kael, rover_x, rover_y);
         }
 
         let baizhi_x = (w as f32 * 0.22) as i32;
         let baizhi_y = (h as f32 * 0.22) as i32;
-        if self.baizhi_flash > 0 {
-            grid.blit(&self.sprite_baizhi_white, baizhi_x, baizhi_y);
+        if self.mira_flash > 0 {
+            grid.blit(&self.sprite_mira_white, baizhi_x, baizhi_y);
         } else {
-            grid.blit(&self.sprite_baizhi, baizhi_x, baizhi_y);
+            grid.blit(&self.sprite_mira, baizhi_x, baizhi_y);
         }
 
         let enemy_x = (w as f32 * 0.62) as i32;
         let enemy_y = (h as f32 * 0.18) as i32;
         if self.enemy_flash > 0 {
-            grid.blit(&self.sprite_crownless_white, enemy_x, enemy_y);
+            grid.blit(&self.sprite_blight_white, enemy_x, enemy_y);
         } else {
-            grid.blit(&self.sprite_crownless, enemy_x, enemy_y);
+            grid.blit(&self.sprite_blight, enemy_x, enemy_y);
         }
 
         // ── HP Bars ───────────────────────────────────────────────────────
@@ -1043,11 +1043,11 @@ impl Scene {
         grid.write_str(
             rover_bar_x,
             bar_y,
-            "Rover",
+            "Kael",
             Color(100, 200, 255),
             Color::BLACK,
         );
-        let hp_ratio = self.rover_hp as f32 / self.rover_max_hp as f32;
+        let hp_ratio = self.kael_hp as f32 / self.kael_max_hp as f32;
         grid.draw_progress_bar(
             rover_bar_x,
             bar_y + 1,
@@ -1059,7 +1059,7 @@ impl Scene {
         grid.write_str(
             rover_bar_x + 11,
             bar_y + 1,
-            &format!("{}/{}", self.rover_hp, self.rover_max_hp),
+            &format!("{}/{}", self.kael_hp, self.kael_max_hp),
             Color(180, 180, 180),
             Color::BLACK,
         );
@@ -1069,11 +1069,11 @@ impl Scene {
         grid.write_str(
             baizhi_bar_x,
             bar_y,
-            "Baizhi",
+            "Mira",
             Color(150, 220, 255),
             Color::BLACK,
         );
-        let hp_ratio = self.baizhi_hp as f32 / self.baizhi_max_hp as f32;
+        let hp_ratio = self.mira_hp as f32 / self.mira_max_hp as f32;
         grid.draw_progress_bar(
             baizhi_bar_x,
             bar_y + 1,
@@ -1085,7 +1085,7 @@ impl Scene {
         grid.write_str(
             baizhi_bar_x + 11,
             bar_y + 1,
-            &format!("{}/{}", self.baizhi_hp, self.baizhi_max_hp),
+            &format!("{}/{}", self.mira_hp, self.mira_max_hp),
             Color(180, 180, 180),
             Color::BLACK,
         );
@@ -1095,7 +1095,7 @@ impl Scene {
         grid.write_str(
             enemy_bar_x,
             bar_y,
-            "Crownless",
+            "Blight Sovereign",
             Color(220, 80, 200),
             Color::BLACK,
         );
@@ -1156,7 +1156,7 @@ impl Scene {
         self.vfx.render_flash(&mut grid, w, h);
 
         // ── Title bar ─────────────────────────────────────────────────────
-        let title = "⚔ Wuthering Waves VFX ⚔";
+        let title = "⚔ Tactical RPG VFX ⚔";
         let title_x = w.saturating_sub(title.len() as u16) / 2;
         grid.write_str(title_x, 0, title, Color(255, 200, 80), Color::BLACK);
 

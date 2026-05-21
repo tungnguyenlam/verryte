@@ -124,17 +124,16 @@ those pieces as the first proving game.
   `Game::reset` / `reset_from_cave` / `reset_from_bsp` / `reset_from_layout` for agent-ready
   restart, `Game::render_with_palette` for theme-configurable rendering,
   and `PreviousPosition` for chaser anti-oscillation tie-breaking.
-- `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype
-  inspired by Wuthering Waves. Features 3-resonator QTE swapping, Echo
-  absorption, telegraphed enemy attacks with parry/dodge, and an adaptive
-  resolution chibi sprite system that scales visual fidelity to the user's
-  terminal size. Sprites are compiled from PNG pixel art into static Rust
-  arrays at build time using half-block sub-pixel packing.
+- `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
+  Features team-swapping, Echo absorption, telegraphed enemy attacks with
+  parry/dodge, and an adaptive resolution sprite system that scales visual
+  fidelity to the user's terminal size. Sprites are compiled from PNG pixel
+  art into static Rust arrays at build time using half-block sub-pixel packing.
 - `prototype/vfx-demo` - interactive terminal VFX demo proving real-time
   animation at 30 FPS. Features a particle system (fire, ice, lightning,
   slash, burst, heal, AoE), screen shake, flash overlays, floating damage
   text, expanding ring indicators, combo counter, and diff-based rendering.
-  Loads PNG character sprites (Rover, Baizhi, Crownless) via `image_to_grid()`
+  Loads PNG character sprites (Kael, Mira, Blight Sovereign) via `image_to_grid()`
   with chroma-key transparency. Run with `cargo run -p vfx-demo`.
 
 ## Control Model
