@@ -1296,11 +1296,11 @@ mod tests {
 
         // Render viewport in high-fidelity
         let frame_high = g.render();
-        // Wall/floor tiles in high fidelity use the half block character '▀'
+        // Wall/floor tiles in high fidelity use the custom glyphs
         let wall_cell = frame_high.get(0, 0).unwrap();
-        assert_eq!(wall_cell.glyph, '▀');
+        assert_eq!(wall_cell.glyph, '█');
         let floor_cell = frame_high.get(2, 1).unwrap();
-        assert_eq!(floor_cell.glyph, '▀');
+        assert_eq!(floor_cell.glyph, '·');
 
         // 2. Toggle high-fidelity
         g.step(Action::ToggleHighFidelity);

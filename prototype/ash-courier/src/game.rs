@@ -1771,13 +1771,13 @@ pub fn default_visual_registry() -> verryte_terminal::VisualRegistry {
 
     let mut registry = VisualRegistry::new();
 
-    let make_block = |fg: Color, bg: Color| {
+    let make_custom_asset = |glyph: char, fg: Color, bg: Color| {
         let mut g = Grid::new(1, 1);
         g.put(
             0,
             0,
             Cell {
-                glyph: '▀',
+                glyph,
                 fg,
                 bg,
                 attrs: CellAttrs::NONE,
@@ -1786,53 +1786,46 @@ pub fn default_visual_registry() -> verryte_terminal::VisualRegistry {
         VisualAsset::BlockSprite(g)
     };
 
-    // Walls
-    registry.register("wall", make_block(Color(70, 70, 85), Color(35, 35, 45)));
+    let floor_bg = Color(15, 15, 20);
+
+    // Walls (solid visual block)
+    registry.register("wall", make_custom_asset('█', Color(70, 70, 85), Color(35, 35, 45)));
     registry.register_single_cell("wall_fallback", '#', Color::GREY, Color::BLACK);
 
-    // Floors
-    registry.register("floor", make_block(Color(25, 25, 30), Color(15, 15, 20)));
+    // Floors (clean center dot dotting)
+    registry.register("floor", make_custom_asset('·', Color(50, 50, 60), floor_bg));
     registry.register_single_cell("floor_fallback", '.', Color::DARK_GREY, Color::BLACK);
 
-    // Goal
-    registry.register("goal", make_block(Color(255, 215, 0), Color(184, 134, 11)));
+    // Goal (four-pointed gold star)
+    registry.register("goal", make_custom_asset('✦', Color(255, 215, 0), floor_bg));
     registry.register_single_cell("goal_fallback", 'G', Color::YELLOW, Color::BLACK);
 
-    // Player (without package)
-    registry.register("player", make_block(Color(0, 255, 255), Color(0, 100, 150)));
+    // Player without package (glowing cyan hexagon)
+    registry.register("player", make_custom_asset('⬢', Color(0, 255, 255), floor_bg));
     registry.register_single_cell("player_fallback", '@', Color::CYAN, Color::BLACK);
 
-    // Player with package
-    registry.register(
-        "player_carrying",
-        make_block(Color(255, 165, 0), Color(139, 69, 19)),
-    );
+    // Player with package (glowing gold hexagon)
+    registry.register("player_carrying", make_custom_asset('⬢', Color(255, 165, 0), floor_bg));
     registry.register_single_cell("player_carrying_fallback", '@', Color::YELLOW, Color::BLACK);
 
-    // Hazard
-    registry.register("hazard", make_block(Color(220, 20, 60), Color(100, 0, 10)));
+    // Hazard (warning red spike)
+    registry.register("hazard", make_custom_asset('▲', Color(220, 20, 60), floor_bg));
     registry.register_single_cell("hazard_fallback", 'h', Color::RED, Color::BLACK);
 
-    // Chaser
-    registry.register("chaser", make_block(Color(255, 0, 255), Color(100, 0, 100)));
+    // Chaser (magenta skull)
+    registry.register("chaser", make_custom_asset('☠', Color(255, 0, 255), floor_bg));
     registry.register_single_cell("chaser_fallback", 'c', Color::MAGENTA, Color::BLACK);
 
-    // Package
-    registry.register("package", make_block(Color(50, 205, 50), Color(0, 80, 20)));
+    // Package (lime box/cargo block)
+    registry.register("package", make_custom_asset('■', Color(50, 205, 50), floor_bg));
     registry.register_single_cell("package_fallback", 'p', Color::GREEN, Color::BLACK);
 
-    // Battery pack
-    registry.register(
-        "battery_pack",
-        make_block(Color(173, 255, 47), Color(0, 100, 50)),
-    );
+    // Battery pack (yellow/lime lightning bolt)
+    registry.register("battery_pack", make_custom_asset('⚡', Color(173, 255, 47), floor_bg));
     registry.register_single_cell("battery_pack_fallback", 'b', Color::GREEN, Color::BLACK);
 
-    // Recharge station
-    registry.register(
-        "recharge_station",
-        make_block(Color(30, 144, 255), Color(0, 0, 128)),
-    );
+    // Recharge station (blue energy junction/diamond circular)
+    registry.register("recharge_station", make_custom_asset('⛯', Color(30, 144, 255), floor_bg));
     registry.register_single_cell("recharge_station_fallback", 'R', Color::BLUE, Color::BLACK);
 
     registry

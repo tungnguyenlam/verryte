@@ -32,8 +32,10 @@ pub fn init() -> io::Result<AlternateScreen> {
     if let Err(error) = execute!(
         stdout,
         EnterAlternateScreen,
+        crossterm::cursor::Hide,
         EnableMouseCapture,
         SetTitle("Verryte Game"),
+        Clear(ClearType::All),
     ) {
         let _ = terminal::disable_raw_mode();
         return Err(error);
@@ -44,6 +46,7 @@ pub fn init() -> io::Result<AlternateScreen> {
 /// Exit alternate screen and restore terminal.
 pub fn restore() -> io::Result<()> {
     let mut stdout = io::stdout();
+    let _ = execute!(stdout, crossterm::cursor::Show);
     execute!(stdout, DisableMouseCapture, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()?;
     Ok(())
@@ -65,18 +68,20 @@ impl Drop for AlternateScreen {
 /// Render a Grid to the terminal.
 pub fn render(grid: &verryte_terminal::Grid) {
     let mut stdout = io::stdout();
+    let _ = execute!(stdout, crossterm::cursor::Hide);
     for y in 0..grid.height() {
+        let _ = execute!(stdout, MoveTo(0, y));
         for x in 0..grid.width() {
             if let Some(cell) = grid.get(x, y) {
                 let fg = to_crossterm_color(cell.fg);
                 let bg = to_crossterm_color(cell.bg);
-                print!("{}", crossterm::style::SetForegroundColor(fg));
-                print!("{}", crossterm::style::SetBackgroundColor(bg));
-                print!("{}", cell.glyph);
+                print!(
+                    "{}{}{}",
+                    crossterm::style::SetForegroundColor(fg),
+                    crossterm::style::SetBackgroundColor(bg),
+                    cell.glyph
+                );
             }
-        }
-        if y + 1 < grid.height() {
-            println!();
         }
     }
     print!("{}", crossterm::style::ResetColor);
@@ -95,6 +100,7 @@ pub fn render(grid: &verryte_terminal::Grid) {
 /// edges that no longer exist in the new frame.
 pub fn render_diff(prev: &verryte_terminal::Grid, next: &verryte_terminal::Grid) {
     if prev.width() != next.width() || prev.height() != next.height() {
+        clear_screen();
         render(next);
         return;
     }
@@ -103,14 +109,18 @@ pub fn render_diff(prev: &verryte_terminal::Grid, next: &verryte_terminal::Grid)
         return;
     }
     let mut stdout = io::stdout();
+    let _ = execute!(stdout, crossterm::cursor::Hide);
     for change in &changes {
         if let Some(cell) = change.after {
             let _ = execute!(stdout, MoveTo(change.x, change.y));
             let fg = to_crossterm_color(cell.fg);
             let bg = to_crossterm_color(cell.bg);
-            print!("{}", crossterm::style::SetForegroundColor(fg));
-            print!("{}", crossterm::style::SetBackgroundColor(bg));
-            print!("{}", cell.glyph);
+            print!(
+                "{}{}{}",
+                crossterm::style::SetForegroundColor(fg),
+                crossterm::style::SetBackgroundColor(bg),
+                cell.glyph
+            );
         }
     }
     print!("{}", crossterm::style::ResetColor);
