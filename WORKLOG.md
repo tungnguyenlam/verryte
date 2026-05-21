@@ -1633,3 +1633,38 @@ disrupting the existing structure.
 - VFX system should be extracted into a reusable crate before the tactical
   prototype begins.
 - The 8-step implementation roadmap should be revisited as work progresses.
+
+## 2026-05-22 - VFX demo: switch to PNG sprite assets
+
+**Goal.** Replace hand-drawn ASCII character sprites in the VFX demo with the
+actual PNG pixel art assets from `prototype/wuthering-terminal/assets/` (Rover,
+Baizhi, Crownless), loaded at runtime via `image_to_grid()`.
+
+**Changes.**
+- `prototype/vfx-demo/Cargo.toml` - added `image = "0.24"` dependency (matching
+  `verryte-terminal`'s version).
+- `prototype/vfx-demo/src/main.rs` - replaced `draw_warrior`/`draw_mage`/
+  `draw_enemy` hand-drawn glyph functions with `load_sprite()` that loads PNGs
+  at runtime, resizes to terminal-appropriate dimensions (14×28 for party,
+  16×32 for boss), converts via `image_to_grid()` half-block rendering, and
+  chroma-keys near-white pixels to transparent. Added `tint_grid_white()` for
+  hit-flash effect. Updated all HP labels, log messages, and field names from
+  Warrior/Mage/Dark Lord to Rover/Baizhi/Crownless.
+
+**Reasoning.** The user has real pixel art assets for these characters. Using
+`image_to_grid()` from `verryte-terminal` validates the engine's existing
+image-to-terminal pipeline in a real-time context. The chroma-key post-process
+handles the white backgrounds in the source PNGs. Hit-flash uses a pre-computed
+white-tinted copy of each sprite to avoid per-frame color manipulation.
+
+**Assumptions.** The PNG files exist at runtime relative to the working directory
+(`prototype/wuthering-terminal/assets/`). The `image` crate version must match
+`verryte-terminal`'s (`0.24`) to avoid `DynamicImage` type mismatches across
+crate boundaries.
+
+**Gotchas.** `image 0.25` and `image 0.24` have different `DynamicImage` types
+that are not compatible — `image_to_grid()` accepts `0.24`'s type. The
+`resize_exact` API is the same across both versions.
+
+**Follow-ups.** Run `cargo run -p vfx-demo` in a real terminal to verify the
+sprites render correctly with VFX overlays.

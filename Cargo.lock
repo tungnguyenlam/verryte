@@ -511,6 +511,7 @@ dependencies = [
 name = "vfx-demo"
 version = "0.0.1"
 dependencies = [
+ "image",
  "verryte-terminal",
  "verryte-tty",
 ]

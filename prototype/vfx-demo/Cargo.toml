@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 verryte-terminal = { path = "../../crates/verryte-terminal" }
 verryte-tty = { path = "../../crates/verryte-tty" }
+image = "0.24"
 
 [lints]
 workspace = true

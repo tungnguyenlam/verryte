@@ -39,7 +39,9 @@ project context, not runtime code.
   arrays at build time via `scratch/png_to_ansi.py`.
 - `prototype/vfx-demo` - interactive terminal VFX demo proving particles,
   screen shake, flash overlays, floating damage text, AoE rings, and a
-  real-time 30 FPS game loop. Run with `cargo run -p vfx-demo`.
+  real-time 30 FPS game loop. Loads PNG character sprites (Rover, Baizhi,
+  Crownless) from `wuthering-terminal/assets/` via `image_to_grid()` with
+  chroma-key transparency. Run with `cargo run -p vfx-demo`.
 
 ## Engineering Priorities
 
@@ -81,7 +83,7 @@ As of the latest commits, Verryte has:
 - **Ash Courier proving game** (`prototype/ash-courier`): turn-based roguelike, cursor control, step-to-target navigation, score/win/loss outcomes, batch input, replay support, script runner.
 - **Adaptive resolution sprites**: build-time PNG-to-Rust compilation pipeline (`scratch/png_to_ansi.py`) that bakes chibi pixel art into static `[[(u8, u8, u8); W]; H]` arrays at 6 resolution tiers (TINY through ULTRA). At runtime, `crossterm::terminal::size()` selects the best tier purely by terminal cols×rows.
 - **Wuthering Terminal prototype** (`prototype/wuthering-terminal`): 2D turn-based tactical RPG with 3-resonator QTE swapping, Echo absorption, telegraphed parry/dodge, and chibi sprite rendering.
-- **Terminal VFX demo** (`prototype/vfx-demo`): interactive demo proving real-time terminal animation at 30 FPS. Particle system (fire, ice, lightning, slash, burst, heal, AoE), screen shake, flash overlays, floating damage text, expanding ring indicators, diff-based rendering. Run with `cargo run -p vfx-demo`.
+- **Terminal VFX demo** (`prototype/vfx-demo`): interactive demo proving real-time terminal animation at 30 FPS. Particle system (fire, ice, lightning, slash, burst, heal, AoE), screen shake, flash overlays, floating damage text, expanding ring indicators, diff-based rendering. Loads PNG character sprites (Rover, Baizhi, Crownless) from `wuthering-terminal/assets/` via `image_to_grid()` with chroma-key transparency. Run with `cargo run -p vfx-demo`.
 
 **Key architectural invariant:** all gameplay paths (terminal input, scripted commands, tests, replays, agent injection) converge on the same `Action` enum and `apply_action()` function. Do not split this path.
 

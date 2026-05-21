@@ -134,7 +134,8 @@ those pieces as the first proving game.
   animation at 30 FPS. Features a particle system (fire, ice, lightning,
   slash, burst, heal, AoE), screen shake, flash overlays, floating damage
   text, expanding ring indicators, combo counter, and diff-based rendering.
-  Run with `cargo run -p vfx-demo`.
+  Loads PNG character sprites (Rover, Baizhi, Crownless) via `image_to_grid()`
+  with chroma-key transparency. Run with `cargo run -p vfx-demo`.
 
 ## Control Model
 

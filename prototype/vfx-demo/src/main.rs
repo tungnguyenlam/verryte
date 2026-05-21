@@ -493,102 +493,80 @@ fn blend_color(base: Color, overlay: Color, alpha: f32) -> Color {
     )
 }
 
-// ── Character Sprites ─────────────────────────────────────────────────────────
+// ── Sprite Loading ────────────────────────────────────────────────────────────
 
-fn draw_warrior(grid: &mut Grid, x: u16, y: u16, flash_white: bool) {
-    let fg = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(200, 180, 140)
-    };
-    let armor = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(120, 120, 140)
-    };
-    let sword = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(220, 220, 240)
-    };
-    // Helmet
-    grid.write_str(x + 1, y, "▬▬", armor, Color::BLACK);
-    // Face
-    grid.put(x, y + 1, Cell::new('│').with_fg(armor));
-    grid.write_str(x + 1, y + 1, "◉◉", fg, Color::BLACK);
-    grid.put(x + 3, y + 1, Cell::new('│').with_fg(armor));
-    // Body
-    grid.write_str(x, y + 2, "╠███╣", armor, Color::BLACK);
-    // Legs
-    grid.write_str(x + 1, y + 3, "█ █", armor, Color::BLACK);
-    // Sword
-    grid.put(x + 4, y, Cell::new('/').with_fg(sword));
-    grid.put(x + 5, y + 1, Cell::new('│').with_fg(sword));
-    grid.put(x + 5, y + 2, Cell::new('│').with_fg(sword));
+fn load_sprite(path: &str, target_w: u32, target_h: u32) -> Grid {
+    let reader =
+        image::io::Reader::open(path).unwrap_or_else(|e| panic!("failed to open {}: {}", path, e));
+    let reader = reader
+        .with_guessed_format()
+        .unwrap_or_else(|e| panic!("failed to guess format {}: {}", path, e));
+    let img = reader
+        .decode()
+        .unwrap_or_else(|e| panic!("failed to decode {}: {}", path, e));
+    let resized = img.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
+    let mut grid = verryte_terminal::image_to_grid(&resized);
+
+    // Chroma-key: set near-white pixels to transparent.
+    // Only keep cells where at least one of fg/bg has meaningful color.
+    for y in 0..grid.height() {
+        for x in 0..grid.width() {
+            let cell = grid.get(x, y).copied().unwrap_or(Cell::EMPTY);
+            let fg_white = cell.fg.0 > 220 && cell.fg.1 > 220 && cell.fg.2 > 220;
+            let bg_white = cell.bg.0 > 220 && cell.bg.1 > 220 && cell.bg.2 > 220;
+            if fg_white && bg_white {
+                grid.put(x, y, Cell::EMPTY);
+            } else if fg_white {
+                // Top pixel is background — show only bottom pixel
+                grid.put(
+                    x,
+                    y,
+                    Cell {
+                        glyph: '▄',
+                        fg: cell.bg,
+                        bg: Color::BLACK,
+                        attrs: cell.attrs,
+                    },
+                );
+            } else if bg_white {
+                // Bottom pixel is background — show only top pixel
+                grid.put(
+                    x,
+                    y,
+                    Cell {
+                        glyph: '▀',
+                        fg: cell.fg,
+                        bg: Color::BLACK,
+                        attrs: cell.attrs,
+                    },
+                );
+            }
+        }
+    }
+
+    grid
 }
 
-fn draw_mage(grid: &mut Grid, x: u16, y: u16, flash_white: bool) {
-    let robe = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(80, 60, 160)
-    };
-    let hat = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(100, 70, 200)
-    };
-    let staff = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(160, 120, 60)
-    };
-    let glow = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(200, 150, 255)
-    };
-    // Hat
-    grid.put(x + 2, y, Cell::new('▲').with_fg(hat));
-    grid.write_str(x + 1, y + 1, "╱▲╲", hat, Color::BLACK);
-    // Face
-    grid.write_str(x + 1, y + 2, "●‿●", glow, Color::BLACK);
-    // Robe
-    grid.write_str(x, y + 3, "╔███╗", robe, Color::BLACK);
-    grid.write_str(x, y + 4, "║███║", robe, Color::BLACK);
-    // Staff
-    grid.put(x + 5, y, Cell::new('✦').with_fg(glow));
-    grid.put(x + 5, y + 1, Cell::new('│').with_fg(staff));
-    grid.put(x + 5, y + 2, Cell::new('│').with_fg(staff));
-    grid.put(x + 5, y + 3, Cell::new('│').with_fg(staff));
-}
-
-fn draw_enemy(grid: &mut Grid, x: u16, y: u16, flash_white: bool) {
-    let body = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(180, 40, 40)
-    };
-    let eye = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(255, 200, 50)
-    };
-    let horn = if flash_white {
-        Color(255, 255, 255)
-    } else {
-        Color(100, 30, 30)
-    };
-    // Horns
-    grid.put(x + 1, y, Cell::new('/').with_fg(horn));
-    grid.put(x + 3, y, Cell::new('\\').with_fg(horn));
-    // Head
-    grid.write_str(x, y + 1, "╔═══╗", body, Color::BLACK);
-    grid.write_str(x, y + 2, "║◉ ◉║", eye, Color::BLACK);
-    grid.write_str(x, y + 3, "║ ▽ ║", body, Color::BLACK);
-    // Body
-    grid.write_str(x, y + 4, "╠███╣", body, Color::BLACK);
-    grid.write_str(x, y + 5, "█   █", body, Color::BLACK);
+fn tint_grid_white(grid: &Grid) -> Grid {
+    let mut out = grid.clone();
+    for y in 0..out.height() {
+        for x in 0..out.width() {
+            let cell = out.get(x, y).copied().unwrap_or(Cell::EMPTY);
+            if !cell.is_transparent() {
+                out.put(
+                    x,
+                    y,
+                    Cell {
+                        glyph: cell.glyph,
+                        fg: Color(255, 255, 255),
+                        bg: Color(255, 255, 255),
+                        attrs: cell.attrs,
+                    },
+                );
+            }
+        }
+    }
+    out
 }
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
@@ -597,36 +575,51 @@ struct Scene {
     vfx: VfxSystem,
     frame_count: u64,
     time: f32,
-    warrior_hp: i32,
-    warrior_max_hp: i32,
-    mage_hp: i32,
-    mage_max_hp: i32,
+    rover_hp: i32,
+    rover_max_hp: i32,
+    baizhi_hp: i32,
+    baizhi_max_hp: i32,
     enemy_hp: i32,
     enemy_max_hp: i32,
-    warrior_flash: u32,
-    mage_flash: u32,
+    rover_flash: u32,
+    baizhi_flash: u32,
     enemy_flash: u32,
     log_lines: Vec<String>,
     combo_counter: u32,
+    sprite_rover: Grid,
+    sprite_baizhi: Grid,
+    sprite_crownless: Grid,
+    sprite_rover_white: Grid,
+    sprite_baizhi_white: Grid,
+    sprite_crownless_white: Grid,
 }
 
 impl Scene {
     fn new() -> Self {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let asset_dir = format!("{}/../wuthering-terminal/assets", manifest_dir);
+        let sprite_rover = load_sprite(&format!("{}/rover.png", asset_dir), 12, 12);
+        let sprite_baizhi = load_sprite(&format!("{}/baizhi.png", asset_dir), 12, 12);
+        let sprite_crownless = load_sprite(&format!("{}/crownless.png", asset_dir), 16, 16);
+        let sprite_rover_white = tint_grid_white(&sprite_rover);
+        let sprite_baizhi_white = tint_grid_white(&sprite_baizhi);
+        let sprite_crownless_white = tint_grid_white(&sprite_crownless);
+
         Self {
             vfx: VfxSystem::new(),
             frame_count: 0,
             time: 0.0,
-            warrior_hp: 100,
-            warrior_max_hp: 100,
-            mage_hp: 80,
-            mage_max_hp: 80,
-            enemy_hp: 200,
-            enemy_max_hp: 200,
-            warrior_flash: 0,
-            mage_flash: 0,
+            rover_hp: 120,
+            rover_max_hp: 120,
+            baizhi_hp: 90,
+            baizhi_max_hp: 90,
+            enemy_hp: 250,
+            enemy_max_hp: 250,
+            rover_flash: 0,
+            baizhi_flash: 0,
             enemy_flash: 0,
             log_lines: vec![
-                "VFX Demo - Terminal Effects".to_string(),
+                "VFX Demo - Wuthering Waves".to_string(),
                 "".to_string(),
                 "Keys:".to_string(),
                 "  1 - Fire burst (particles)".to_string(),
@@ -642,6 +635,12 @@ impl Scene {
                 "  q - Quit".to_string(),
             ],
             combo_counter: 0,
+            sprite_rover,
+            sprite_baizhi,
+            sprite_crownless,
+            sprite_rover_white,
+            sprite_baizhi_white,
+            sprite_crownless_white,
         }
     }
 
@@ -785,8 +784,8 @@ impl Scene {
             ),
         ));
         let heal = 20;
-        self.warrior_hp = (self.warrior_hp + heal).min(self.warrior_max_hp);
-        self.warrior_flash = 6;
+        self.baizhi_hp = (self.baizhi_hp + heal).min(self.baizhi_max_hp);
+        self.baizhi_flash = 6;
         self.vfx.floating_texts.push(FloatingText {
             x: cx - 1.0,
             y: cy - 3.0,
@@ -797,7 +796,7 @@ impl Scene {
             max_lifetime: 1.5,
             bold: true,
         });
-        self.add_log(format!("Heal! +{} HP", heal));
+        self.add_log(format!("Baizhi heals! +{} HP", heal));
     }
 
     fn trigger_shake(&mut self) {
@@ -954,11 +953,11 @@ impl Scene {
         self.frame_count += 1;
         self.vfx.update(dt);
 
-        if self.warrior_flash > 0 {
-            self.warrior_flash -= 1;
+        if self.rover_flash > 0 {
+            self.rover_flash -= 1;
         }
-        if self.mage_flash > 0 {
-            self.mage_flash -= 1;
+        if self.baizhi_flash > 0 {
+            self.baizhi_flash -= 1;
         }
         if self.enemy_flash > 0 {
             self.enemy_flash -= 1;
@@ -1013,71 +1012,91 @@ impl Scene {
         }
 
         // ── Characters ────────────────────────────────────────────────────
-        let warrior_x = (w as f32 * 0.1) as u16;
-        let warrior_y = (h as f32 * 0.35) as u16;
-        draw_warrior(&mut grid, warrior_x, warrior_y, self.warrior_flash > 0);
+        let rover_x = (w as f32 * 0.08) as i32;
+        let rover_y = (h as f32 * 0.22) as i32;
+        if self.rover_flash > 0 {
+            grid.blit(&self.sprite_rover_white, rover_x, rover_y);
+        } else {
+            grid.blit(&self.sprite_rover, rover_x, rover_y);
+        }
 
-        let mage_x = (w as f32 * 0.25) as u16;
-        let mage_y = (h as f32 * 0.3) as u16;
-        draw_mage(&mut grid, mage_x, mage_y, self.mage_flash > 0);
+        let baizhi_x = (w as f32 * 0.22) as i32;
+        let baizhi_y = (h as f32 * 0.22) as i32;
+        if self.baizhi_flash > 0 {
+            grid.blit(&self.sprite_baizhi_white, baizhi_x, baizhi_y);
+        } else {
+            grid.blit(&self.sprite_baizhi, baizhi_x, baizhi_y);
+        }
 
-        let enemy_x = (w as f32 * 0.65) as u16;
-        let enemy_y = (h as f32 * 0.28) as u16;
-        draw_enemy(&mut grid, enemy_x, enemy_y, self.enemy_flash > 0);
+        let enemy_x = (w as f32 * 0.62) as i32;
+        let enemy_y = (h as f32 * 0.18) as i32;
+        if self.enemy_flash > 0 {
+            grid.blit(&self.sprite_crownless_white, enemy_x, enemy_y);
+        } else {
+            grid.blit(&self.sprite_crownless, enemy_x, enemy_y);
+        }
 
         // ── HP Bars ───────────────────────────────────────────────────────
         let bar_y = (h as f32 * 0.62) as u16;
-        // Warrior HP
+        let rover_bar_x = rover_x as u16;
+        // Rover HP
         grid.write_str(
-            warrior_x,
+            rover_bar_x,
             bar_y,
-            "Warrior",
-            Color(100, 220, 100),
+            "Rover",
+            Color(100, 200, 255),
             Color::BLACK,
         );
-        let hp_ratio = self.warrior_hp as f32 / self.warrior_max_hp as f32;
+        let hp_ratio = self.rover_hp as f32 / self.rover_max_hp as f32;
         grid.draw_progress_bar(
-            warrior_x,
+            rover_bar_x,
             bar_y + 1,
             10,
             hp_ratio,
-            Cell::new('█').with_fg(Color(80, 200, 80)),
+            Cell::new('█').with_fg(Color(80, 180, 240)),
             Cell::new('░').with_fg(Color(40, 40, 40)),
         );
         grid.write_str(
-            warrior_x + 11,
+            rover_bar_x + 11,
             bar_y + 1,
-            &format!("{}/{}", self.warrior_hp, self.warrior_max_hp),
+            &format!("{}/{}", self.rover_hp, self.rover_max_hp),
             Color(180, 180, 180),
             Color::BLACK,
         );
 
-        // Mage HP
-        grid.write_str(mage_x, bar_y, "Mage", Color(150, 120, 255), Color::BLACK);
-        let hp_ratio = self.mage_hp as f32 / self.mage_max_hp as f32;
+        // Baizhi HP
+        let baizhi_bar_x = baizhi_x as u16;
+        grid.write_str(
+            baizhi_bar_x,
+            bar_y,
+            "Baizhi",
+            Color(150, 220, 255),
+            Color::BLACK,
+        );
+        let hp_ratio = self.baizhi_hp as f32 / self.baizhi_max_hp as f32;
         grid.draw_progress_bar(
-            mage_x,
+            baizhi_bar_x,
             bar_y + 1,
             10,
             hp_ratio,
-            Cell::new('█').with_fg(Color(120, 100, 220)),
+            Cell::new('█').with_fg(Color(120, 200, 240)),
             Cell::new('░').with_fg(Color(40, 40, 40)),
         );
         grid.write_str(
-            mage_x + 11,
+            baizhi_bar_x + 11,
             bar_y + 1,
-            &format!("{}/{}", self.mage_hp, self.mage_max_hp),
+            &format!("{}/{}", self.baizhi_hp, self.baizhi_max_hp),
             Color(180, 180, 180),
             Color::BLACK,
         );
 
-        // Enemy HP
+        // Crownless HP
         let enemy_bar_x = (w as f32 * 0.55) as u16;
         grid.write_str(
             enemy_bar_x,
             bar_y,
-            "Dark Lord",
-            Color(220, 80, 80),
+            "Crownless",
+            Color(220, 80, 200),
             Color::BLACK,
         );
         let hp_ratio = self.enemy_hp as f32 / self.enemy_max_hp as f32;
@@ -1137,7 +1156,7 @@ impl Scene {
         self.vfx.render_flash(&mut grid, w, h);
 
         // ── Title bar ─────────────────────────────────────────────────────
-        let title = "⚔ VFX Demo ⚔";
+        let title = "⚔ Wuthering Waves VFX ⚔";
         let title_x = w.saturating_sub(title.len() as u16) / 2;
         grid.write_str(title_x, 0, title, Color(255, 200, 80), Color::BLACK);
 
@@ -1156,9 +1175,12 @@ impl Scene {
 }
 
 fn main() {
-    let _guard = verryte_tty::init().expect("failed to init terminal");
+    eprintln!("Loading sprites...");
+    let scene = Scene::new();
+    eprintln!("Sprites loaded. Initializing terminal...");
 
-    let mut scene = Scene::new();
+    let _guard = verryte_tty::init().expect("failed to init terminal");
+    let mut scene = scene;
     let mut last_time = Instant::now();
     let mut prev_grid = Grid::new(1, 1);
 
