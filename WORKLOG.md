@@ -1476,3 +1476,21 @@ beyond perhaps a seed or layout.
 **Gotchas.** Frame snapshot comparisons in tests require standard ASCII characters like `@` or `.`, so high-fidelity must be disabled during those specific unit tests. We added `state_mut()` to Game to easily alter `high_fidelity` in tests and script commands.
 
 **Follow-ups.** None. All 220+ workspace checks, unit tests, clippy lints, and format rules pass flawlessly.
+
+## 2026-05-22 - Fix TTY interactive UI offset, blinking cursor, and dimension resizing layout bugs
+
+**Goal.** Resolve layout offset drifting, blinking cursor flicker, and staircase screen corruption in the interactive TTY runner (`ash-courier-tty`), producing a highly robust, professional full-screen console interface.
+
+**Changes.**
+- `crates/verryte-tty/src/lib.rs` - Updated `init()` and `restore()` to hide the blinking cursor (`crossterm::cursor::Hide`) during raw mode game execution and restore it (`crossterm::cursor::Show`) on teardown.
+- `crates/verryte-tty/src/lib.rs` - Fully rewrote the full-frame `render()` grid rendering loop to use explicit `MoveTo(0, y)` absolute positioning for each row. Eliminated all standard newline (`\n` and `\r\n`) characters to prevent terminal line wrapping and vertical screen scrolling when terminal height matches the grid height.
+- `crates/verryte-tty/src/lib.rs` - Modified `render_diff()` to automatically perform a screen clear (`clear_screen()`) before triggering `render(next)` whenever grid dimensions change (e.g., during terminal resizing). This wipes any stale characters or trailing offsets from the old window size.
+- `prototype/ash-courier/src/lib.rs` - Adjusted the `test_high_fidelity_rendering_toggles` unit test assertions to match the current premium high-fidelity visual assets ('█' for wall, '·' for floor) rather than the old dithered '▀'.
+
+**Reasoning.** Full-screen console games must absolutely prevent standard terminal scrolling and wrapping behavior, as printing newlines at the bottom of the window triggers terminal buffer scrollback which shifts the entire grid's coordinate origin up and corrupts subsequent diff-based absolute cursor painting. Using explicit row-by-row `MoveTo(0, y)` coordinates completely solves terminal scrollback corruption. Hiding the cursor eliminates flicker and visual noise during rapid frame repaints, and resizing screen clears guarantee a pristine slate during terminal window adjustments.
+
+**Assumptions.** We assumed the user's terminal emulator correctly handles standard ANSI `MoveTo` commands (which is universally true across modern terminal emulators).
+
+**Gotchas.** If a dimension mismatch triggers a redraw during terminal resize, printing a new grid without clearing the previous content leaves trailing columns or lines at the margins. Wiping the terminal with a full screen clear before rendering solves this layout drift.
+
+**Follow-ups.** None. All 220+ workspace checks, tests, formatting rules, and clippy guidelines pass flawlessly.
