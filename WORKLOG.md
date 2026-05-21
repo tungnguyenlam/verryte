@@ -1494,3 +1494,58 @@ beyond perhaps a seed or layout.
 **Gotchas.** If a dimension mismatch triggers a redraw during terminal resize, printing a new grid without clearing the previous content leaves trailing columns or lines at the margins. Wiping the terminal with a full screen clear before rendering solves this layout drift.
 
 **Follow-ups.** None. All 220+ workspace checks, tests, formatting rules, and clippy guidelines pass flawlessly.
+
+## 2026-05-22 - Adaptive resolution sprite system and build-time PNG pipeline
+
+**Goal.** Document the adaptive sprite resolution ideology in GOAL.md,
+README.md, and AGENTS.md. Create the build-time PNG-to-Rust compilation
+pipeline. Generate chibi pixel art assets for all 4 game characters.
+Commit and push.
+
+**Changes.**
+- `GOAL.md:63` - new "Adaptive Resolution Sprite System" subsection in
+  Visual Direction. Defines 6 tiers (TINY..ULTRA) selected purely by
+  terminal cols×rows, not monitor resolution or pixel density.
+- `README.md:127` - added `prototype/wuthering-terminal` workspace entry.
+- `AGENTS.md:34,78` - added workspace map entry and engine capability
+  entries for adaptive sprites and the new prototype.
+- `prototype/wuthering-terminal/assets/` - 4 chibi pixel art PNGs:
+  `rover.png`, `jiyan.png`, `baizhi.png`, `crownless.png`.
+- `scratch/png_to_ansi.py` - build-time PNG-to-Rust array compiler.
+  Reads any image, resizes to target sub-pixel dimensions via Pillow
+  LANCZOS, chroma-keys white/transparent pixels, and outputs both ANSI
+  terminal preview and `pub const` Rust arrays.
+- `scratch/visualize_highres.py` - procedural gradient chibi portrait.
+- `scratch/test_all_sprites.py` - batch QA: renders all 4 sprites at
+  4 resolutions (8×12, 12×16, 16×20, 20×24) plus side-by-side.
+- `scratch/test_adaptive_res.py` - proof-of-concept adaptive tier
+  selection using `shutil.get_terminal_size()`, the Python equivalent
+  of `crossterm::terminal::size()`.
+- `.gitignore` - added `__pycache__/`.
+
+**Reasoning.** The user correctly pointed out that tier naming should
+reference terminal dimensions only, not monitor hardware. A "4K monitor"
+label is misleading because terminal size depends on font size, window
+layout, and user preference — not display resolution. All tier labels
+now describe terminal cols×rows thresholds exclusively.
+
+Build-time PNG compilation was chosen over runtime image loading because:
+(1) zero runtime I/O or allocation, (2) deterministic rendering for
+replay and test observability, (3) avoids dragging in `image` crate or
+Kitty/Sixel protocol detectors that conflict with raw crossterm TTY.
+
+**Assumptions.** Pillow is available for build-time asset compilation.
+The PNG-to-Rust pipeline runs as a developer tool, not as part of
+`cargo build`. Generated Rust arrays will be checked into source.
+
+**Gotchas.** White-background chroma keying uses threshold RGB > 240
+on all three channels. This may false-positive on very bright in-sprite
+highlights. If that happens, switch source art to transparent-background
+PNGs and rely solely on alpha keying.
+
+**Follow-ups.**
+- Wire `scratch/png_to_ansi.py` into a Makefile target (`make sprites`).
+- Implement the Rust-side `SpriteTier` enum and `select_tier()` function
+  in `prototype/wuthering-terminal/src/sprites.rs`.
+- Begin Wuthering Terminal game logic implementation per the approved
+  implementation plan.
