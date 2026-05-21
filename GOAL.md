@@ -61,6 +61,37 @@ glyph              -> upper half block
 
 This is still terminal-native rendering. It is not GPU graphics, a GUI window, or a hidden image layer. The final frame is always a grid of cells with glyphs, foreground colors, background colors, and attributes.
 
+### Adaptive Resolution Sprite System
+
+Verryte supports an adaptive sprite resolution system that scales visual
+fidelity to match the user's terminal dimensions. At startup (and on terminal
+resize), the engine queries the terminal size in columns and rows and selects
+the highest resolution tier that fits:
+
+| Tier   | Sprite Size | Min Terminal |
+|--------|------------|--------------|
+| TINY   | 6×8        | 60×20        |
+| SMALL  | 8×12       | 80×24        |
+| MEDIUM | 12×16      | 100×30       |
+| LARGE  | 16×20      | 120×36       |
+| XLARGE | 20×24      | 140×42       |
+| ULTRA  | 28×32      | 160×48       |
+
+Tier selection is based entirely on terminal columns and rows, not monitor
+resolution or pixel density. A maximized terminal on a small laptop and a
+small floating window on a 4K monitor may select different tiers despite
+running on the same display hardware.
+
+Sprite assets are compiled at build time into static Rust arrays at all
+resolution tiers. At runtime, the engine selects the appropriate tier with
+zero image processing or file I/O. The build-time pipeline converts source
+PNG artwork into `[[(u8, u8, u8); W]; H]` arrays using half-block sub-pixel
+packing, with white and transparent pixels keyed to the background color.
+
+Games can also respond to terminal resize events by re-selecting the tier
+mid-session, allowing the player to resize their window and immediately see
+the visual fidelity adjust.
+
 The visual system should stay honest about terminal constraints. It should provide fallbacks for plain ASCII, low-color terminals, small terminal sizes, and test output. Rich rendering should improve the player experience without making the game state opaque or splitting visual behavior away from the shared engine model.
 
 ---

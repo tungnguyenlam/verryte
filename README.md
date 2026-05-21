@@ -124,6 +124,12 @@ those pieces as the first proving game.
   `Game::reset` / `reset_from_cave` / `reset_from_bsp` / `reset_from_layout` for agent-ready
   restart, `Game::render_with_palette` for theme-configurable rendering,
   and `PreviousPosition` for chaser anti-oscillation tie-breaking.
+- `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype
+  inspired by Wuthering Waves. Features 3-resonator QTE swapping, Echo
+  absorption, telegraphed enemy attacks with parry/dodge, and an adaptive
+  resolution chibi sprite system that scales visual fidelity to the user's
+  terminal size. Sprites are compiled from PNG pixel art into static Rust
+  arrays at build time using half-block sub-pixel packing.
 
 ## Control Model
 

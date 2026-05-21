@@ -31,6 +31,12 @@ project context, not runtime code.
 - `prototype/ash-courier` - the first proving game. Use it to validate engine
   behavior through a small turn-based roguelike instead of inventing abstract
   engine features in isolation.
+- `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype
+  inspired by Wuthering Waves. Validates the engine on complex mechanics:
+  team swapping, Echo absorption, parry/dodge, and adaptive-resolution
+  chibi sprite rendering. Source PNG artwork lives in
+  `prototype/wuthering-terminal/assets/` and is compiled to static Rust
+  arrays at build time via `scratch/png_to_ansi.py`.
 
 ## Engineering Priorities
 
@@ -70,6 +76,8 @@ As of the latest commits, Verryte has:
 - **Terminal rendering** (`verryte-terminal`): cell, color, grid, clipping, viewport, diff, line, border, text rendering, batch write helpers.
 - **TTY frontend** (`verryte-tty`): crossterm integration, real-time input translation, incremental cell-diff rendering.
 - **Ash Courier proving game** (`prototype/ash-courier`): turn-based roguelike, cursor control, step-to-target navigation, score/win/loss outcomes, batch input, replay support, script runner.
+- **Adaptive resolution sprites**: build-time PNG-to-Rust compilation pipeline (`scratch/png_to_ansi.py`) that bakes chibi pixel art into static `[[(u8, u8, u8); W]; H]` arrays at 6 resolution tiers (TINY through ULTRA). At runtime, `crossterm::terminal::size()` selects the best tier purely by terminal cols×rows.
+- **Wuthering Terminal prototype** (`prototype/wuthering-terminal`): 2D turn-based tactical RPG with 3-resonator QTE swapping, Echo absorption, telegraphed parry/dodge, and chibi sprite rendering.
 
 **Key architectural invariant:** all gameplay paths (terminal input, scripted commands, tests, replays, agent injection) converge on the same `Action` enum and `apply_action()` function. Do not split this path.
 
