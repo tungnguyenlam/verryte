@@ -6,6 +6,7 @@
 //! parallelism, and richer run conditions can grow on top of this once a real
 //! game pulls on the API.
 
+use crate::diagnostics::Diagnostics;
 use crate::world::World;
 
 pub type System = fn(&mut World);
@@ -114,7 +115,12 @@ impl Schedule {
                     continue;
                 }
             }
+            let start = std::time::Instant::now();
             (system.func)(world);
+            let elapsed = start.elapsed();
+            if let Some(diags) = world.resource_mut::<Diagnostics>() {
+                diags.record(system.name, elapsed);
+            }
         }
     }
 
@@ -132,7 +138,12 @@ impl Schedule {
                 }
             }
             on_system(system.name);
+            let start = std::time::Instant::now();
             (system.func)(world);
+            let elapsed = start.elapsed();
+            if let Some(diags) = world.resource_mut::<Diagnostics>() {
+                diags.record(system.name, elapsed);
+            }
         }
     }
 
@@ -699,5 +710,22 @@ mod tests {
             .run_stage_with_hook("beta", &mut world, |name| { names.push(name.to_string()) }));
         assert!(names.is_empty());
         assert_eq!(world.resource::<Counter>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn diagnostics_profiling_records_metrics() {
+        let mut world = World::new();
+        world.insert_resource(Diagnostics::new());
+        world.insert_resource(Counter(0));
+
+        let mut schedule = Schedule::new();
+        schedule.add_named("bump", bump);
+
+        schedule.run(&mut world);
+
+        let diags = world.resource::<Diagnostics>().unwrap();
+        let metrics = diags.systems.get("bump").unwrap();
+        assert_eq!(metrics.call_count, 1);
+        assert!(metrics.total_duration >= std::time::Duration::from_nanos(0));
     }
 }

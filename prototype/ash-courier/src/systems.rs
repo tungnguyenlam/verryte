@@ -1,5 +1,5 @@
 use crate::components::{
-    Chaser, ChaserBehavior, GameEvent, GameState, Hazard, Outcome, Player, Position,
+    Battery, Chaser, ChaserBehavior, GameEvent, GameState, Hazard, Outcome, Player, Position,
     PreviousPosition, ScentTrail,
 };
 use crate::map::{Map, Tile};
@@ -267,14 +267,33 @@ pub fn message_system(world: &mut World) {
                         from.x, from.y, to.x, to.y
                     )
                 }
+                GameEvent::PickedUpBattery { at, amount } => {
+                    format!(
+                        "Collected a battery pack at {},{}! +{} battery.",
+                        at.x, at.y, amount
+                    )
+                }
                 GameEvent::OutcomeChanged(Outcome::Won) => {
                     "YOU WON! Goal reached with the package.".to_string()
                 }
                 GameEvent::OutcomeChanged(Outcome::Lost) => {
-                    "YOU LOST! Stepped on a hazard.".to_string()
+                    let battery_depleted = {
+                        let mut dep = false;
+                        if let Some((_, battery, _)) = world.query2::<Battery, Player>().first() {
+                            if battery.current == 0 {
+                                dep = true;
+                            }
+                        }
+                        dep
+                    };
+                    if battery_depleted {
+                        "YOU LOST! Battery depleted.".to_string()
+                    } else {
+                        "YOU LOST! Stepped on a hazard.".to_string()
+                    }
                 }
                 GameEvent::OutcomeChanged(Outcome::Quit) => "Quitting...".to_string(),
-                _ => continue,
+                GameEvent::OutcomeChanged(Outcome::Playing) => "Playing...".to_string(),
             };
             messages.push(msg);
         }

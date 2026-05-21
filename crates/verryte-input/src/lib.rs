@@ -358,6 +358,30 @@ impl<A> ActionTrace<A> {
         }
         Ok(Self { steps })
     }
+
+    /// Save the action trace to a file on disk.
+    pub fn save_to_file<P, F>(&self, path: P, format_action: F) -> Result<(), String>
+    where
+        P: AsRef<std::path::Path>,
+        F: FnMut(&A) -> String,
+    {
+        let path = path.as_ref();
+        let s = self.to_detailed_string(format_action);
+        std::fs::write(path, s)
+            .map_err(|e| format!("failed to write action trace to {:?}: {}", path, e))
+    }
+
+    /// Load an action trace from a file on disk.
+    pub fn load_from_file<P, F>(path: P, parse_action: F) -> Result<Self, String>
+    where
+        P: AsRef<std::path::Path>,
+        F: FnMut(&str) -> Option<A>,
+    {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read action trace from {:?}: {}", path, e))?;
+        Self::from_detailed_string(&content, parse_action)
+    }
 }
 
 impl<A: Clone> ActionTrace<A> {
@@ -1619,6 +1643,46 @@ mod tests {
         let parsed_comments = ActionTrace::from_detailed_string(comment_str, parse_move).unwrap();
         assert_eq!(parsed_comments.len(), 2);
         assert_eq!(parsed_comments.into_steps()[0].action, Move::North);
+    }
+
+    #[test]
+    fn action_trace_file_round_trip() {
+        let mut trace = ActionTrace::new();
+        trace.push(Move::South, ActionSource::Terminal);
+        trace.push(Move::Wait, ActionSource::Script);
+
+        let format_move = |m: &Move| match m {
+            Move::North => "north".to_owned(),
+            Move::South => "south".to_owned(),
+            Move::East => "east".to_owned(),
+            Move::West => "west".to_owned(),
+            Move::Wait => "wait".to_owned(),
+            Move::Scan(r) => format!("scan:{}", r),
+        };
+
+        let parse_move = |s: &str| match s {
+            "north" => Some(Move::North),
+            "south" => Some(Move::South),
+            "east" => Some(Move::East),
+            "west" => Some(Move::West),
+            "wait" => Some(Move::Wait),
+            other => {
+                if let Some(r_str) = other.strip_prefix("scan:") {
+                    r_str.parse::<u16>().ok().map(Move::Scan)
+                } else {
+                    None
+                }
+            }
+        };
+
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_action_trace.txt");
+
+        trace.save_to_file(&path, format_move).unwrap();
+        let loaded = ActionTrace::<Move>::load_from_file(&path, parse_move).unwrap();
+        assert_eq!(loaded, trace);
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

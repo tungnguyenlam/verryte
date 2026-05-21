@@ -1103,4 +1103,100 @@ mod tests {
         let chaser_pos3 = *g.world.get::<Position>(chaser).unwrap();
         assert_eq!(chaser_pos3, Position::new(6, 1));
     }
+
+    #[test]
+    fn player_battery_mechanics() {
+        use crate::components::Battery;
+        // Test layout with player and battery pack
+        let layout = &["#######", "#@..b.#", "#######"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        // 1. Verify initial battery is 100/100
+        let initial_battery = *g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(initial_battery.current, 100);
+        assert_eq!(initial_battery.max, 100);
+
+        // 2. Perform actions and verify depletion
+        // Step drains 1
+        g.step(Action::MoveEast);
+        let battery = *g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(battery.current, 99);
+
+        // Wait drains 1
+        g.step(Action::Wait);
+        let battery = *g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(battery.current, 98);
+
+        // Scan drains 2
+        g.step(Action::Scan);
+        let battery = *g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(battery.current, 96);
+
+        // 3. Move onto battery pack and verify pickup +25 (capped at max 100)
+        g.step(Action::MoveEast); // drains 1 -> 95
+        g.step(Action::MoveEast); // drains 1 -> 94, then triggers pickup +25 -> 100 (capped), minus 1 movement cost -> 99
+        let battery = *g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(battery.current, 99);
+
+        // 4. Test battery depletion triggers Outcome::Lost
+        // Let's force-set player battery to 1
+        if let Some(b) = g.world.get_mut::<Battery>(g.player_entity()) {
+            b.current = 1;
+        }
+        // One step should drain 1 and trigger defeat
+        g.step(Action::MoveWest);
+        assert_eq!(g.outcome(), Outcome::Lost);
+        let final_battery = *g.world.get::<Battery>(g.player_entity()).unwrap();
+        assert_eq!(final_battery.current, 0);
+    }
+
+    #[test]
+    fn snapshot_chebyshev_distances() {
+        let layout = &["#######", "#@...h#", "#...p.#", "#c...G#", "#######"];
+        let g = Game::from_layout(layout, default_bindings()).unwrap();
+        let snap = g.snapshot();
+
+        // Player is at (1, 1).
+        // Hazard 'h' is at (5, 1). Distance is 4.
+        // Chaser 'c' is at (1, 3) and also has Hazard component, so nearest hazard distance is 2.
+        assert_eq!(snap.chebyshev_to_nearest_hazard, Some(2));
+
+        // Package 'p' is at (4, 2). x_diff=3, y_diff=1. Chebyshev is 3.
+        assert_eq!(snap.chebyshev_to_nearest_package, Some(3));
+
+        // Chaser 'c' is at (1, 3). x_diff=0, y_diff=2. Chebyshev is 2.
+        assert_eq!(snap.chebyshev_to_nearest_chaser, Some(2));
+
+        // Goal 'G' is at (5, 3). x_diff=4, y_diff=2. Chebyshev is 4.
+        assert_eq!(snap.chebyshev_to_goal, Some(4));
+    }
+
+    #[test]
+    fn zoom_and_log_toggling() {
+        let layout = &["#######", "#@...G#", "#######"];
+        let mut g = Game::from_layout(layout, default_bindings()).unwrap();
+
+        // Initial defaults
+        assert_eq!(g.state().camera_zoom, 0);
+        assert!(g.state().show_log);
+
+        // Zoom camera
+        g.step(Action::ZoomCamera(2));
+        assert_eq!(g.state().camera_zoom, 2);
+
+        // Zoom camera beyond clamp max
+        g.step(Action::ZoomCamera(5));
+        assert_eq!(g.state().camera_zoom, 5); // clamped to 5
+
+        // Zoom camera negative
+        g.step(Action::ZoomCamera(-8));
+        assert_eq!(g.state().camera_zoom, -3); // 5 - 8 = -3
+
+        // Toggle log
+        g.step(Action::ToggleLog);
+        assert!(!g.state().show_log);
+
+        g.step(Action::ToggleLog);
+        assert!(g.state().show_log);
+    }
 }

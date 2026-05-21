@@ -14,6 +14,15 @@ pub struct Hazard;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Chaser;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Battery {
+    pub current: u32,
+    pub max: u32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct BatteryPack;
+
 /// Tracks the chaser's position from the previous tick to avoid backtracking.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PreviousPosition(pub Position);
@@ -37,6 +46,8 @@ pub struct GameState {
     pub has_package: bool,
     pub scans: u32,
     pub cursor: Option<Position>,
+    pub camera_zoom: i16,
+    pub show_log: bool,
 }
 
 impl Default for GameState {
@@ -47,6 +58,8 @@ impl Default for GameState {
             has_package: false,
             scans: 0,
             cursor: None,
+            camera_zoom: 0,
+            show_log: true,
         }
     }
 }
@@ -85,6 +98,10 @@ pub enum GameEvent {
     ChaserMoved {
         from: Position,
         to: Position,
+    },
+    PickedUpBattery {
+        at: Position,
+        amount: u32,
     },
     OutcomeChanged(Outcome),
 }

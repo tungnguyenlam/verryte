@@ -15,6 +15,7 @@
 //! [`World`], and tests/agents read state straight off the same `World`.
 
 pub mod clock;
+pub mod diagnostics;
 pub mod entity;
 pub mod event;
 pub mod log;
@@ -24,6 +25,7 @@ pub mod tag;
 pub mod world;
 
 pub use clock::GameClock;
+pub use diagnostics::{Diagnostics, SystemMetrics};
 pub use entity::Entity;
 pub use event::Events;
 pub use log::MessageLog;

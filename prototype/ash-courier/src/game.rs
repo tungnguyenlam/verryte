@@ -4,7 +4,9 @@ use verryte_map::{Direction, Point, TileGrid};
 use verryte_terminal::{Cell, ColorPalette, Grid, Rect};
 
 use crate::action::{default_bindings, Action};
-use crate::components::{Chaser, GameEvent, GameState, Hazard, Outcome, Package, Player, Position};
+use crate::components::{
+    Battery, BatteryPack, Chaser, GameEvent, GameState, Hazard, Outcome, Package, Player, Position,
+};
 use crate::map::{Map, Tile};
 use crate::snapshot::{ActionResult, Snapshot, StepReport};
 use crate::systems::resolve_tile_system;
@@ -69,6 +71,7 @@ impl Game {
                     'p' => (Tile::Floor, Some(SpawnKind::Package)),
                     'h' => (Tile::Floor, Some(SpawnKind::Hazard)),
                     'c' => (Tile::Floor, Some(SpawnKind::Chaser)),
+                    'b' => (Tile::Floor, Some(SpawnKind::BatteryPack)),
                     'G' => (Tile::Goal, None),
                     ' ' => (Tile::Wall, None), // treat padding as wall
                     other => return Err(MapError::UnknownGlyph(other)),
@@ -95,13 +98,24 @@ impl Game {
                         SpawnKind::Chaser => {
                             world.builder().with(pos).with(Hazard).with(Chaser).build();
                         }
+                        SpawnKind::BatteryPack => {
+                            world.builder().with(pos).with(BatteryPack).build();
+                        }
                     }
                 }
             }
         }
 
         let player_spawn = player_spawn.ok_or(MapError::NoPlayer)?;
-        let player = world.builder().with(player_spawn).with(Player).build();
+        let player = world
+            .builder()
+            .with(player_spawn)
+            .with(Player)
+            .with(Battery {
+                current: 100,
+                max: 100,
+            })
+            .build();
 
         world.insert_resource(map);
         world.insert_resource(GameState::default());
@@ -223,6 +237,14 @@ impl Game {
             None
         };
 
+        // Pick battery pack.
+        let bat_pt = if !walkable.is_empty() {
+            let bat_idx = rng.pick_index(walkable.len()).unwrap();
+            Some(walkable.remove(bat_idx))
+        } else {
+            None
+        };
+
         let map = crate::map::Map {
             width,
             height,
@@ -238,6 +260,10 @@ impl Game {
                 y: player_pt.y,
             })
             .with(Player)
+            .with(Battery {
+                current: 100,
+                max: 100,
+            })
             .build();
 
         world
@@ -267,6 +293,17 @@ impl Game {
                 })
                 .with(Hazard)
                 .with(Chaser)
+                .build();
+        }
+
+        if let Some(bat_pos) = bat_pt {
+            world
+                .builder()
+                .with(Position {
+                    x: bat_pos.x,
+                    y: bat_pos.y,
+                })
+                .with(BatteryPack)
                 .build();
         }
 
@@ -606,6 +643,16 @@ impl Game {
                         }
                     })
             }
+            Action::ZoomCamera(amount) => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                state.camera_zoom = (state.camera_zoom + amount).clamp(-5, 5);
+                ActionResult::Updated
+            }
+            Action::ToggleLog => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                state.show_log = !state.show_log;
+                ActionResult::Updated
+            }
             mv => mv.direction().map_or(ActionResult::NoOp, |direction| {
                 if self.try_move(direction) {
                     self.advance_turn();
@@ -615,6 +662,31 @@ impl Game {
                 }
             }),
         };
+
+        if matches!(result, ActionResult::Advanced) {
+            let battery_cost = match action {
+                Action::Scan | Action::ScanRadius(_) => 2,
+                Action::Wait => 1,
+                Action::MoveNorth
+                | Action::MoveSouth
+                | Action::MoveEast
+                | Action::MoveWest
+                | Action::StepToPackage
+                | Action::StepToGoal
+                | Action::StepToSafety
+                | Action::StepToCursor => 1,
+                _ => 0,
+            };
+            if battery_cost > 0 {
+                if let Some(battery) = self.world.get_mut::<Battery>(self.player) {
+                    battery.current = battery.current.saturating_sub(battery_cost);
+                    if battery.current == 0 {
+                        self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Lost;
+                        self.send_event(GameEvent::OutcomeChanged(Outcome::Lost));
+                    }
+                }
+            }
+        }
 
         if matches!(result, ActionResult::Advanced)
             || matches!(result, ActionResult::Ended(_))
@@ -657,8 +729,27 @@ impl Game {
                     from: current,
                     to: target,
                 });
+                self.check_battery_pickup(target);
                 true
             }
+        }
+    }
+
+    fn check_battery_pickup(&mut self, pos: Position) {
+        let found = self
+            .world
+            .query2::<Position, BatteryPack>()
+            .into_iter()
+            .find_map(|(e, pack_pos, _)| (*pack_pos == pos).then_some(e));
+        if let Some(entity) = found {
+            self.world.despawn(entity);
+            if let Some(battery) = self.world.get_mut::<Battery>(self.player) {
+                battery.current = (battery.current + 25).min(battery.max);
+            }
+            self.send_event(GameEvent::PickedUpBattery {
+                at: pos,
+                amount: 25,
+            });
         }
     }
 
@@ -909,6 +1000,19 @@ impl Game {
         let distance_to_nearest_hazard = self.shortest_distance_to_any(player, &hazards);
         let distance_to_nearest_chaser = self.shortest_distance_to_any(player, &chasers);
         let safer_neighbors = self.safer_neighbors_from(player, &hazards);
+
+        let chebyshev_to_goal = goals.iter().map(|g| player.chebyshev_distance(*g)).min();
+        let chebyshev_to_nearest_hazard =
+            hazards.iter().map(|h| player.chebyshev_distance(*h)).min();
+        let chebyshev_to_nearest_package =
+            packages.iter().map(|p| player.chebyshev_distance(*p)).min();
+        let chebyshev_to_nearest_chaser =
+            chasers.iter().map(|c| player.chebyshev_distance(*c)).min();
+        let battery = self
+            .world
+            .get::<Battery>(self.player)
+            .map(|b| (b.current, b.max));
+
         Snapshot {
             turn: state.turn,
             outcome: state.outcome,
@@ -941,6 +1045,11 @@ impl Game {
             entity_count: self.world.entity_count(),
             frame: self.render().to_plain_string(),
             local_frame: self.render_viewport(7, 7).to_plain_string(),
+            battery,
+            chebyshev_to_goal,
+            chebyshev_to_nearest_hazard,
+            chebyshev_to_nearest_package,
+            chebyshev_to_nearest_chaser,
         }
     }
 }
@@ -956,6 +1065,7 @@ enum SpawnKind {
     Package,
     Hazard,
     Chaser,
+    BatteryPack,
 }
 
 fn centered_origin(center: i16, span: u16, limit: u16) -> u16 {

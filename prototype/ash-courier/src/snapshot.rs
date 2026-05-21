@@ -39,6 +39,11 @@ pub struct Snapshot {
     pub frame: String,
     /// Plain-text camera-sized view centered near the player.
     pub local_frame: String,
+    pub battery: Option<(u32, u32)>,
+    pub chebyshev_to_goal: Option<u16>,
+    pub chebyshev_to_nearest_hazard: Option<u16>,
+    pub chebyshev_to_nearest_package: Option<u16>,
+    pub chebyshev_to_nearest_chaser: Option<u16>,
 }
 
 /// One applied action and the observable state before/after it.

@@ -1394,3 +1394,27 @@ beyond perhaps a seed or layout.
 **Gotchas.** The scent-tracking algorithm updates `ScentTrail` with the player's *new* position during `chaser_system` execution, meaning that the scent trail contains the player's current step position immediately after they move.
 
 **Follow-ups.** None. All 208 tests, clippy checks, format checks, and smoke scripts pass perfectly.
+
+## 2026-05-22 - phase 2 autonomous engine run: replay trace persistence, ecs profiling, battery mechanics, spatial chebyshev observability, camera zoom & log toggle UI
+
+**Goal.** Complete Phase 2 improvements for the autonomous engine run, addressing persistence, ECS profiling, gameplay depth, and terminal UI observability.
+
+**Changes.**
+- `crates/verryte-input/src/lib.rs` - Added `ActionTrace::save_to_file` and `ActionTrace::load_from_file` for disk-based replay persistence and added comprehensive unit tests.
+- `crates/verryte-core/src/diagnostics.rs` - Created `diagnostics` module with `Diagnostics` and `SystemMetrics` structs.
+- `crates/verryte-core/src/lib.rs` - Re-exported `diagnostics` module structures.
+- `crates/verryte-core/src/schedule.rs` - Modified schedule execution loops to measure and record system performance metrics.
+- `prototype/ash-courier/src/components.rs` - Added `Battery` and `BatteryPack` components, as well as `PickedUpBattery` game events.
+- `prototype/ash-courier/src/action.rs` - Added `ZoomCamera` and `ToggleLog` actions and bound `[`/`]` and `Tab`.
+- `prototype/ash-courier/src/game.rs` - Implemented player battery consumption (1 per move/wait, 2 per scan), battery pack pickup logic (+25 battery), camera zoom adjustments, and log toggling.
+- `prototype/ash-courier/src/snapshot.rs` - Implemented 8-way diagonal spatial Chebyshev distance calculation for snapshots.
+- `prototype/ash-courier/src/systems.rs` - Added battery collection and depletion loss message logs.
+- `prototype/ash-courier/src/bin/tty.rs` - Integrated camera zoom in `viewport_dimensions`, dynamically resized the TTY panel layout when the log panel is toggled, and displayed battery and Chebyshev metrics in the status panel.
+
+**Reasoning.** Replay trace disk persistence gives the engine automated diagnostic saving capabilities without relying on third-party libraries. Performance diagnostics in the scheduling system allow direct observability of execution hot spots at runtime. Player battery mechanics add tactical survival tension, while Chebyshev distances in snapshots supply accurate diagonal pathfinding observations for scripts and external agents. Camera zoom and log toggling UI enhancements offer comfortable terminal viewport scaling and cleaner UI visibility under constraints.
+
+**Assumptions.** Spawning players with 100/100 default battery ensures that existing maps and scripts do not suffer from sudden starvation/defeat regressions. Viewport dimensions are clamped to sensible minima to avoid panics on small terminals.
+
+**Gotchas.** Spawning `SpawnKind::Chaser` maps to entities containing both `Chaser` and `Hazard` components; consequently, the snapshot calculation for nearest hazards includes active chasers, which matches the game's hazard-based loss design.
+
+**Follow-ups.** None. All workspace checks, clippy, and unit tests compile and run flawlessly with 100% clean status.

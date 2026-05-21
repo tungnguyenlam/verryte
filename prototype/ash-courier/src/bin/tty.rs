@@ -56,9 +56,11 @@ fn clamp_terminal((term_w, term_h): (u16, u16)) -> (u16, u16) {
     (term_w.max(40), term_h.max(16))
 }
 
-fn viewport_dimensions(width: u16, height: u16) -> (u16, u16) {
-    let vp_w = (width / 2).saturating_sub(2).max(10);
-    let vp_h = (height - 2).max(5);
+fn viewport_dimensions(width: u16, height: u16, zoom: i16) -> (u16, u16) {
+    let base_w = (width / 2).saturating_sub(2);
+    let base_h = height.saturating_sub(2);
+    let vp_w = ((base_w as i16) + zoom * 2).max(10) as u16;
+    let vp_h = ((base_h as i16) + zoom).max(5) as u16;
     (vp_w, vp_h)
 }
 
@@ -70,7 +72,8 @@ struct InspectLayout {
 impl InspectLayout {
     fn new(game: &Game, term_size: (u16, u16)) -> Self {
         let (term_w, term_h) = clamp_terminal(term_size);
-        let (vp_w, vp_h) = viewport_dimensions(term_w, term_h);
+        let zoom = game.state().camera_zoom;
+        let (vp_w, vp_h) = viewport_dimensions(term_w, term_h, zoom);
         let map = game.map();
         let inner_w = vp_w.min(map.width);
         let inner_h = vp_h.min(map.height);
@@ -115,7 +118,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
 
     // Derive layout from terminal size.
     // Viewport: left side, roughly half width, most of height.
-    let (vp_w, vp_h) = viewport_dimensions(w, h);
+    let (vp_w, vp_h) = viewport_dimensions(w, h, game.state().camera_zoom);
     let vp_rect = Rect::new(0, 0, vp_w.saturating_add(2), vp_h.saturating_add(2));
     root.draw_rounded_panel(
         vp_rect,
@@ -136,33 +139,38 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
         return root;
     }
 
-    let log_h = (h / 2).saturating_sub(1).max(3);
-    let log_rect = Rect::new(right_x, 0, right_w, log_h + 2);
-    root.draw_rounded_panel(
-        log_rect,
-        " LOG ",
-        palette.ui_border,
-        palette.ui_title,
-        palette.background,
-    );
-    let msgs = game.messages();
-    let max_log_lines = log_h.min(10) as usize;
-    let display_msgs = if msgs.len() > max_log_lines {
-        &msgs[msgs.len() - max_log_lines..]
-    } else {
-        &msgs[..]
-    };
-    root.write_lines(
-        right_x + 2,
-        log_rect.y + 1,
-        display_msgs.iter(),
-        palette.ui_text,
-        palette.background,
-    );
+    let state = game.state();
+    let snap = game.snapshot();
 
-    // Status panel below log.
-    let status_y = log_h + 2;
-    let status_h = h.saturating_sub(status_y);
+    let (status_y, status_h) = if state.show_log {
+        let log_h = (h / 2).saturating_sub(1).max(3);
+        let log_rect = Rect::new(right_x, 0, right_w, log_h + 2);
+        root.draw_rounded_panel(
+            log_rect,
+            " LOG ",
+            palette.ui_border,
+            palette.ui_title,
+            palette.background,
+        );
+        let msgs = game.messages();
+        let max_log_lines = log_h.min(10) as usize;
+        let display_msgs = if msgs.len() > max_log_lines {
+            &msgs[msgs.len() - max_log_lines..]
+        } else {
+            &msgs[..]
+        };
+        root.write_lines(
+            right_x + 2,
+            log_rect.y + 1,
+            display_msgs.iter(),
+            palette.ui_text,
+            palette.background,
+        );
+        (log_h + 2, h.saturating_sub(log_h + 2))
+    } else {
+        (0, h)
+    };
+
     if status_h >= 3 {
         let status_rect = Rect::new(right_x, status_y, right_w, status_h);
         root.draw_rounded_panel(
@@ -173,106 +181,114 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
             palette.background,
         );
 
-        let state = game.state();
-        let snap = game.snapshot();
         let sy = status_y + 1;
         let inner_w = right_w.saturating_sub(4);
-        root.write_aligned(
-            right_x + 2,
-            sy,
-            inner_w,
-            &format!("Turn:    {}", state.turn),
-            Alignment::Left,
-            palette.ui_text,
-            palette.background,
-        );
-        if sy + 1 < h {
-            root.write_aligned(
-                right_x + 2,
-                sy + 1,
-                inner_w,
-                &format!("Package: {}", if state.has_package { "YES" } else { "NO" }),
-                Alignment::Left,
-                if state.has_package {
-                    palette.item
-                } else {
-                    palette.ui_dim
-                },
-                palette.background,
-            );
-        }
-        if sy + 2 < h {
-            root.write_aligned(
-                right_x + 2,
-                sy + 2,
-                inner_w,
-                &format!("Scans:   {}", state.scans),
-                Alignment::Left,
-                palette.ui_text,
-                palette.background,
-            );
-        }
-        if sy + 3 < h {
-            root.write_aligned(
-                right_x + 2,
-                sy + 3,
-                inner_w,
-                &format!(
-                    "Dist P/G/H/C: {}/{}/{}/{}",
-                    maybe_distance(snap.distance_to_nearest_package),
-                    maybe_distance(snap.distance_to_goal),
-                    maybe_distance(snap.distance_to_nearest_hazard),
-                    maybe_distance(snap.distance_to_nearest_chaser)
-                ),
-                Alignment::Left,
-                palette.ui_text,
-                palette.background,
-            );
-        }
 
-        if sy + 4 < h {
-            let cursor = snap.cursor.map_or_else(
-                || "-".to_owned(),
-                |point| {
-                    let tile = snap
-                        .cursor_tile
-                        .map(|tile| format!("{tile:?}"))
-                        .unwrap_or_else(|| "-".to_owned());
-                    format!("{},{} ({tile})", point.x, point.y)
-                },
-            );
-            root.write_aligned(
-                right_x + 2,
-                sy + 4,
-                inner_w,
-                &format!("Cursor:  {}", cursor),
-                Alignment::Left,
-                palette.ui_text,
-                palette.background,
-            );
-        }
+        let mut row_offset = 0;
+        let mut write_line = |offset: &mut i32, text: &str, color| {
+            let y = sy as i32 + *offset;
+            if y < h as i32 {
+                root.write_aligned(
+                    right_x + 2,
+                    y as u16,
+                    inner_w,
+                    text,
+                    Alignment::Left,
+                    color,
+                    palette.background,
+                );
+                *offset += 1;
+            }
+        };
+
+        write_line(
+            &mut row_offset,
+            &format!("Turn:    {}", state.turn),
+            palette.ui_text,
+        );
+
+        let pkg_color = if state.has_package {
+            palette.item
+        } else {
+            palette.ui_dim
+        };
+        write_line(
+            &mut row_offset,
+            &format!("Package: {}", if state.has_package { "YES" } else { "NO" }),
+            pkg_color,
+        );
+
+        write_line(
+            &mut row_offset,
+            &format!("Scans:   {}", state.scans),
+            palette.ui_text,
+        );
+
+        let battery_str = snap
+            .battery
+            .map_or_else(|| "-".to_string(), |(c, m)| format!("{}/{}", c, m));
+        write_line(
+            &mut row_offset,
+            &format!("Battery: {}", battery_str),
+            palette.ui_text,
+        );
+
+        write_line(
+            &mut row_offset,
+            &format!(
+                "Cheby P/G/H/C: {}/{}/{}/{}",
+                maybe_distance(snap.chebyshev_to_nearest_package),
+                maybe_distance(snap.chebyshev_to_goal),
+                maybe_distance(snap.chebyshev_to_nearest_hazard),
+                maybe_distance(snap.chebyshev_to_nearest_chaser)
+            ),
+            palette.ui_text,
+        );
+
+        write_line(
+            &mut row_offset,
+            &format!(
+                "Dist P/G/H/C:  {}/{}/{}/{}",
+                maybe_distance(snap.distance_to_nearest_package),
+                maybe_distance(snap.distance_to_goal),
+                maybe_distance(snap.distance_to_nearest_hazard),
+                maybe_distance(snap.distance_to_nearest_chaser)
+            ),
+            palette.ui_text,
+        );
+
+        let cursor_str = snap.cursor.map_or_else(
+            || "-".to_owned(),
+            |point| {
+                let tile = snap
+                    .cursor_tile
+                    .map(|tile| format!("{tile:?}"))
+                    .unwrap_or_else(|| "-".to_owned());
+                format!("{},{} ({tile})", point.x, point.y)
+            },
+        );
+        write_line(
+            &mut row_offset,
+            &format!("Cursor:  {}", cursor_str),
+            palette.ui_text,
+        );
+
         let (outcome_str, outcome_color) = match state.outcome {
             Outcome::Playing => ("Playing", palette.ui_title),
             Outcome::Won => ("WON! Press Q to exit.", palette.goal),
             Outcome::Lost => ("LOST! Press Q to exit.", palette.hazard),
             Outcome::Quit => ("Quit", palette.ui_dim),
         };
-        if sy + 5 < h {
-            root.write_aligned(
-                right_x + 2,
-                sy + 5,
-                inner_w,
-                &format!("Outcome: {}", outcome_str),
-                Alignment::Left,
-                outcome_color,
-                palette.background,
-            );
-        }
+        write_line(
+            &mut row_offset,
+            &format!("Outcome: {}", outcome_str),
+            outcome_color,
+        );
     }
 
     // Control hints at the bottom.
-    if h >= 2 {
-        let hint_y = h - 2;
+    if h >= 3 {
+        let hint_y = h - 3;
         root.write_str(
             right_x + 2,
             hint_y,
@@ -285,6 +301,33 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
                 right_x + 2,
                 hint_y + 1,
                 "X: Scan | R: Safety | P/O: Path steps | Mouse L: Inspect | Q: Quit",
+                palette.ui_dim,
+                palette.background,
+            );
+        }
+        if hint_y + 2 < h {
+            root.write_str(
+                right_x + 2,
+                hint_y + 2,
+                "[/]: Zoom camera | TAB: Toggle Log",
+                palette.ui_dim,
+                palette.background,
+            );
+        }
+    } else if h >= 2 {
+        let hint_y = h - 2;
+        root.write_str(
+            right_x + 2,
+            hint_y,
+            "Arrows/WASD: Move | SPACE: Wait | G: Pick | D: Drop | 1-5: ScanR",
+            palette.ui_dim,
+            palette.background,
+        );
+        if hint_y + 1 < h {
+            root.write_str(
+                right_x + 2,
+                hint_y + 1,
+                "X: Scan | [/]: Zoom | TAB: Log | Mouse L: Inspect | Q: Quit",
                 palette.ui_dim,
                 palette.background,
             );

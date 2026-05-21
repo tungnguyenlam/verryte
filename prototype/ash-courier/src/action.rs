@@ -19,6 +19,8 @@ pub enum Action {
     PickUp,
     Drop,
     Quit,
+    ZoomCamera(i16),
+    ToggleLog,
 }
 
 impl Action {
@@ -77,6 +79,9 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Esc, Action::Quit);
     b.bind(Key::Char('c'), Action::ClearCursor);
     b.bind(Key::Char('C'), Action::ClearCursor);
+    b.bind(Key::Char('['), Action::ZoomCamera(-1));
+    b.bind(Key::Char(']'), Action::ZoomCamera(1));
+    b.bind(Key::Tab, Action::ToggleLog);
     b.bind_mouse(MouseButton::Right, true, Action::Scan);
     b.bind_mouse(MouseButton::Middle, true, Action::Wait);
     b
@@ -104,6 +109,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("drop", Action::Drop);
     c.bind_name("quit", Action::Quit);
     c.bind_name("clear_cursor", Action::ClearCursor);
+    c.bind_name("toggle_log", Action::ToggleLog);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('N', Action::MoveNorth);
@@ -140,6 +146,15 @@ pub fn default_commands() -> CommandBindings<Action> {
 /// * `look:<x>,<y>` (for example `look:3,4`)
 /// * `cursor:<x>,<y>` (for example `cursor:3,4`)
 pub fn resolve_command_token(token: &str) -> Option<Action> {
+    if token == "toggle_log" {
+        return Some(Action::ToggleLog);
+    }
+    if let Some(zoom_str) = token.strip_prefix("zoom:") {
+        if let Ok(amount) = zoom_str.parse::<i16>() {
+            return Some(Action::ZoomCamera(amount));
+        }
+    }
+
     let inspect = token
         .strip_prefix("inspect:")
         .or_else(|| token.strip_prefix("look:"))
