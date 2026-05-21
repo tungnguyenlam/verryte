@@ -29,3 +29,4 @@ that prototype to validate engine behavior, especially the shared input/control 
 - `07-docs-sync.md` - keep docs aligned with the current implementation
 - `08-fresh-session-bootstrap.md` - compact prompt for quick repeated use
 - `09-autonomous-engine-run.md` - longer autonomous run prompt for sustained progress
+- `10-tactical-rpg.md` - autonomous run for the tactical RPG prototype: VFX extraction, grid battlefield, turn system, combat, team swap, boss fight
