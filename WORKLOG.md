@@ -1806,3 +1806,23 @@ sprites render correctly with VFX overlays.
 **Gotchas.** None. All workspace cargo tests pass successfully.
 
 **Follow-ups.** None.
+
+## 2026-05-23 - autonomous engine improvements: save/load serialization, tuple ergonomics, camera boundaries, textinput undo/redo, styled borders
+
+**Goal.** Implement 6 autonomous improvements to the Verryte engine and the wuthering-terminal prototype (clippy fixes, save/load snapshot state serialization, ECS tuple retrieval ergonomics, camera boundary clamping, text input undo/redo, and styled TUI borders).
+
+**Changes.**
+- `crates/verryte-core/src/world.rs:1053` - Added `World::get2`, `World::get3` tuple-retrieval helpers and `World::with_mut2`, `World::with_mut3` callback-based mutable helpers.
+- `crates/verryte-input/src/lib.rs:1309` - Added `undo_stack` and `redo_stack` fields and operations to `TextInput` and bound key bindings `Ctrl-Z`, `Ctrl-Y`, `Ctrl-R`.
+- `crates/verryte-terminal/src/lib.rs:397` - Added `Camera::clamp_to_bounds` method.
+- `crates/verryte-terminal/src/lib.rs:481` - Added `BorderStyle` enum and `Grid::draw_border_styled` method.
+- `prototype/wuthering-terminal/src/game.rs:2130` - Implemented `Game::save_state` and `Game::load_state` for game snapshots using `serde_json`.
+- `prototype/wuthering-terminal/src/lib.rs:160` - Added integration tests for save/load state snapshot.
+
+**Reasoning.** Dynamic save/load serialization supports session persistence and replay/agent analysis. ECS tuple retrieval allows safe simultaneous borrowing. Camera clamping prevents rendering outside bounds, while styled borders improve TUI layouts with ASCII/rounded/double/heavy presets. Undo/Redo improves interactive CLI/text components.
+
+**Assumptions.** We assumed the test coverage in `crates/verryte-terminal/src/lib.rs` and `prototype/wuthering-terminal` tests is sufficient to verify styled borders and save/load snapshot consistency respectively.
+
+**Gotchas.** Rng implements `Copy`, so cloning it triggered a Clippy warning; fixed by dereferencing. Naive `visible_points` test used a deprecated method; silenced with `#[allow(deprecated)]`.
+
+**Follow-ups.** None. All improvements are complete and tests pass cleanly.
