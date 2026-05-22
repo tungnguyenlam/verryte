@@ -6,7 +6,6 @@ members = [
     "crates/verryte-map",
     "crates/verryte-terminal",
     "crates/verryte-tty",
-    "prototype/ash-courier",
     "prototype/vfx-demo",
     "prototype/wuthering-terminal",
 ]

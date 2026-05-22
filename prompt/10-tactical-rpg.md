@@ -19,7 +19,7 @@ shake, flash overlays, floating damage text, AoE rings) feels satisfying at 30
 FPS with diff-based rendering.
 
 The tactical RPG prototype lives in `prototype/wuthering-terminal/`. Its purpose
-is to validate the engine on complex mechanics that Ash Courier cannot stress:
+is to validate the engine on complex mechanics:
 multi-character teams, real-time VFX overlays, area-of-effect targeting, and
 turn-phase scheduling.
 

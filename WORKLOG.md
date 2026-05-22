@@ -1786,3 +1786,23 @@ sprites render correctly with VFX overlays.
 **Gotchas.** Using tiles of 8x4 size with 16x16 boss sprite sheets caused subtraction overflows under `u16` when calculating centers. Signed `i32` conversions resolved this.
 
 **Follow-ups.** None. All requirements of the tactical RPG prototype roadmap are complete.
+
+## 2026-05-23 - Remove Ash Courier prototype and configure wuthering-terminal as main prototype
+
+**Goal.** Remove the old Ash Courier prototype completely from git, configuration, and documentation, leaving Wuthering Terminal as the main/proving prototype game.
+
+**Changes.**
+- `Cargo.toml` - removed `prototype/ash-courier` from the workspace members.
+- `Makefile` - modified `make proto` and `make script` to run `wuthering-terminal` and `wuthering-terminal-script` respectively.
+- `AGENTS.md` - removed references to `ash-courier` in workspace map, current capability lists, smoke commands, and documentation lists.
+- `README.md` - updated descriptions, workspace members list, and runner commands to document `wuthering-terminal` instead of `ash-courier`.
+- `prompt/` - updated `00-project-context.md`, `08-fresh-session-bootstrap.md`, `09-autonomous-engine-run.md`, `10-tactical-rpg.md`, and `README.md` to reference `prototype/wuthering-terminal/` as the proving game.
+- `prototype/ash-courier/` - deleted all directories and files from git.
+
+**Reasoning.** The user requested that we deprecate the old `ash-courier` proving game entirely and transition exclusively to the new tactical RPG `wuthering-terminal` as the main prototype. This aligns with the engine's current state of completeness.
+
+**Assumptions.** We assume that `wuthering-terminal`'s script runner and interactive TTY runner are sufficient for all engine verification tasks going forward.
+
+**Gotchas.** None. All workspace cargo tests pass successfully.
+
+**Follow-ups.** None.

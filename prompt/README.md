@@ -6,7 +6,7 @@ Each file is designed to be copied into a fresh agent session. Start with
 `00-project-context.md` when the agent has no context, then choose the prompt that matches
 the kind of work you want next.
 
-The `prototype/ash-courier/` folder describes the first proving game. Agents should use
+The `prototype/wuthering-terminal/` folder describes the proving game. Agents should use
 that prototype to validate engine behavior, especially the shared input/control path.
 
 ## Suggested Loop

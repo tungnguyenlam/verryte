@@ -2,8 +2,8 @@
 
 Verryte is a modular Rust engine for rich terminal games. The current workspace
 is intentionally small and vertical: engine crates provide core ECS storage,
-input routing, spatial maps, and terminal-cell rendering; Ash Courier exercises
-those pieces as the first proving game.
+input routing, spatial maps, and terminal-cell rendering; the prototypes exercise
+those pieces.
 
 ## Workspace
 
@@ -123,19 +123,6 @@ those pieces as the first proving game.
   diff-based rendering (`render_diff`) with automatic full-render fallback
   on terminal resize, and
   `terminal_size()` for querying the current terminal dimensions.
-- `prototype/ash-courier` - a small turn-based roguelike prototype that proves
-  the engine path through movement, pickup, hazards, win/loss state, rendering,
-  scan/visibility state (using recursive shadowcasting FOV), inspection cursor
-  state with highlight rendering, event reports, package drop/re-pickup, path hints, hazard-distance
-  safety hints, reachable-state hints, local viewport snapshots, observable
-  snapshots,
-  `GameClock` for turn tracking, `Rng` for reproducible chaser AI,
-  diff-based TTY rendering, procedural cave map generation via
-  `Game::from_cave` using cellular automata, BSP dungeon generation via
-  `Game::from_bsp`, `Map::from_ascii` for convenient map construction,
-  `Game::reset` / `reset_from_cave` / `reset_from_bsp` / `reset_from_layout` for agent-ready
-  restart, `Game::render_with_palette` for theme-configurable rendering,
-  and `PreviousPosition` for chaser anti-oscillation tie-breaking.
 - `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
   Features team-swapping, Echo absorption, telegraphed enemy attacks with
   parry/dodge, and an adaptive resolution sprite system that scales visual
@@ -176,31 +163,22 @@ In practice:
 - snapshots and per-step reports expose observable state, action source, action
   result, and game events for tests, scripts, and future tooling.
 
-## Ash Courier
+## Wuthering Terminal
 
-Ash Courier includes two runners:
+Wuthering Terminal includes two runners:
 
 **Script runner** (non-TTY, for tests/CI):
 ```sh
-cargo run -p ash-courier --bin ash-courier-script -- "eeesss,nnneeeesssssss"
+cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "inspect:4,4 confirm inspect:4,5 confirm"
 ```
 
 **Interactive TTY** (real terminal):
 ```sh
-cargo run -p ash-courier --bin ash-courier-tty
+cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
-`verryte-input` command bindings accept both command words and compact glyphs:
-`north`, `south`, `east`, `west`, `wait`, `scan`, `step_package`, `step_goal`,
-`step_safety`, `step_cursor`, `pickup`, `drop`, `clear_cursor`, `quit`, plus `n`,
-`s`, `e`, `w`, `.`, `x`, `p`, `o`, `v`, `t`, `,`, `!`, `c`, and `q`. Scripts can
-mix whitespace with `;` separators and `#` line comments. Ash Courier's script
-runner also accepts parameterized scan tokens (`scan:3`, `scan3`, `x3`) and
-inspect tokens (`inspect:3,4`, `look:3,4`) through `inject_script_with`.
-The script runner prints the rendered frame, local viewport, state summary,
-source, action result, event count, visible/reachable tile counts, path lengths,
-shortest distances to package/goal/hazards/chasers, and safer-neighbor counts
-after each action, plus cursor state when inspection is used.
+`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, and target selections. The script runner parses these commands and validates game logic.
+The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
 
 ## Verification
 

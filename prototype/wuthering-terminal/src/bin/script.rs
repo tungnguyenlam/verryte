@@ -49,8 +49,8 @@ fn main() {
         }
 
         match game.outcome() {
-            Outcome::Victory => std::process::exit(0),
-            Outcome::Defeat | Outcome::Quit | Outcome::Playing => std::process::exit(1),
+            Outcome::Victory | Outcome::Playing => std::process::exit(0),
+            Outcome::Defeat | Outcome::Quit => std::process::exit(1),
         }
     }
 }

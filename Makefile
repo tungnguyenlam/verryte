@@ -5,7 +5,7 @@ help:
 	@echo "Verryte Developer Makefile"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make proto      - Run the interactive TTY proving game (Ash Courier)"
+	@echo "  make proto      - Run the interactive TTY game (Wuthering Terminal)"
 	@echo "  make script     - Run the automated script smoke test"
 	@echo "  make test       - Run all workspace unit tests"
 	@echo "  make fmt        - Check and format all workspace files"
@@ -13,13 +13,13 @@ help:
 	@echo "  make check      - Verify that the workspace compiles cleanly"
 	@echo ""
 
-# Run the TTY proving game
+# Run the TTY game
 proto:
-	cargo run -p ash-courier --bin ash-courier-tty
+	cargo run -p wuthering-terminal --bin wuthering-terminal
 
 # Run the script smoke test
 script:
-	cargo run -p ash-courier --bin ash-courier-script -- "eeesss,nnneeeesssssss"
+	cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "inspect:4,4 confirm inspect:4,5 confirm"
 
 # Run tests
 test:

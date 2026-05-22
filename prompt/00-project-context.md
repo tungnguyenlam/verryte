@@ -11,7 +11,7 @@ Important product shape:
 - A completed Verryte game runs in a real terminal.
 - Terminal events, script commands, tests, and agent control should flow through shared
   game actions and shared game logic.
-- `prototype/ash-courier/` is the first proving game. Use it to validate engine choices,
+- `prototype/wuthering-terminal/` is the proving game. Use it to validate engine choices,
   not as a place for one-off logic that cannot generalize.
 - The engine should be modular, with focused parts that compose cleanly.
 - Built-in behavior should be useful defaults, not hard limits.

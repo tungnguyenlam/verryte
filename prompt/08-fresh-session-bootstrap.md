@@ -8,7 +8,7 @@ Keep these priorities in mind:
 - ECS-oriented, data-first, terminal-native
 - extensible defaults, not hard limits
 - no hidden ownership of the user's game
-- Ash Courier in `prototype/ash-courier/` is the first proving game
+- Wuthering Terminal in `prototype/wuthering-terminal/` is the proving game
 - input/control is central
 - interactive input and scripted/agent input must share the same action path
 - every meaningful slice should become testable

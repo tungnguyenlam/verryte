@@ -79,7 +79,7 @@ As of the latest commits:
 8. Update or add docs when behavior or project shape changes.
 9. Add tests for new behavior whenever practical.
 10. Treat prior-agent work as useful but fallible. Verify assumptions against the current
-    code, tests, `GOAL.md`, and `prototype/ash-courier/README.md`.
+    code, tests, `GOAL.md`, and `prototype/wuthering-terminal/README.md`.
 11. If previous work is wrong, stale, circular, or blocking progress, self-heal it:
     simplify, correct, document the correction, and continue.
 12. End only after verification has run or after documenting a real blocker.
@@ -89,7 +89,7 @@ As of the latest commits:
 Do this before editing:
 
 - read `GOAL.md`
-- read `prototype/ash-courier/README.md` if it exists
+- read `prototype/wuthering-terminal/README.md` if it exists
 - inspect the file tree
 - identify the language/workspace/build system currently present
 - read any existing README, docs, examples, tests, or agent notes

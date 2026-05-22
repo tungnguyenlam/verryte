@@ -28,9 +28,6 @@ project context, not runtime code.
   diff, line, border, and text rendering primitives.
 - `crates/verryte-tty` - crossterm frontend that translates real terminal input
   into `verryte-input` events and renders `verryte-terminal::Grid`.
-- `prototype/ash-courier` - the first proving game. Use it to validate engine
-  behavior through a small turn-based roguelike instead of inventing abstract
-  engine features in isolation.
 - `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
   Validates the engine on complex mechanics: team swapping, Echo absorption,
   parry/dodge, and adaptive-resolution sprite rendering. Source PNG artwork
@@ -55,7 +52,7 @@ Do not split interactive play, scripts, tests, replays, and agent control into
 separate gameplay paths. Add metadata such as `ActionSource` when useful, but
 keep action application shared.
 
-Prefer the smallest useful vertical slice. When Ash Courier exposes a reusable
+Prefer the smallest useful vertical slice. When a prototype exposes a reusable
 need, move the reusable part into the appropriate engine crate and keep
 game-specific rules in the prototype. Avoid large speculative systems, content
 volume, or architecture that only serves a hypothetical future game.
@@ -79,7 +76,6 @@ As of the latest commits, Verryte has:
 - **Map & geometry** (`verryte-map`): grid, bounds, distance, visibility, reachability, pathfinding, `TileGrid` with iterators.
 - **Terminal rendering** (`verryte-terminal`): cell, color, grid, clipping, viewport, diff, line, border, text rendering, batch write helpers.
 - **TTY frontend** (`verryte-tty`): crossterm integration, real-time input translation, incremental cell-diff rendering.
-- **Ash Courier proving game** (`prototype/ash-courier`): turn-based roguelike, cursor control, step-to-target navigation, score/win/loss outcomes, batch input, replay support, script runner.
 - **Adaptive resolution sprites**: build-time PNG-to-Rust compilation pipeline (`scratch/png_to_ansi.py`) that bakes chibi pixel art into static `[[(u8, u8, u8); W]; H]` arrays at 6 resolution tiers (TINY through ULTRA). At runtime, `crossterm::terminal::size()` selects the best tier purely by terminal cols×rows.
 - **Wuthering Terminal prototype** (`prototype/wuthering-terminal`): tactical RPG prototype, multi-character teams, high-fidelity image-based sprites, larger tile grids, complex turn-phase scheduling. (Step 1 Complete: Tactical Grid Scene)
 - **Terminal VFX demo** (`prototype/vfx-demo`): interactive demo proving real-time terminal animation at 30 FPS. Particle system (fire, ice, lightning, slash, burst, heal, AoE), screen shake, flash overlays, floating damage text, expanding ring indicators, diff-based rendering. Loads PNG character sprites (Kael, Mira, Blight Sovereign) from `wuthering-terminal/assets/` via `image_to_grid()` with chroma-key transparency. Run with `cargo run -p vfx-demo`.
@@ -170,16 +166,14 @@ cargo fmt --check
 cargo test
 ```
 
-Useful Ash Courier smoke commands:
+Useful Wuthering Terminal smoke commands:
 
 ```sh
-cargo run -p ash-courier --bin ash-courier-script -- "eeesss,nnneeeesssssss"
-cargo run -p ash-courier --bin ash-courier-tty
+cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "inspect:4,4 confirm inspect:4,5 confirm"
+cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
-The script runner returns success only when the run reaches `Outcome::Won`; use
-the documented winning script above for a passing smoke test. The TTY runner
-needs a real terminal and is not a CI-style check.
+The script runner executes a sequence of action tokens for smoke testing. The TTY runner needs a real terminal.
 
 If a Rust toolchain is unavailable or a command cannot be run in the current
 environment, say so in the final response and record the limitation in the
@@ -190,8 +184,8 @@ worklog for non-trivial work.
 Keep these docs aligned when their subject changes:
 
 - Root [README.md](README.md) for workspace capabilities and common commands.
-- [prototype/ash-courier/README.md](prototype/ash-courier/README.md) for the
-  proving game, its controls, harnesses, and current scope.
+- [prototype/wuthering-terminal/README.md](prototype/wuthering-terminal/README.md) for the
+  tactical RPG prototype and its current scope.
 - [GOAL.md](GOAL.md) only when the project direction itself changes.
 - Prompt files under [prompt/](prompt/) only when reusable agent instructions
   need to change.
