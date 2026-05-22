@@ -1740,3 +1740,29 @@ sprites render correctly with VFX overlays.
 **Gotchas.** Inline scopes or dropping mutable borrows of world resources (e.g. `Events<GameEvent>`) is required to avoid E0499 compiler errors when calling other `world` mutation methods in the same function.
 
 **Follow-ups.** The next step in the tactical RPG prototype is implementing the team swap QTE mechanic and telegraphed enemy attack markers.
+
+## 2026-05-22 - tactical RPG enhancements: QTE swaps, telegraphed parries, boss defeat Echo drops, and VFX integration
+
+**Goal.** Implement turn-based tactical RPG enhancements including QTE swap, character skills, telegraphed attacks, Echo absorption, and visual effects (VFX) integration.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/components.rs:38` - Added `TargetingMode` to represent active skill targets.
+- `prototype/wuthering-terminal/src/components.rs:49` - Added `concert_energy` and `targeting` to `GameState` to track combat resources.
+- `prototype/wuthering-terminal/src/components.rs:62-72` - Added `TelegraphZone` and `EchoItem` structures.
+- `prototype/wuthering-terminal/src/game.rs:820` - Refactored `Game::render()` to draw telegraph red/magenta overlays, light green skill range overlays, bold purple `Ω` glyphs for dropped Echoes, and Concert Energy HUD bar.
+- `prototype/wuthering-terminal/src/game.rs:1476` - Implemented `Game::update` to step the VFX simulation and camera updates.
+- `prototype/wuthering-terminal/src/game.rs` - Implemented `trigger_qte_swap` to exchange character positions when Concert Energy is full.
+- `prototype/wuthering-terminal/src/game.rs` - Updated `check_parry` to verify the active character is inside the `TelegraphZone` when hitting the Boss, which clears the zone and stuns the Boss (0 AP).
+- `prototype/wuthering-terminal/src/game.rs` - Updated pathfinding and tile occupancy (`is_occupied_except`) to only treat entities with a `Team` component as obstacles, allowing characters to walk onto dropped Echo items.
+- `prototype/wuthering-terminal/src/main.rs:56` - Integrated screen shake offsets into viewport centering and game update step.
+- `prototype/wuthering-terminal/src/lib.rs:200` - Added comprehensive unit tests validating skills, VFX spawning, QTE swaps, boss parrying, and Echo absorption victory.
+
+**Reasoning.** Integrating these systems directly validates the engine's core promise: a unified action route (`apply_action`) supporting interactive input, automated tests, and VFX playback. Moving from general obstacle detection to team-based occupancy allows non-combat entities like dropped Echo items to occupy tiles without blocking player movement.
+
+**Assumptions.** Screen shake viewport offsets are bounds-clamped to avoid out-of-bounds rendering on terminal borders. Defeating the Boss immediately spawns a single `EchoItem` on the map that triggers a victory outcome when a player steps on it.
+
+**Gotchas.**
+- `check_parry` originally checked if the target position of the attack was in the telegraph zone. However, the telegraph zone contains the threat tiles targeting the player. The logic now correctly checks if the acting character's current position is in the `TelegraphZone`.
+- Dropped Echoes with `Position` components originally blocked player movement. Restricting obstacle checks to entities with `Team` components resolved this.
+
+**Follow-ups.** Validate the rendering behavior in interactive TTY mode. Proceed to the next tactical RPG prototype steps, such as building the sprite pipeline or designing more complex boss fight patterns.
