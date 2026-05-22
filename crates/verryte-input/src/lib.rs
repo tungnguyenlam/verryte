@@ -1331,6 +1331,11 @@ pub struct TextInput {
     max_history: usize,
     undo_stack: Vec<(String, usize)>,
     redo_stack: Vec<(String, usize)>,
+    autocomplete_matches: Option<Vec<String>>,
+    autocomplete_index: usize,
+    original_text_before_autocomplete: String,
+    autocomplete_start_char: usize,
+    autocomplete_end_char: usize,
 }
 
 impl TextInput {
@@ -1346,6 +1351,11 @@ impl TextInput {
             max_history: 50,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            autocomplete_matches: None,
+            autocomplete_index: 0,
+            original_text_before_autocomplete: String::new(),
+            autocomplete_start_char: 0,
+            autocomplete_end_char: 0,
         }
     }
 
@@ -1361,6 +1371,11 @@ impl TextInput {
             max_history: 50,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            autocomplete_matches: None,
+            autocomplete_index: 0,
+            original_text_before_autocomplete: String::new(),
+            autocomplete_start_char: 0,
+            autocomplete_end_char: 0,
         }
     }
 
@@ -1372,6 +1387,9 @@ impl TextInput {
 
     /// Handle a key event. Returns `true` if the input was submitted (Enter pressed).
     pub fn handle_key(&mut self, key: Key) -> bool {
+        if key != Key::Tab {
+            self.autocomplete_matches = None;
+        }
         match key {
             Key::Char(ch) => {
                 if ch.is_control() || ch == '\n' || ch == '\r' {
@@ -1566,6 +1584,7 @@ impl TextInput {
         self.dirty = false;
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.autocomplete_matches = None;
         text
     }
 
@@ -1579,6 +1598,7 @@ impl TextInput {
             self.text = self.text.chars().take(self.max_len).collect();
             self.cursor = self.max_len;
         }
+        self.autocomplete_matches = None;
         self.dirty = true;
     }
 
@@ -1603,6 +1623,7 @@ impl TextInput {
         let byte_pos = self.char_to_byte(self.cursor);
         self.text.insert_str(byte_pos, &to_insert);
         self.cursor += to_insert.chars().count();
+        self.autocomplete_matches = None;
         self.dirty = true;
     }
 
@@ -1615,6 +1636,7 @@ impl TextInput {
     pub fn set_cursor(&mut self, pos: usize) {
         let max = self.text.chars().count();
         self.cursor = pos.min(max);
+        self.autocomplete_matches = None;
         self.dirty = true;
     }
 
@@ -1645,6 +1667,62 @@ impl TextInput {
         }
         self.text.clear();
         self.cursor = 0;
+        self.autocomplete_matches = None;
+        self.dirty = true;
+    }
+
+    /// Cycle through autocomplete matches for the word before the cursor.
+    pub fn cycle_autocomplete(&mut self, dictionary: &[&str]) {
+        if let Some(ref matches) = self.autocomplete_matches {
+            if matches.is_empty() {
+                self.autocomplete_matches = None;
+                return;
+            }
+            self.autocomplete_index = (self.autocomplete_index + 1) % matches.len();
+        } else {
+            let cursor_char = self.cursor;
+            let chars: Vec<char> = self.text.chars().collect();
+            let mut start_char = cursor_char;
+            while start_char > 0 && !chars[start_char - 1].is_whitespace() {
+                start_char -= 1;
+            }
+            let prefix: String = chars[start_char..cursor_char].iter().collect();
+            if prefix.is_empty() {
+                return;
+            }
+
+            let matches: Vec<String> = dictionary
+                .iter()
+                .filter(|word| word.starts_with(&prefix))
+                .map(|word| word.to_string())
+                .collect();
+
+            if matches.is_empty() {
+                return;
+            }
+
+            self.original_text_before_autocomplete = self.text.clone();
+            self.autocomplete_matches = Some(matches);
+            self.autocomplete_index = 0;
+            self.autocomplete_start_char = start_char;
+            self.autocomplete_end_char = cursor_char;
+        }
+
+        let matches = self.autocomplete_matches.as_ref().unwrap();
+        let match_word = &matches[self.autocomplete_index];
+
+        let orig_chars: Vec<char> = self.original_text_before_autocomplete.chars().collect();
+        let mut new_chars = Vec::new();
+        new_chars.extend_from_slice(&orig_chars[..self.autocomplete_start_char]);
+        new_chars.extend(match_word.chars());
+        new_chars.extend_from_slice(&orig_chars[self.autocomplete_end_char..]);
+
+        self.text = new_chars.into_iter().collect();
+        self.cursor = self.autocomplete_start_char + match_word.chars().count();
+        if self.text.chars().count() > self.max_len {
+            self.text = self.text.chars().take(self.max_len).collect();
+            self.cursor = self.cursor.min(self.max_len);
+        }
         self.dirty = true;
     }
 
@@ -2951,6 +3029,46 @@ mod tests {
         assert_eq!(input.text(), "");
         assert!(input.undo());
         assert_eq!(input.text(), "abcd");
+    }
+
+    #[test]
+    fn test_text_input_autocomplete() {
+        let mut input = TextInput::new();
+        input.set_text("run in".to_owned());
+
+        let dict = vec!["inspect", "confirm", "info", "input", "init"];
+
+        // Cycle 1: matches "inspect", "info", "input", "init". First match should be "inspect".
+        input.cycle_autocomplete(&dict);
+        assert_eq!(input.text(), "run inspect");
+        assert_eq!(input.cursor(), 11);
+
+        // Cycle 2: next match is "info"
+        input.cycle_autocomplete(&dict);
+        assert_eq!(input.text(), "run info");
+        assert_eq!(input.cursor(), 8);
+
+        // Cycle 3: next match is "input"
+        input.cycle_autocomplete(&dict);
+        assert_eq!(input.text(), "run input");
+        assert_eq!(input.cursor(), 9);
+
+        // Cycle 4: next match is "init"
+        input.cycle_autocomplete(&dict);
+        assert_eq!(input.text(), "run init");
+        assert_eq!(input.cursor(), 8);
+
+        // Cycle 5: wraps around back to "inspect"
+        input.cycle_autocomplete(&dict);
+        assert_eq!(input.text(), "run inspect");
+
+        // Typing a character should break the autocomplete cycle
+        input.handle_key(Key::Char('r'));
+        assert_eq!(input.text(), "run inspectr");
+
+        // Now if we hit tab/autocomplete again with "inspectr", no match.
+        input.cycle_autocomplete(&dict);
+        assert_eq!(input.text(), "run inspectr");
     }
 
     #[test]

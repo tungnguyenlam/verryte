@@ -2522,6 +2522,55 @@ impl<T> SpatialHash<T> {
         results.into_iter()
     }
 
+    /// Query all entities within `radius` (Chebyshev distance) of `center`.
+    pub fn query_chebyshev<'a>(
+        &'a self,
+        center: Point,
+        radius: u16,
+    ) -> impl Iterator<Item = &'a T> + 'a {
+        let radius = radius as i16;
+        let cell_radius = (radius / self.cell_size) + 1;
+        let (cx, cy) = self.cell_key(center);
+
+        let mut results = Vec::new();
+        for dx in -cell_radius..=cell_radius {
+            for dy in -cell_radius..=cell_radius {
+                if let Some(entries) = self.cells.get(&(cx + dx, cy + dy)) {
+                    for (point, value) in entries {
+                        if point.chebyshev_distance(center) <= radius as u16 {
+                            results.push(value);
+                        }
+                    }
+                }
+            }
+        }
+        results.into_iter()
+    }
+
+    /// Query all entities within `radius` (Euclidean distance) of `center`.
+    pub fn query_euclidean<'a>(
+        &'a self,
+        center: Point,
+        radius: f32,
+    ) -> impl Iterator<Item = &'a T> + 'a {
+        let cell_radius = (radius / self.cell_size as f32).ceil() as i16 + 1;
+        let (cx, cy) = self.cell_key(center);
+
+        let mut results = Vec::new();
+        for dx in -cell_radius..=cell_radius {
+            for dy in -cell_radius..=cell_radius {
+                if let Some(entries) = self.cells.get(&(cx + dx, cy + dy)) {
+                    for (point, value) in entries {
+                        if point.euclidean_distance(center) <= radius {
+                            results.push(value);
+                        }
+                    }
+                }
+            }
+        }
+        results.into_iter()
+    }
+
     /// Find the nearest entity to `center` within `radius`, using a custom
     /// comparison function.
     ///
@@ -3633,6 +3682,45 @@ mod tests {
             a.manhattan_distance(c).cmp(&b.manhattan_distance(c))
         });
         assert_eq!(nearest, Some(&near));
+    }
+
+    #[test]
+    fn spatial_hash_chebyshev_and_euclidean_queries() {
+        let mut hash = SpatialHash::<u32>::new(3);
+        // Put elements at different distances from center (0,0):
+        // (1, 1): Manhattan = 2, Chebyshev = 1, Euclidean = 1.414
+        // (2, 2): Manhattan = 4, Chebyshev = 2, Euclidean = 2.828
+        // (0, 3): Manhattan = 3, Chebyshev = 3, Euclidean = 3.0
+        hash.insert(Point::new(1, 1), 1);
+        hash.insert(Point::new(2, 2), 2);
+        hash.insert(Point::new(0, 3), 3);
+
+        // Chebyshev query at (0,0) with radius 2.
+        // Should include (1,1) (dist 1) and (2,2) (dist 2). Should NOT include (0,3) (dist 3).
+        let cheb_nearby: Vec<u32> = hash.query_chebyshev(Point::new(0, 0), 2).copied().collect();
+        assert_eq!(cheb_nearby.len(), 2);
+        assert!(cheb_nearby.contains(&1));
+        assert!(cheb_nearby.contains(&2));
+        assert!(!cheb_nearby.contains(&3));
+
+        // Euclidean query at (0,0) with radius 2.0.
+        // Should include (1,1) (dist 1.414 <= 2.0). Should NOT include (2,2) (dist 2.828) or (0,3) (dist 3.0).
+        let euc_nearby1: Vec<u32> = hash
+            .query_euclidean(Point::new(0, 0), 2.0)
+            .copied()
+            .collect();
+        assert_eq!(euc_nearby1, vec![1]);
+
+        // Euclidean query at (0,0) with radius 3.0.
+        // Should include (1,1), (2,2), and (0,3).
+        let euc_nearby2: Vec<u32> = hash
+            .query_euclidean(Point::new(0, 0), 3.0)
+            .copied()
+            .collect();
+        assert_eq!(euc_nearby2.len(), 3);
+        assert!(euc_nearby2.contains(&1));
+        assert!(euc_nearby2.contains(&2));
+        assert!(euc_nearby2.contains(&3));
     }
 
     #[test]

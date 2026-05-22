@@ -119,6 +119,73 @@ impl Color {
 
         Color(r, g, b)
     }
+
+    /// Blend another color onto this one with a given alpha value (0.0 = self, 1.0 = other).
+    pub fn blend_alpha(self, other: Color, alpha: f32) -> Color {
+        let a = alpha.clamp(0.0, 1.0);
+        Color(
+            (self.0 as f32 * (1.0 - a) + other.0 as f32 * a).round() as u8,
+            (self.1 as f32 * (1.0 - a) + other.1 as f32 * a).round() as u8,
+            (self.2 as f32 * (1.0 - a) + other.2 as f32 * a).round() as u8,
+        )
+    }
+
+    /// Blend another color onto this one using the specified mode.
+    pub fn blend(self, other: Color, mode: BlendMode) -> Color {
+        match mode {
+            BlendMode::Normal => other,
+            BlendMode::Add => Color(
+                (self.0 as u16 + other.0 as u16).min(255) as u8,
+                (self.1 as u16 + other.1 as u16).min(255) as u8,
+                (self.2 as u16 + other.2 as u16).min(255) as u8,
+            ),
+            BlendMode::Multiply => Color(
+                ((self.0 as f32 / 255.0) * (other.0 as f32 / 255.0) * 255.0).round() as u8,
+                ((self.1 as f32 / 255.0) * (other.1 as f32 / 255.0) * 255.0).round() as u8,
+                ((self.2 as f32 / 255.0) * (other.2 as f32 / 255.0) * 255.0).round() as u8,
+            ),
+            BlendMode::Screen => {
+                let s_r = self.0 as f32 / 255.0;
+                let s_g = self.1 as f32 / 255.0;
+                let s_b = self.2 as f32 / 255.0;
+                let o_r = other.0 as f32 / 255.0;
+                let o_g = other.1 as f32 / 255.0;
+                let o_b = other.2 as f32 / 255.0;
+                Color(
+                    (255.0 * (1.0 - (1.0 - s_r) * (1.0 - o_r))).round() as u8,
+                    (255.0 * (1.0 - (1.0 - s_g) * (1.0 - o_g))).round() as u8,
+                    (255.0 * (1.0 - (1.0 - s_b) * (1.0 - o_b))).round() as u8,
+                )
+            }
+            BlendMode::Overlay => {
+                let blend_chan = |bg_val: u8, fg_val: u8| -> u8 {
+                    let bg = bg_val as f32 / 255.0;
+                    let fg = fg_val as f32 / 255.0;
+                    let res = if bg < 0.5 {
+                        2.0 * bg * fg
+                    } else {
+                        1.0 - 2.0 * (1.0 - bg) * (1.0 - fg)
+                    };
+                    (res * 255.0).round().clamp(0.0, 255.0) as u8
+                };
+                Color(
+                    blend_chan(self.0, other.0),
+                    blend_chan(self.1, other.1),
+                    blend_chan(self.2, other.2),
+                )
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BlendMode {
+    Normal,
+    Add,
+    Multiply,
+    Screen,
+    Overlay,
 }
 
 impl std::fmt::Display for Color {
@@ -1335,6 +1402,50 @@ impl Grid {
         for y in (top + 1)..bottom {
             self.put(left, y, Cell::new(v).with_fg(fg).with_bg(bg));
             self.put(right, y, Cell::new(v).with_fg(fg).with_bg(bg));
+        }
+    }
+
+    /// Draw a drop shadow for the given Rect by shifting it down and right by 1.
+    /// The shadow is drawn by darkening the colors of the underlying cells (using HSV value multiplication).
+    pub fn draw_shadow(&mut self, rect: Rect) {
+        if rect.is_empty() {
+            return;
+        }
+        // Shadow is shifted by 1 down and 1 right.
+        // We only modify cells that are in the shadow's right edge (x = rect.right()) or bottom edge (y = rect.bottom()).
+        let sh_right = rect.right();
+        let sh_bottom = rect.bottom();
+
+        // Right edge of shadow (from y = rect.y + 1 to rect.bottom())
+        if sh_right < self.width {
+            let start_y = (rect.y + 1).min(self.height);
+            let end_y = (sh_bottom + 1).min(self.height);
+            for y in start_y..end_y {
+                if let Some(cell) = self.get_mut(sh_right, y) {
+                    // Darken fg
+                    let (h, s, v) = cell.fg.to_hsv();
+                    cell.fg = Color::from_hsv(h, s, v * 0.4);
+                    // Darken bg
+                    let (h2, s2, v2) = cell.bg.to_hsv();
+                    cell.bg = Color::from_hsv(h2, s2, v2 * 0.4);
+                }
+            }
+        }
+
+        // Bottom edge of shadow (from x = rect.x + 1 to rect.right())
+        if sh_bottom < self.height {
+            let start_x = (rect.x + 1).min(self.width);
+            let end_x = (sh_right + 1).min(self.width);
+            for x in start_x..end_x {
+                if let Some(cell) = self.get_mut(x, sh_bottom) {
+                    // Darken fg
+                    let (h, s, v) = cell.fg.to_hsv();
+                    cell.fg = Color::from_hsv(h, s, v * 0.4);
+                    // Darken bg
+                    let (h2, s2, v2) = cell.bg.to_hsv();
+                    cell.bg = Color::from_hsv(h2, s2, v2 * 0.4);
+                }
+            }
         }
     }
 
@@ -4653,5 +4764,60 @@ mod tests {
         assert!(grid.write_rich(0, 0, "[unclosed").is_err());
         assert!(grid.write_rich(0, 0, "[fg:invalid]").is_err());
         assert!(grid.write_rich(0, 0, "[invalid_tag]text").is_err());
+    }
+
+    #[test]
+    fn test_color_blend() {
+        let bg = Color(100, 100, 100);
+        let fg = Color(200, 150, 100);
+
+        let normal = bg.blend(fg, BlendMode::Normal);
+        assert_eq!(normal, fg);
+
+        let add = bg.blend(fg, BlendMode::Add);
+        assert_eq!(add, Color(255, 250, 200));
+
+        let multiply = bg.blend(fg, BlendMode::Multiply);
+        assert_eq!(multiply, Color(78, 59, 39));
+
+        let screen = bg.blend(fg, BlendMode::Screen);
+        assert_eq!(screen, Color(222, 191, 161));
+
+        let overlay = bg.blend(fg, BlendMode::Overlay);
+        assert_eq!(overlay, Color(157, 118, 78));
+
+        let alpha_half = bg.blend_alpha(fg, 0.5);
+        assert_eq!(alpha_half, Color(150, 125, 100));
+    }
+
+    #[test]
+    fn test_grid_draw_shadow() {
+        let mut grid = Grid::new(5, 5);
+        // Fill grid with bright gray/white
+        for y in 0..5 {
+            for x in 0..5 {
+                grid.put(x, y, Cell::new(' ').with_bg(Color(200, 200, 200)));
+            }
+        }
+
+        // Draw shadow of a 2x2 rect at (1, 1)
+        // Shadow should affect (3, 2), (3, 3) (right edge) and (2, 3), (3, 3) (bottom edge)
+        grid.draw_shadow(Rect::new(1, 1, 2, 2));
+
+        // Unaffected
+        assert_eq!(grid.get(0, 0).unwrap().bg, Color(200, 200, 200));
+        assert_eq!(grid.get(1, 1).unwrap().bg, Color(200, 200, 200));
+
+        // Affected: (3, 2)
+        let bg_3_2 = grid.get(3, 2).unwrap().bg;
+        assert!(bg_3_2.0 < 200);
+
+        // Affected: (2, 3)
+        let bg_2_3 = grid.get(2, 3).unwrap().bg;
+        assert!(bg_2_3.0 < 200);
+
+        // Affected: (3, 3)
+        let bg_3_3 = grid.get(3, 3).unwrap().bg;
+        assert!(bg_3_3.0 < 200);
     }
 }

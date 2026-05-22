@@ -2120,11 +2120,25 @@ impl Game {
         // Draw HUD
         let hud_y = map.height * tile_h;
         let hud_w = map.width * tile_w;
+        let hud_h = 6u16;
 
-        let border_fg = Color(100, 100, 100);
-        let border_bg = Color::BLACK;
-        let border_line = "═".repeat(hud_w as usize);
-        grid.write_str(0, hud_y, &border_line, border_fg, border_bg);
+        // Fill HUD background
+        for dy in 0..hud_h {
+            for dx in 0..hud_w {
+                grid.put(dx, hud_y + dy, Cell::new(' ').with_bg(Color(10, 10, 15)));
+            }
+        }
+
+        // Draw a rounded border around the HUD panel
+        let hud_rect = verryte_terminal::Rect::new(0, hud_y, hud_w, hud_h);
+        grid.draw_border_styled(
+            hud_rect,
+            verryte_terminal::BorderStyle::Rounded,
+            Color(80, 120, 160),
+            Color(10, 10, 15),
+        );
+        // Drop shadow for visual depth
+        grid.draw_shadow(hud_rect);
 
         let phase_str = match state.phase {
             TurnPhase::Player => "PLAYER PHASE",
@@ -2149,27 +2163,29 @@ impl Game {
             }
         }
 
+        let hud_bg = Color(10, 10, 15);
+
         // Draw HUD line 1 components
         grid.write_str(
             2,
             hud_y + 1,
             &format!("TURN: {:02} | ", state.turn),
             Color::WHITE,
-            Color::BLACK,
+            hud_bg,
         );
         grid.write_str(
             13,
             hud_y + 1,
             &format!("PHASE: {:<12}", phase_str),
             phase_color,
-            Color::BLACK,
+            hud_bg,
         );
         grid.write_str(
             31,
             hud_y + 1,
             &format!(" | {}", selection_str),
             Color::WHITE,
-            Color::BLACK,
+            hud_bg,
         );
 
         let ce_pct = (state.concert_energy as f32 / 100.0).clamp(0.0, 1.0);
@@ -2188,7 +2204,7 @@ impl Game {
             hud_y + 1,
             &format!(" | {}", ce_display),
             ce_color,
-            Color::BLACK,
+            hud_bg,
         );
 
         let hovered_tile = map.tile(state.cursor.x, state.cursor.y);
@@ -2226,9 +2242,9 @@ impl Game {
             hud_y + 2,
             &format!("CURSOR: ({:02}, {:02}) | ", state.cursor.x, state.cursor.y),
             Color::CYAN,
-            Color::BLACK,
+            hud_bg,
         );
-        grid.write_str(20, hud_y + 2, &hovered_str, Color::WHITE, Color::BLACK);
+        grid.write_str(20, hud_y + 2, &hovered_str, Color::WHITE, hud_bg);
 
         if let Some(log) = self.world.resource::<MessageLog>() {
             let tail = log.tail(3);
@@ -2240,7 +2256,7 @@ impl Game {
                     hud_y + 3 + i as u16,
                     &hud_line_log,
                     Color::YELLOW,
-                    Color::BLACK,
+                    hud_bg,
                 );
             }
         }
