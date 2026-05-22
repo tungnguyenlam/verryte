@@ -27,6 +27,98 @@ impl Color {
     pub const MAGENTA: Color = Color(200, 100, 200);
     pub const GREY: Color = Color(140, 140, 140);
     pub const DARK_GREY: Color = Color(60, 60, 60);
+
+    /// Linear interpolation between two colors.
+    pub fn lerp(self, other: Color, t: f32) -> Color {
+        let t = t.clamp(0.0, 1.0);
+        let r = (self.0 as f32 + (other.0 as i16 - self.0 as i16) as f32 * t).round() as u8;
+        let g = (self.1 as f32 + (other.1 as i16 - self.1 as i16) as f32 * t).round() as u8;
+        let b = (self.2 as f32 + (other.2 as i16 - self.2 as i16) as f32 * t).round() as u8;
+        Color(r, g, b)
+    }
+
+    /// Parse a 6-digit hex color string (with or without a leading '#').
+    pub fn from_hex(hex: &str) -> Result<Self, String> {
+        let hex = hex.strip_prefix('#').unwrap_or(hex);
+        if hex.len() != 6 {
+            return Err(format!(
+                "Hex color must be 6 hex characters (excluding '#'), got: {}",
+                hex
+            ));
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16)
+            .map_err(|e| format!("Invalid red hex component: {}", e))?;
+        let g = u8::from_str_radix(&hex[2..4], 16)
+            .map_err(|e| format!("Invalid green hex component: {}", e))?;
+        let b = u8::from_str_radix(&hex[4..6], 16)
+            .map_err(|e| format!("Invalid blue hex component: {}", e))?;
+        Ok(Color(r, g, b))
+    }
+
+    /// Convert to HSV representation: (hue [0, 360], saturation [0, 1], value [0, 1]).
+    pub fn to_hsv(self) -> (f32, f32, f32) {
+        let r = self.0 as f32 / 255.0;
+        let g = self.1 as f32 / 255.0;
+        let b = self.2 as f32 / 255.0;
+
+        let min = r.min(g).min(b);
+        let max = r.max(g).max(b);
+        let delta = max - min;
+
+        let v = max;
+
+        let s = if max > 0.0 { delta / max } else { 0.0 };
+
+        let h = if delta > 0.0 {
+            let mut h_calc = if max == r {
+                (g - b) / delta
+            } else if max == g {
+                2.0 + (b - r) / delta
+            } else {
+                4.0 + (r - g) / delta
+            };
+            h_calc *= 60.0;
+            if h_calc < 0.0 {
+                h_calc += 360.0;
+            }
+            h_calc
+        } else {
+            0.0
+        };
+
+        (h, s, v)
+    }
+
+    /// Create from HSV representation: (hue [0, 360], saturation [0, 1], value [0, 1]).
+    pub fn from_hsv(h: f32, s: f32, v: f32) -> Self {
+        let h = h.rem_euclid(360.0);
+        let s = s.clamp(0.0, 1.0);
+        let v = v.clamp(0.0, 1.0);
+
+        let c = v * s;
+        let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
+        let m = v - c;
+
+        let (r_prime, g_prime, b_prime) = if h < 60.0 {
+            (c, x, 0.0)
+        } else if h < 120.0 {
+            (x, c, 0.0)
+        } else if h < 180.0 {
+            (0.0, c, x)
+        } else if h < 240.0 {
+            (0.0, x, c)
+        } else if h < 300.0 {
+            (x, 0.0, c)
+        } else {
+            (c, 0.0, x)
+        };
+
+        let r = ((r_prime + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let g = ((g_prime + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let b = ((b_prime + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+
+        Color(r, g, b)
+    }
 }
 
 impl std::fmt::Display for Color {
@@ -358,6 +450,62 @@ impl Rect {
         let x = (self.x as i16 + dx).max(0) as u16;
         let y = (self.y as i16 + dy).max(0) as u16;
         Rect::new(x, y, self.width, self.height)
+    }
+
+    /// Split this rectangle horizontally at a relative height offset `split_y`.
+    ///
+    /// Returns a tuple of (top_rect, bottom_rect).
+    pub fn split_horizontal(self, split_y: u16) -> (Rect, Rect) {
+        let top_h = split_y.min(self.height);
+        let bottom_h = self.height.saturating_sub(top_h);
+        let top = Rect::new(self.x, self.y, self.width, top_h);
+        let bottom = Rect::new(self.x, self.y.saturating_add(top_h), self.width, bottom_h);
+        (top, bottom)
+    }
+
+    /// Split this rectangle vertically at a relative width offset `split_x`.
+    ///
+    /// Returns a tuple of (left_rect, right_rect).
+    pub fn split_vertical(self, split_x: u16) -> (Rect, Rect) {
+        let left_w = split_x.min(self.width);
+        let right_w = self.width.saturating_sub(left_w);
+        let left = Rect::new(self.x, self.y, left_w, self.height);
+        let right = Rect::new(self.x.saturating_add(left_w), self.y, right_w, self.height);
+        (left, right)
+    }
+
+    /// Split this rectangle horizontally at an absolute y-coordinate split point.
+    ///
+    /// Returns a tuple of (top_rect, bottom_rect).
+    pub fn split_horizontal_absolute(self, split_y: u16) -> (Rect, Rect) {
+        if split_y <= self.y {
+            (Rect::new(self.x, self.y, self.width, 0), self)
+        } else if split_y >= self.bottom() {
+            (self, Rect::new(self.x, self.bottom(), self.width, 0))
+        } else {
+            let top_h = split_y - self.y;
+            let bottom_h = self.bottom() - split_y;
+            let top = Rect::new(self.x, self.y, self.width, top_h);
+            let bottom = Rect::new(self.x, split_y, self.width, bottom_h);
+            (top, bottom)
+        }
+    }
+
+    /// Split this rectangle vertically at an absolute x-coordinate split point.
+    ///
+    /// Returns a tuple of (left_rect, right_rect).
+    pub fn split_vertical_absolute(self, split_x: u16) -> (Rect, Rect) {
+        if split_x <= self.x {
+            (Rect::new(self.x, self.y, 0, self.height), self)
+        } else if split_x >= self.right() {
+            (self, Rect::new(self.right(), self.y, 0, self.height))
+        } else {
+            let left_w = split_x - self.x;
+            let right_w = self.right() - split_x;
+            let left = Rect::new(self.x, self.y, left_w, self.height);
+            let right = Rect::new(split_x, self.y, right_w, self.height);
+            (left, right)
+        }
     }
 }
 
@@ -1157,10 +1305,18 @@ impl Grid {
 
         let (tl, tr, bl, br, h, v) = match style {
             BorderStyle::Ascii => ('+', '+', '+', '+', '-', '|'),
-            BorderStyle::Single => ('\u{250C}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{2500}', '\u{2502}'),
-            BorderStyle::Double => ('\u{2554}', '\u{2557}', '\u{255A}', '\u{255D}', '\u{2550}', '\u{2551}'),
-            BorderStyle::Heavy => ('\u{250F}', '\u{2513}', '\u{2517}', '\u{251B}', '\u{2501}', '\u{2503}'),
-            BorderStyle::Rounded => ('\u{256D}', '\u{256E}', '\u{2570}', '\u{256F}', '\u{2500}', '\u{2502}'),
+            BorderStyle::Single => (
+                '\u{250C}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{2500}', '\u{2502}',
+            ),
+            BorderStyle::Double => (
+                '\u{2554}', '\u{2557}', '\u{255A}', '\u{255D}', '\u{2550}', '\u{2551}',
+            ),
+            BorderStyle::Heavy => (
+                '\u{250F}', '\u{2513}', '\u{2517}', '\u{251B}', '\u{2501}', '\u{2503}',
+            ),
+            BorderStyle::Rounded => (
+                '\u{256D}', '\u{256E}', '\u{2570}', '\u{256F}', '\u{2500}', '\u{2502}',
+            ),
         };
 
         // Corners
@@ -2672,6 +2828,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_rect_splits() {
+        let r = Rect::new(10, 20, 30, 40);
+
+        // relative horizontal split
+        let (top, bottom) = r.split_horizontal(15);
+        assert_eq!(top, Rect::new(10, 20, 30, 15));
+        assert_eq!(bottom, Rect::new(10, 35, 30, 25));
+
+        // relative horizontal split clamp
+        let (top2, bottom2) = r.split_horizontal(50);
+        assert_eq!(top2, Rect::new(10, 20, 30, 40));
+        assert_eq!(bottom2, Rect::new(10, 60, 30, 0));
+
+        // relative vertical split
+        let (left, right) = r.split_vertical(10);
+        assert_eq!(left, Rect::new(10, 20, 10, 40));
+        assert_eq!(right, Rect::new(20, 20, 20, 40));
+
+        // absolute horizontal split
+        let (top_a, bottom_a) = r.split_horizontal_absolute(25);
+        assert_eq!(top_a, Rect::new(10, 20, 30, 5));
+        assert_eq!(bottom_a, Rect::new(10, 25, 30, 35));
+
+        // absolute vertical split
+        let (left_a, right_a) = r.split_vertical_absolute(15);
+        assert_eq!(left_a, Rect::new(10, 20, 5, 40));
+        assert_eq!(right_a, Rect::new(15, 20, 25, 40));
+    }
+
+    #[test]
+    fn test_color_operations() {
+        // lerp
+        let c1 = Color(0, 100, 200);
+        let c2 = Color(100, 200, 50);
+        let mid = c1.lerp(c2, 0.5);
+        assert_eq!(mid, Color(50, 150, 125));
+
+        // from_hex
+        assert_eq!(Color::from_hex("#FF00FF").unwrap(), Color(255, 0, 255));
+        assert_eq!(Color::from_hex("00FF00").unwrap(), Color(0, 255, 0));
+        assert!(Color::from_hex("invalid").is_err());
+
+        // HSV conversions
+        let color = Color(128, 64, 192);
+        let (h, s, v) = color.to_hsv();
+        let back = Color::from_hsv(h, s, v);
+        // allow small floating point roundoffs
+        assert!((back.0 as i16 - color.0 as i16).abs() <= 1);
+        assert!((back.1 as i16 - color.1 as i16).abs() <= 1);
+        assert!((back.2 as i16 - color.2 as i16).abs() <= 1);
+    }
+
+    #[test]
     fn test_camera_clamp_to_bounds() {
         let mut camera = Camera::new(10.0, 10.0);
         camera.clamp_to_bounds(0.0, 0.0, 5.0, 5.0);
@@ -3137,7 +3346,12 @@ mod tests {
         let mut grid = Grid::new(6, 5);
 
         // Test Ascii style
-        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Ascii, Color::WHITE, Color::BLACK);
+        grid.draw_border_styled(
+            Rect::new(1, 1, 4, 3),
+            BorderStyle::Ascii,
+            Color::WHITE,
+            Color::BLACK,
+        );
         let s = grid.to_plain_string();
         let lines: Vec<&str> = s.lines().collect();
         assert!(lines[1].contains('+'));
@@ -3146,7 +3360,12 @@ mod tests {
 
         // Test Double style
         grid.clear(Cell::EMPTY);
-        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Double, Color::WHITE, Color::BLACK);
+        grid.draw_border_styled(
+            Rect::new(1, 1, 4, 3),
+            BorderStyle::Double,
+            Color::WHITE,
+            Color::BLACK,
+        );
         let s = grid.to_plain_string();
         let lines: Vec<&str> = s.lines().collect();
         assert!(lines[1].contains('\u{2554}')); // ╔
@@ -3155,7 +3374,12 @@ mod tests {
 
         // Test Heavy style
         grid.clear(Cell::EMPTY);
-        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Heavy, Color::WHITE, Color::BLACK);
+        grid.draw_border_styled(
+            Rect::new(1, 1, 4, 3),
+            BorderStyle::Heavy,
+            Color::WHITE,
+            Color::BLACK,
+        );
         let s = grid.to_plain_string();
         let lines: Vec<&str> = s.lines().collect();
         assert!(lines[1].contains('\u{250F}')); // ┏
@@ -3164,7 +3388,12 @@ mod tests {
 
         // Test Rounded style
         grid.clear(Cell::EMPTY);
-        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Rounded, Color::WHITE, Color::BLACK);
+        grid.draw_border_styled(
+            Rect::new(1, 1, 4, 3),
+            BorderStyle::Rounded,
+            Color::WHITE,
+            Color::BLACK,
+        );
         let s = grid.to_plain_string();
         let lines: Vec<&str> = s.lines().collect();
         assert!(lines[1].contains('\u{256D}')); // ╭

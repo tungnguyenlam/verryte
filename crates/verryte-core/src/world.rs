@@ -403,8 +403,14 @@ impl World {
             let typed_a = col_a.as_any_mut().downcast_mut::<TypedColumn<A>>();
             let typed_b = col_b.as_any_mut().downcast_mut::<TypedColumn<B>>();
             if let (Some(ta), Some(tb)) = (typed_a, typed_b) {
-                let slot_a = ta.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
-                let slot_b = tb.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
+                let slot_a = ta
+                    .slots
+                    .get_mut(entity.index as usize)
+                    .and_then(|s| s.as_mut());
+                let slot_b = tb
+                    .slots
+                    .get_mut(entity.index as usize)
+                    .and_then(|s| s.as_mut());
                 if let (Some(sa), Some(sb)) = (slot_a, slot_b) {
                     if sa.0 == entity.generation && sb.0 == entity.generation {
                         res = Some(f(&mut sa.1, &mut sb.1));
@@ -445,11 +451,23 @@ impl World {
             let typed_b = col_b.as_any_mut().downcast_mut::<TypedColumn<B>>();
             let typed_c = col_c.as_any_mut().downcast_mut::<TypedColumn<C>>();
             if let (Some(ta), Some(tb), Some(tc)) = (typed_a, typed_b, typed_c) {
-                let slot_a = ta.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
-                let slot_b = tb.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
-                let slot_c = tc.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
+                let slot_a = ta
+                    .slots
+                    .get_mut(entity.index as usize)
+                    .and_then(|s| s.as_mut());
+                let slot_b = tb
+                    .slots
+                    .get_mut(entity.index as usize)
+                    .and_then(|s| s.as_mut());
+                let slot_c = tc
+                    .slots
+                    .get_mut(entity.index as usize)
+                    .and_then(|s| s.as_mut());
                 if let (Some(sa), Some(sb), Some(sc)) = (slot_a, slot_b, slot_c) {
-                    if sa.0 == entity.generation && sb.0 == entity.generation && sc.0 == entity.generation {
+                    if sa.0 == entity.generation
+                        && sb.0 == entity.generation
+                        && sc.0 == entity.generation
+                    {
                         res = Some(f(&mut sa.1, &mut sb.1, &mut sc.1));
                     }
                 }
@@ -1163,11 +1181,8 @@ mod tests {
     #[derive(Debug, PartialEq)]
     struct Tag(&'static str);
 
-    #[derive(Debug, PartialEq, Clone)]
-    #[derive(Default)]
+    #[derive(Debug, PartialEq, Clone, Default)]
     struct Counter(u32);
-
-    
 
     #[test]
     fn spawn_insert_get_roundtrip() {
@@ -1956,21 +1971,25 @@ mod tests {
         assert_eq!(counter.0, 42);
 
         // Test with_mut2
-        let result = world.with_mut2::<Pos, Tag, _, i32>(e, |p, t| {
-            p.0 += 5;
-            t.0 = "world";
-            99
-        }).unwrap();
+        let result = world
+            .with_mut2::<Pos, Tag, _, i32>(e, |p, t| {
+                p.0 += 5;
+                t.0 = "world";
+                99
+            })
+            .unwrap();
         assert_eq!(result, 99);
         assert_eq!(world.get::<Pos>(e).unwrap().0, 15);
         assert_eq!(world.get::<Tag>(e).unwrap().0, "world");
 
         // Test with_mut3
-        world.with_mut3::<Pos, Tag, Counter, _, ()>(e, |p, t, c| {
-            p.0 += 5;
-            t.0 = "test";
-            c.0 += 10;
-        }).unwrap();
+        world
+            .with_mut3::<Pos, Tag, Counter, _, ()>(e, |p, t, c| {
+                p.0 += 5;
+                t.0 = "test";
+                c.0 += 10;
+            })
+            .unwrap();
         assert_eq!(world.get::<Pos>(e).unwrap().0, 20);
         assert_eq!(world.get::<Tag>(e).unwrap().0, "test");
         assert_eq!(world.get::<Counter>(e).unwrap().0, 52);

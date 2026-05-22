@@ -53,6 +53,7 @@ impl Game {
             selected_entity: None,
             concert_energy: 0,
             targeting: crate::components::TargetingMode::None,
+            boss_phase: crate::components::BossPhase::Phase1,
         });
         world.insert_resource(crate::components::TelegraphZone::default());
         world.insert_resource(GameClock::new());
@@ -422,6 +423,13 @@ impl Game {
             }
         }
 
+        // Replenish enemy AP on start of enemy turn
+        for e in &enemies {
+            if let Some(stats) = self.world.get_mut::<Stats>(*e) {
+                stats.ap = stats.max_ap;
+            }
+        }
+
         for enemy_entity in enemies {
             loop {
                 let outcome = self.world.resource::<GameState>().unwrap().outcome;
@@ -485,30 +493,72 @@ impl Game {
                         !telegraph_zone.tiles.is_empty()
                     };
 
-                    if !telegraph_active && enemy_class == CharacterClass::Boss && rng_val < 40 {
-                        // Boss chooses to telegraph a 3x3 attack around player_pos!
+                    let is_phase_2 = {
+                        let state = self.world.resource::<GameState>().unwrap();
+                        state.boss_phase == crate::components::BossPhase::Phase2
+                    };
+                    let telegraph_rate = if is_phase_2 { 60 } else { 40 };
+
+                    if !telegraph_active
+                        && enemy_class == CharacterClass::Boss
+                        && rng_val < telegraph_rate
+                    {
+                        // Boss chooses to telegraph!
                         let mut tiles = Vec::new();
-                        for dy in -1..=1 {
-                            for dx in -1..=1 {
-                                let tx = player_pos.x + dx;
-                                let ty = player_pos.y + dy;
-                                tiles.push(Position::new(tx, ty));
+                        if is_phase_2 {
+                            // Star shape: center + cardinal paths (length 2) + diagonals (length 1)
+                            tiles.push(player_pos);
+                            for d in 1..=2 {
+                                tiles.push(Position::new(player_pos.x, player_pos.y - d));
+                                tiles.push(Position::new(player_pos.x, player_pos.y + d));
+                                tiles.push(Position::new(player_pos.x - d, player_pos.y));
+                                tiles.push(Position::new(player_pos.x + d, player_pos.y));
+                            }
+                            tiles.push(Position::new(player_pos.x - 1, player_pos.y - 1));
+                            tiles.push(Position::new(player_pos.x + 1, player_pos.y - 1));
+                            tiles.push(Position::new(player_pos.x - 1, player_pos.y + 1));
+                            tiles.push(Position::new(player_pos.x + 1, player_pos.y + 1));
+                        } else {
+                            // 3x3 square
+                            for dy in -1..=1 {
+                                for dx in -1..=1 {
+                                    let tx = player_pos.x + dx;
+                                    let ty = player_pos.y + dy;
+                                    tiles.push(Position::new(tx, ty));
+                                }
                             }
                         }
+
+                        let map_w = {
+                            let map = self.world.resource::<TacticalMap>().unwrap();
+                            map.width as i16
+                        };
+                        let map_h = {
+                            let map = self.world.resource::<TacticalMap>().unwrap();
+                            map.height as i16
+                        };
+                        tiles.retain(|p| p.x >= 0 && p.x < map_w && p.y >= 0 && p.y < map_h);
+
+                        let damage = if is_phase_2 { 80 } else { 50 };
+
                         {
                             let telegraph_zone = self
                                 .world
                                 .resource_mut::<crate::components::TelegraphZone>()
                                 .unwrap();
                             telegraph_zone.tiles = tiles;
-                            telegraph_zone.damage = 50;
+                            telegraph_zone.damage = damage;
                         }
 
                         if let Some(stats) = self.world.get_mut::<Stats>(enemy_entity) {
                             stats.ap = 0; // Spends all AP to telegraph
                         }
 
-                        self.log("Blight Sovereign is charging Dark Annihilation! Area telegraphed in RED.");
+                        if is_phase_2 {
+                            self.log("Blight Sovereign is charging Celestial Ruin! Star-shaped area telegraphed in RED.");
+                        } else {
+                            self.log("Blight Sovereign is charging Dark Annihilation! Area telegraphed in RED.");
+                        }
 
                         // Spawn dark particles
                         let ex = enemy_pos.x as f32 * 8.0 + 4.0;
@@ -688,6 +738,51 @@ impl Game {
         class: CharacterClass,
         pos: Position,
     ) {
+        if class == CharacterClass::Boss {
+            let mut phase = crate::components::BossPhase::Phase1;
+            if let Some(state) = self.world.resource::<GameState>() {
+                phase = state.boss_phase;
+            }
+            if phase == crate::components::BossPhase::Phase1 {
+                if let Some(stats) = self.world.get_mut::<Stats>(entity) {
+                    stats.max_hp = 500;
+                    stats.hp = 500;
+                    stats.atk += 10;
+                    stats.def += 5;
+                    stats.spd += 2;
+                    stats.max_ap += 2;
+                    stats.ap = stats.max_ap;
+                }
+
+                if let Some(state) = self.world.resource_mut::<GameState>() {
+                    state.boss_phase = crate::components::BossPhase::Phase2;
+                }
+
+                self.log("Blight Sovereign enters Phase 2! Its power intensifies, and Celestial Ruin is unleashed!");
+
+                let bx = pos.x as f32 * 8.0 + 4.0;
+                let by = pos.y as f32 * 4.0 + 2.0;
+
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                    bx,
+                    by,
+                    50,
+                    Color(255, 0, 0),
+                    &['✦', '*', '░', '▓', '¤'],
+                ));
+                self.vfx
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(5.0, 1.0));
+                self.vfx
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(255, 0, 0),
+                        0.5,
+                    ));
+                return;
+            }
+        }
+
         self.log(format!("{} was defeated!", name));
         if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
             log.send(GameEvent::Defeated { entity });
@@ -1316,6 +1411,76 @@ impl Game {
         self.world.resource::<GameState>().unwrap().outcome
     }
 
+    pub fn check_boss_phase_transition(&mut self) {
+        let mut boss_entity = None;
+        let mut boss_pos = None;
+        for (e, class, pos) in self.world.query2::<CharacterClass, Position>() {
+            if *class == CharacterClass::Boss {
+                boss_entity = Some(e);
+                boss_pos = Some(*pos);
+                break;
+            }
+        }
+
+        if let Some(be) = boss_entity {
+            let mut transition = false;
+            let current_hp = if let Some(stats) = self.world.get::<Stats>(be) {
+                stats.hp
+            } else {
+                0
+            };
+
+            let mut phase = crate::components::BossPhase::Phase1;
+            if let Some(state) = self.world.resource::<GameState>() {
+                phase = state.boss_phase;
+            }
+
+            if phase == crate::components::BossPhase::Phase1 && current_hp <= 250 && current_hp > 0
+            {
+                transition = true;
+            }
+
+            if transition {
+                if let Some(stats) = self.world.get_mut::<Stats>(be) {
+                    stats.max_hp = 500;
+                    stats.hp = 500;
+                    stats.atk += 10;
+                    stats.def += 5;
+                    stats.spd += 2;
+                    stats.max_ap += 2;
+                    stats.ap = stats.max_ap;
+                }
+
+                if let Some(state) = self.world.resource_mut::<GameState>() {
+                    state.boss_phase = crate::components::BossPhase::Phase2;
+                }
+
+                self.log("Blight Sovereign enters Phase 2! Its power intensifies, and Celestial Ruin is unleashed!");
+
+                let bp = boss_pos.unwrap_or(Position::new(0, 0));
+                let bx = bp.x as f32 * 8.0 + 4.0;
+                let by = bp.y as f32 * 4.0 + 2.0;
+
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                    bx,
+                    by,
+                    50,
+                    Color(255, 0, 0),
+                    &['✦', '*', '░', '▓', '¤'],
+                ));
+                self.vfx
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(5.0, 1.0));
+                self.vfx
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(255, 0, 0),
+                        0.5,
+                    ));
+            }
+        }
+    }
+
     pub fn apply_action(
         &mut self,
         action: Action,
@@ -1323,6 +1488,7 @@ impl Game {
     ) -> crate::snapshot::StepReport {
         let before = self.snapshot();
         self.apply_action_internal(action);
+        self.check_boss_phase_transition();
         let after = self.snapshot();
         crate::snapshot::StepReport {
             action,
@@ -2115,7 +2281,10 @@ impl Game {
             let team = self.world.get::<Team>(entity).copied();
             let class = self.world.get::<CharacterClass>(entity).copied();
             let stats = self.world.get::<Stats>(entity).cloned();
-            let echo_item = self.world.get::<crate::components::EchoItem>(entity).copied();
+            let echo_item = self
+                .world
+                .get::<crate::components::EchoItem>(entity)
+                .copied();
 
             entities.push(SavedEntity {
                 entity,
@@ -2129,7 +2298,11 @@ impl Game {
 
         let state = FullSaveState {
             game_state: self.world.resource::<GameState>().unwrap().clone(),
-            telegraph_zone: self.world.resource::<crate::components::TelegraphZone>().unwrap().clone(),
+            telegraph_zone: self
+                .world
+                .resource::<crate::components::TelegraphZone>()
+                .unwrap()
+                .clone(),
             message_log: self.world.resource::<MessageLog>().unwrap().clone(),
             clock: self.world.resource::<GameClock>().unwrap().clone(),
             rng: *self.world.resource::<Rng>().unwrap(),
@@ -2152,7 +2325,10 @@ impl Game {
 
         // Restore resources
         *self.world.resource_mut::<GameState>().unwrap() = state.game_state;
-        *self.world.resource_mut::<crate::components::TelegraphZone>().unwrap() = state.telegraph_zone;
+        *self
+            .world
+            .resource_mut::<crate::components::TelegraphZone>()
+            .unwrap() = state.telegraph_zone;
         *self.world.resource_mut::<MessageLog>().unwrap() = state.message_log;
         *self.world.resource_mut::<GameClock>().unwrap() = state.clock;
         *self.world.resource_mut::<Rng>().unwrap() = state.rng;

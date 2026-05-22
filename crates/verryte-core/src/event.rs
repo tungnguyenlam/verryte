@@ -9,12 +9,14 @@ use std::collections::VecDeque;
 
 pub struct Events<E> {
     queue: VecDeque<E>,
+    clear_count: usize,
 }
 
 impl<E> Events<E> {
     pub fn new() -> Self {
         Self {
             queue: VecDeque::new(),
+            clear_count: 0,
         }
     }
 
@@ -25,6 +27,7 @@ impl<E> Events<E> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             queue: VecDeque::with_capacity(capacity),
+            clear_count: 0,
         }
     }
 
@@ -52,9 +55,11 @@ impl<E> Events<E> {
 
     pub fn clear(&mut self) {
         self.queue.clear();
+        self.clear_count = self.clear_count.wrapping_add(1);
     }
 
     pub fn drain(&mut self) -> std::collections::vec_deque::Drain<'_, E> {
+        self.clear_count = self.clear_count.wrapping_add(1);
         self.queue.drain(..)
     }
 
@@ -63,6 +68,7 @@ impl<E> Events<E> {
     /// Equivalent to `drain().collect()` but more ergonomic for systems that
     /// want to snapshot the event set without dealing with iterators.
     pub fn take(&mut self) -> Vec<E> {
+        self.clear_count = self.clear_count.wrapping_add(1);
         self.queue.drain(..).collect()
     }
 
@@ -74,6 +80,7 @@ impl<E> Events<E> {
     where
         F: FnMut(&E) -> bool,
     {
+        self.clear_count = self.clear_count.wrapping_add(1);
         let mut queue = VecDeque::new();
         std::mem::swap(&mut self.queue, &mut queue);
         let mut matched = Vec::new();
@@ -105,6 +112,63 @@ impl<E> Events<E> {
 impl<E> Default for Events<E> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A sequence-aware event reader that tracks its own read position in an event channel.
+///
+/// Multiple `EventReader`s can read from the same `Events<E>` channel independently.
+pub struct EventReader<E> {
+    last_clear_count: usize,
+    read_count: usize,
+    _marker: std::marker::PhantomData<E>,
+}
+
+impl<E> EventReader<E> {
+    /// Create a new event reader.
+    pub fn new() -> Self {
+        Self {
+            last_clear_count: 0,
+            read_count: 0,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Read all unread events from the event channel.
+    ///
+    /// If the event channel has been cleared or modified since the last read,
+    /// this reader resets and reads all currently queued events.
+    pub fn read<'a>(&mut self, events: &'a Events<E>) -> EventReaderIter<'a, E> {
+        if self.last_clear_count != events.clear_count {
+            self.last_clear_count = events.clear_count;
+            self.read_count = 0;
+        }
+
+        let start_idx = self.read_count;
+        self.read_count = events.len();
+
+        EventReaderIter {
+            iter: events.queue.iter().skip(start_idx),
+        }
+    }
+}
+
+impl<E> Default for EventReader<E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Iterator over events read by an [`EventReader`].
+pub struct EventReaderIter<'a, E> {
+    iter: std::iter::Skip<std::collections::vec_deque::Iter<'a, E>>,
+}
+
+impl<'a, E> Iterator for EventReaderIter<'a, E> {
+    type Item = &'a E;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
     }
 }
 
@@ -213,5 +277,34 @@ mod tests {
         let count = events.send_batch(Vec::<Bump>::new());
         assert_eq!(count, 0);
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn event_reader_multiple_readers() {
+        let mut events = Events::<Bump>::new();
+        let mut reader1 = EventReader::<Bump>::new();
+        let mut reader2 = EventReader::<Bump>::new();
+
+        events.send(Bump(1));
+        events.send(Bump(2));
+
+        let r1_events: Vec<&Bump> = reader1.read(&events).collect();
+        assert_eq!(r1_events, vec![&Bump(1), &Bump(2)]);
+
+        events.send(Bump(3));
+
+        let r2_events: Vec<&Bump> = reader2.read(&events).collect();
+        assert_eq!(r2_events, vec![&Bump(1), &Bump(2), &Bump(3)]);
+
+        let r1_events_new: Vec<&Bump> = reader1.read(&events).collect();
+        assert_eq!(r1_events_new, vec![&Bump(3)]);
+
+        events.clear();
+        assert!(events.is_empty());
+
+        events.send(Bump(4));
+
+        let r1_after_clear: Vec<&Bump> = reader1.read(&events).collect();
+        assert_eq!(r1_after_clear, vec![&Bump(4)]);
     }
 }

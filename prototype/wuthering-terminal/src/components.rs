@@ -42,6 +42,12 @@ pub enum TargetingMode {
     Skill2,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BossPhase {
+    Phase1,
+    Phase2,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GameState {
     pub turn: u32,
@@ -51,6 +57,7 @@ pub struct GameState {
     pub selected_entity: Option<verryte_core::Entity>,
     pub concert_energy: u32,
     pub targeting: TargetingMode,
+    pub boss_phase: BossPhase,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

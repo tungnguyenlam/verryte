@@ -2930,12 +2930,22 @@ mod tests {
         assert!(!input.redo());
 
         // Test ctrl-z/ctrl-y keys via handle_key
-        input.handle_key(Key::Modified { char: 'z', ctrl: true, alt: false, shift: false });
+        input.handle_key(Key::Modified {
+            char: 'z',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
         assert_eq!(input.text(), "abc");
 
-        input.handle_key(Key::Modified { char: 'y', ctrl: true, alt: false, shift: false });
+        input.handle_key(Key::Modified {
+            char: 'y',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
         assert_eq!(input.text(), "abcd");
-        
+
         // Test clear()/Esc undoable
         input.clear();
         assert_eq!(input.text(), "");

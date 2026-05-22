@@ -47,9 +47,12 @@ mod tests {
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
-        
+
         let selected_before = game.world.resource::<GameState>().unwrap().selected_entity;
-        assert!(selected_before.is_some(), "Kael should be selected before save");
+        assert!(
+            selected_before.is_some(),
+            "Kael should be selected before save"
+        );
 
         let serialized = game.save_state().unwrap();
 
@@ -73,7 +76,7 @@ mod tests {
 
         // Check that all 4 entities are restored
         assert_eq!(game2.world.entity_count(), 4);
-        
+
         let mut player_count = 0;
         let mut boss_count = 0;
         for (_e, _p, team, class) in game2.world.query3::<Position, Team, CharacterClass>() {
@@ -392,9 +395,12 @@ mod tests {
             assert_eq!(boss_stats.ap, 0, "Boss should have 0 AP (stunned)");
         }
 
-        // Now test Boss defeat and Echo drop. Set boss HP to 1.
+        // Now test Boss defeat and Echo drop. Set boss HP to 1 and phase to Phase2.
         if let Some(stats) = game.world.get_mut::<Stats>(boss) {
             stats.hp = 1;
+        }
+        if let Some(state) = game.world.resource_mut::<GameState>() {
+            state.boss_phase = crate::components::BossPhase::Phase2;
         }
 
         // Select Warrior again
@@ -489,5 +495,55 @@ mod tests {
             *game.world.get::<Position>(warrior).unwrap(),
             Position::new(4, 5)
         );
+    }
+
+    #[test]
+    fn test_boss_phase_transition() {
+        let mut game = Game::new();
+
+        // Find Boss entity
+        let mut boss_entity = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Boss {
+                boss_entity = Some(e);
+            }
+        }
+        let be = boss_entity.expect("Boss should exist");
+
+        // Verify initial phase is Phase1 and hp is 500
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.boss_phase, crate::components::BossPhase::Phase1);
+        }
+        {
+            let stats = game.world.get::<Stats>(be).unwrap();
+            assert_eq!(stats.hp, 500);
+            assert_eq!(stats.max_hp, 500);
+        }
+
+        // Deal damage to Boss to bring health to <= 250 (e.g. 240)
+        {
+            let stats = game.world.get_mut::<Stats>(be).unwrap();
+            stats.hp = 240;
+        }
+
+        // Trigger boss phase transition check (which apply_action automatically does)
+        game.apply_action(Action::MoveNorth, ActionSource::Terminal);
+
+        // Verify Boss is now in Phase 2
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.boss_phase, crate::components::BossPhase::Phase2);
+        }
+        {
+            let stats = game.world.get::<Stats>(be).unwrap();
+            assert_eq!(stats.hp, 500);
+            assert_eq!(stats.max_hp, 500);
+            assert_eq!(stats.atk, 50);
+            assert_eq!(stats.def, 25);
+            assert_eq!(stats.spd, 5);
+            assert_eq!(stats.max_ap, 7);
+            assert_eq!(stats.ap, 7);
+        }
     }
 }

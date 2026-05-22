@@ -27,7 +27,7 @@ pub mod world;
 pub use clock::GameClock;
 pub use diagnostics::{Diagnostics, SystemMetrics};
 pub use entity::Entity;
-pub use event::Events;
+pub use event::{EventReader, EventReaderIter, Events};
 pub use log::MessageLog;
 pub use rng::Rng;
 pub use schedule::{NamedSystem, Schedule, System};

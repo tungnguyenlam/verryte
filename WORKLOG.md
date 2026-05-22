@@ -1826,3 +1826,23 @@ sprites render correctly with VFX overlays.
 **Gotchas.** Rng implements `Copy`, so cloning it triggered a Clippy warning; fixed by dereferencing. Naive `visible_points` test used a deprecated method; silenced with `#[allow(deprecated)]`.
 
 **Follow-ups.** None. All improvements are complete and tests pass cleanly.
+
+## 2026-05-23 - Dijkstra map, multi-reader events, rect splits, color ops, and Boss Phase 2 transition
+
+**Goal.** Implement 5 engine and prototype improvements: Dijkstra Map pathfinding, EventReader multi-reader streams, Rect split layouts, Color HSV/Hex/lerp operations, and Boss Phase 2 state transition.
+
+**Changes.**
+- `crates/verryte-map/src/lib.rs` - Added `DijkstraMap` with BFS distances, direction chasing/fleeing helpers, and collapsed collapsible `if`s.
+- `crates/verryte-core/src/event.rs` - Added `clear_count` to `Events<E>` and implemented `EventReader<E>` / `EventReaderIter` for independent iteration streams.
+- `crates/verryte-terminal/src/lib.rs` - Added `split_horizontal`, `split_vertical`, `split_horizontal_absolute`, and `split_vertical_absolute` to `Rect`. Added `lerp`, `from_hex`, `to_hsv`, and `from_hsv` to `Color`.
+- `prototype/wuthering-terminal/src/components.rs` - Added `BossPhase` enum to `GameState`.
+- `prototype/wuthering-terminal/src/game.rs` - Added enemy AP replenishment to turn initialization. Implemented `check_boss_phase_transition` and updated `handle_defeat` to intercept Phase 1 boss defeats and transition the Boss to Phase 2 (boosting HP to 500, max HP to 500, ATK +10, DEF +5, SPD +2, max AP +2, replenishing AP, and running visual flash, shake, and particle effects).
+- `prototype/wuthering-terminal/src/lib.rs` - Added `test_boss_phase_transition` unit test and updated `test_boss_telegraph_parry_and_echo` to account for Phase 2 transitions.
+
+**Reasoning.** Integrating Dijkstra maps directly into the geometry crate allows reuse by future pathfinders. Event multi-readers allow diverse systems to subscribe to streams without cursor interference. Keeping layout splits and color operations inside the terminal crate supports advanced styling. For the Boss fight, intercepting defeat in Phase 1 ensures the boss transitions seamlessly even under high damage, while still allowing natural defeat in Phase 2.
+
+**Assumptions.** Assumed Boss Phase 2 should trigger at 250 HP or on defeat in Phase 1, resetting max HP to 500 and fully healing the Boss.
+
+**Gotchas.** If the boss was defeated in Phase 1, the original parry test failed because the boss died instead of transitioning. Setting the boss state to Phase 2 inside the test avoids the transition and permits testing the final defeat/Echo drop code path.
+
+**Follow-ups.** None. All improvements are fully verified by workspace-wide tests.
