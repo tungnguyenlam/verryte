@@ -7,9 +7,10 @@ pub mod map;
 pub mod snapshot;
 pub mod systems;
 
-pub use action::Action;
+pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
+pub use snapshot::{Snapshot, StepReport};
 pub use verryte_map::Point as Position;
 
 #[cfg(test)]
@@ -186,7 +187,7 @@ mod tests {
 
         // Trigger Skill1
         game.apply_action(Action::Skill1, ActionSource::Terminal);
-        
+
         // Check state.targeting is Skill1
         {
             let state = game.world.resource::<GameState>().unwrap();
@@ -219,8 +220,14 @@ mod tests {
         assert_eq!(boss_stats.hp, 475);
 
         // Verify VFX are spawned
-        assert!(!game.vfx.particles.is_empty(), "Particles should spawn on skill cast");
-        assert!(!game.vfx.shakes.is_empty(), "Screen shake should trigger on skill cast");
+        assert!(
+            !game.vfx.particles.is_empty(),
+            "Particles should spawn on skill cast"
+        );
+        assert!(
+            !game.vfx.shakes.is_empty(),
+            "Screen shake should trigger on skill cast"
+        );
     }
 
     #[test]
@@ -294,7 +301,10 @@ mod tests {
 
         // Set up boss to queue a telegraph zone directly
         {
-            let mut telegraph = game.world.resource_mut::<crate::components::TelegraphZone>().unwrap();
+            let mut telegraph = game
+                .world
+                .resource_mut::<crate::components::TelegraphZone>()
+                .unwrap();
             telegraph.tiles = vec![Position::new(4, 4)];
             telegraph.damage = 50;
         }
@@ -316,8 +326,14 @@ mod tests {
 
         // Verify TelegraphZone is cleared (parried!)
         {
-            let telegraph = game.world.resource::<crate::components::TelegraphZone>().unwrap();
-            assert!(telegraph.tiles.is_empty(), "Telegraph zone should be cleared on parry");
+            let telegraph = game
+                .world
+                .resource::<crate::components::TelegraphZone>()
+                .unwrap();
+            assert!(
+                telegraph.tiles.is_empty(),
+                "Telegraph zone should be cleared on parry"
+            );
         }
 
         // Verify Boss AP is set to 0 (stunned!)
@@ -367,7 +383,7 @@ mod tests {
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
-        
+
         {
             let mut state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 5);
@@ -377,7 +393,51 @@ mod tests {
         // Verify outcome is Victory
         {
             let state = game.world.resource::<GameState>().unwrap();
-            assert_eq!(state.outcome, Outcome::Victory, "Should win game on Echo absorption");
+            assert_eq!(
+                state.outcome,
+                Outcome::Victory,
+                "Should win game on Echo absorption"
+            );
         }
+    }
+
+    #[test]
+    fn test_script_execution() {
+        let mut game = Game::new();
+
+        // Check initial position of Warrior (Kael)
+        let mut warrior_ent = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Warrior {
+                warrior_ent = Some(e);
+            }
+        }
+        let warrior = warrior_ent.unwrap();
+        assert_eq!(
+            *game.world.get::<Position>(warrior).unwrap(),
+            Position::new(4, 4)
+        );
+
+        // Inject script to select and move Kael to (4, 5)
+        let count = game
+            .router
+            .inject_script_with(
+                &default_commands(),
+                "inspect:4,4 confirm inspect:4,5 confirm",
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        assert_eq!(count, 4);
+
+        // Run pending actions
+        let reports = game.run_pending_reports();
+        assert_eq!(reports.len(), 4);
+
+        // Verify Kael's new position
+        assert_eq!(
+            *game.world.get::<Position>(warrior).unwrap(),
+            Position::new(4, 5)
+        );
     }
 }

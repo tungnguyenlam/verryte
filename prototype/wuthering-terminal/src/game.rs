@@ -290,7 +290,10 @@ impl Game {
     pub fn end_player_turn(&mut self) {
         // Execute any telegraphed attacks first!
         let telegraph_tiles = {
-            let mut telegraph_zone = self.world.resource_mut::<crate::components::TelegraphZone>().unwrap();
+            let mut telegraph_zone = self
+                .world
+                .resource_mut::<crate::components::TelegraphZone>()
+                .unwrap();
             let tiles = telegraph_zone.tiles.clone();
             telegraph_zone.tiles.clear();
             tiles
@@ -298,10 +301,17 @@ impl Game {
 
         if !telegraph_tiles.is_empty() {
             self.log("Blight Sovereign releases Dark Annihilation!");
-            
+
             // VFX feedback!
-            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(120, 0, 180), 0.3));
-            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(4.5, 0.6));
+            self.vfx
+                .flashes
+                .push(verryte_terminal::vfx::Flash::full_screen(
+                    Color(120, 0, 180),
+                    0.3,
+                ));
+            self.vfx
+                .shakes
+                .push(verryte_terminal::vfx::ScreenShake::new(4.5, 0.6));
 
             let mut hit_count = 0;
             // Check all player characters standing in telegraph tiles
@@ -321,15 +331,26 @@ impl Game {
                     stats.hp -= 50; // Fixed high damage
                     final_hp = stats.hp;
                 }
-                self.log(format!("Dark Annihilation hit {} for 50 damage! (HP: {})", target_name, final_hp));
+                self.log(format!(
+                    "Dark Annihilation hit {} for 50 damage! (HP: {})",
+                    target_name, final_hp
+                ));
                 hit_count += 1;
 
                 let cx = target_pos.x as f32 * 8.0 + 4.0;
                 let cy = target_pos.y as f32 * 4.0 + 2.0;
-                self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                    cx, cy - 2.0, "-50", Color(255, 20, 20), true
-                ));
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_fire(cx, cy, 15));
+                self.vfx
+                    .floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        cx,
+                        cy - 2.0,
+                        "-50",
+                        Color(255, 20, 20),
+                        true,
+                    ));
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_fire(cx, cy, 15));
 
                 if final_hp <= 0 {
                     let name_str = target_name.to_string();
@@ -451,7 +472,10 @@ impl Game {
                     };
 
                     let telegraph_active = {
-                        let telegraph_zone = self.world.resource::<crate::components::TelegraphZone>().unwrap();
+                        let telegraph_zone = self
+                            .world
+                            .resource::<crate::components::TelegraphZone>()
+                            .unwrap();
                         !telegraph_zone.tiles.is_empty()
                     };
 
@@ -466,24 +490,33 @@ impl Game {
                             }
                         }
                         {
-                            let mut telegraph_zone = self.world.resource_mut::<crate::components::TelegraphZone>().unwrap();
+                            let mut telegraph_zone = self
+                                .world
+                                .resource_mut::<crate::components::TelegraphZone>()
+                                .unwrap();
                             telegraph_zone.tiles = tiles;
                             telegraph_zone.damage = 50;
                         }
-                        
+
                         if let Some(stats) = self.world.get_mut::<Stats>(enemy_entity) {
                             stats.ap = 0; // Spends all AP to telegraph
                         }
-                        
+
                         self.log("Blight Sovereign is charging Dark Annihilation! Area telegraphed in RED.");
-                        
+
                         // Spawn dark particles
                         let ex = enemy_pos.x as f32 * 8.0 + 4.0;
                         let ey = enemy_pos.y as f32 * 4.0 + 2.0;
                         self.vfx.particles.extend(verryte_terminal::vfx::emit_burst(
-                            ex, ey, 30, Color(120, 20, 180), &['░', '▓', '✦', '¤']
+                            ex,
+                            ey,
+                            30,
+                            Color(120, 20, 180),
+                            &['░', '▓', '✦', '¤'],
                         ));
-                        self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
+                        self.vfx
+                            .shakes
+                            .push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
                         break;
                     }
 
@@ -514,11 +547,21 @@ impl Game {
 
                         let target_cx = player_pos.x as f32 * 8.0 + 4.0;
                         let target_cy = player_pos.y as f32 * 4.0 + 2.0;
-                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                            target_cx, target_cy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
+                        self.vfx
+                            .floating_texts
+                            .push(verryte_terminal::vfx::FloatingText::new(
+                                target_cx,
+                                target_cy - 2.0,
+                                &format!("-{}", damage),
+                                Color(255, 50, 50),
+                                true,
+                            ));
+                        self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(
+                            target_cx, target_cy, -1.0,
                         ));
-                        self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(target_cx, target_cy, -1.0));
-                        self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.25));
+                        self.vfx
+                            .shakes
+                            .push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.25));
 
                         if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
                             log.send(GameEvent::Attacked {
@@ -531,7 +574,7 @@ impl Game {
                         if defeated {
                             let name_str = player_name.to_string();
                             self.handle_defeat(player_entity, &name_str, player_class, player_pos);
-                            
+
                             let mut player_exists = false;
                             for (_e, team) in self.world.query::<Team>() {
                                 if *team == Team::Player {
@@ -613,15 +656,32 @@ impl Game {
             self.world.despawn(echo_ent);
             self.log("Absorbed Blight Sovereign Echo! Echo absorbed successfully.");
             self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
-            
+
             // Spawn absorption VFX
-            self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(pos.x as f32 * 8.0 + 4.0, pos.y as f32 * 4.0 + 2.0, 30));
-            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.6));
-            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(200, 255, 200), 0.3));
+            self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(
+                pos.x as f32 * 8.0 + 4.0,
+                pos.y as f32 * 4.0 + 2.0,
+                30,
+            ));
+            self.vfx
+                .shakes
+                .push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.6));
+            self.vfx
+                .flashes
+                .push(verryte_terminal::vfx::Flash::full_screen(
+                    Color(200, 255, 200),
+                    0.3,
+                ));
         }
     }
 
-    pub fn handle_defeat(&mut self, entity: Entity, name: &str, class: CharacterClass, pos: Position) {
+    pub fn handle_defeat(
+        &mut self,
+        entity: Entity,
+        name: &str,
+        class: CharacterClass,
+        pos: Position,
+    ) {
         self.log(format!("{} was defeated!", name));
         if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
             log.send(GameEvent::Defeated { entity });
@@ -629,22 +689,32 @@ impl Game {
         self.world.despawn(entity);
 
         if class == CharacterClass::Boss {
-            self.log("Blight Sovereign dropped an Echo! Move a character to its tile to absorb it.");
-            self.world.builder()
+            self.log(
+                "Blight Sovereign dropped an Echo! Move a character to its tile to absorb it.",
+            );
+            self.world
+                .builder()
                 .with(pos)
                 .with(crate::components::EchoItem { class })
                 .build();
-            
+
             // Visual boss death burst
             self.vfx.particles.extend(verryte_terminal::vfx::emit_burst(
                 pos.x as f32 * 8.0 + 4.0,
                 pos.y as f32 * 4.0 + 2.0,
                 40,
                 Color(180, 50, 255),
-                &['✦', '✧', '░', '▓', '¤']
+                &['✦', '✧', '░', '▓', '¤'],
             ));
-            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.8));
-            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(255, 255, 255), 0.4));
+            self.vfx
+                .shakes
+                .push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.8));
+            self.vfx
+                .flashes
+                .push(verryte_terminal::vfx::Flash::full_screen(
+                    Color(255, 255, 255),
+                    0.4,
+                ));
         } else {
             let mut enemy_exists = false;
             for (_e, team) in self.world.query::<Team>() {
@@ -714,10 +784,13 @@ impl Game {
 
         if player_in_telegraph {
             self.log("PARRY! Blight Sovereign's telegraphed attack was canceled!");
-            if let Some(mut telegraph_zone) = self.world.resource_mut::<crate::components::TelegraphZone>() {
+            if let Some(mut telegraph_zone) = self
+                .world
+                .resource_mut::<crate::components::TelegraphZone>()
+            {
                 telegraph_zone.tiles.clear();
             }
-            
+
             // Stun the boss
             let mut boss_ent = None;
             for (e, class) in self.world.query::<CharacterClass>() {
@@ -732,15 +805,30 @@ impl Game {
                     self.log("Blight Sovereign is STUNNED and loses its action points!");
                 }
             }
-            
-            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(255, 255, 255), 0.25));
-            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.5));
+
+            self.vfx
+                .flashes
+                .push(verryte_terminal::vfx::Flash::full_screen(
+                    Color(255, 255, 255),
+                    0.25,
+                ));
+            self.vfx
+                .shakes
+                .push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.5));
             let cx = target_pos.x as f32 * 8.0 + 4.0;
             let cy = target_pos.y as f32 * 4.0 + 2.0;
-            self.vfx.particles.extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
-            self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                cx, cy - 2.0, "PARRIED!", Color(255, 255, 100), true
-            ));
+            self.vfx
+                .particles
+                .extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
+            self.vfx
+                .floating_texts
+                .push(verryte_terminal::vfx::FloatingText::new(
+                    cx,
+                    cy - 2.0,
+                    "PARRIED!",
+                    Color(255, 255, 100),
+                    true,
+                ));
         }
     }
 
@@ -772,15 +860,24 @@ impl Game {
             *pos = active_pos;
         }
 
-        self.world.resource_mut::<GameState>().unwrap().concert_energy = 0;
-        self.world.resource_mut::<GameState>().unwrap().selected_entity = Some(next_ent);
+        self.world
+            .resource_mut::<GameState>()
+            .unwrap()
+            .concert_energy = 0;
+        self.world
+            .resource_mut::<GameState>()
+            .unwrap()
+            .selected_entity = Some(next_ent);
 
         let next_class = *self.world.get::<CharacterClass>(next_ent).unwrap();
         let active_class = *self.world.get::<CharacterClass>(active_ent).unwrap();
         let active_name = Self::get_class_name(active_class);
         let next_name = Self::get_class_name(next_class);
 
-        self.log(format!("QTE Swap! {} swaps in for {} at ({}, {})!", next_name, active_name, active_pos.x, active_pos.y));
+        self.log(format!(
+            "QTE Swap! {} swaps in for {} at ({}, {})!",
+            next_name, active_name, active_pos.x, active_pos.y
+        ));
 
         let cx = active_pos.x as f32 * 8.0 + 4.0;
         let cy = active_pos.y as f32 * 4.0 + 2.0;
@@ -788,12 +885,19 @@ impl Game {
         match next_class {
             CharacterClass::Warrior => {
                 self.log("Warrior Intro Skill: Cloud Slasher!");
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(cx, cy, 1.0));
-                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
-                
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_slash(cx, cy, 1.0));
+                self.vfx
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
+
                 let mut targets = Vec::new();
                 for (e, p, team) in self.world.query2::<Position, Team>() {
-                    if *team == Team::Enemy && (p.x - active_pos.x).abs() <= 1 && (p.y - active_pos.y).abs() <= 1 {
+                    if *team == Team::Enemy
+                        && (p.x - active_pos.x).abs() <= 1
+                        && (p.y - active_pos.y).abs() <= 1
+                    {
                         targets.push(e);
                     }
                 }
@@ -806,13 +910,22 @@ impl Game {
                         t_stats.hp -= 20;
                         final_hp = t_stats.hp;
                     }
-                    self.log(format!("Cloud Slasher hit {} for 20 damage! (HP: {})", target_name, final_hp));
-                    
+                    self.log(format!(
+                        "Cloud Slasher hit {} for 20 damage! (HP: {})",
+                        target_name, final_hp
+                    ));
+
                     let tcx = target_pos.x as f32 * 8.0 + 4.0;
                     let tcy = target_pos.y as f32 * 4.0 + 2.0;
-                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                        tcx, tcy - 2.0, "-20", Color(255, 80, 50), true
-                    ));
+                    self.vfx
+                        .floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            tcx,
+                            tcy - 2.0,
+                            "-20",
+                            Color(255, 80, 50),
+                            true,
+                        ));
                     if final_hp <= 0 {
                         let name_str = target_name.to_string();
                         self.handle_defeat(te, &name_str, target_class, target_pos);
@@ -823,9 +936,13 @@ impl Game {
             }
             CharacterClass::Mage => {
                 self.log("Mage Intro Skill: Lightning Storm!");
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
-                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.3));
-                
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
+                self.vfx
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.3));
+
                 let mut targets = Vec::new();
                 for (e, p, team) in self.world.query2::<Position, Team>() {
                     if *team == Team::Enemy {
@@ -845,13 +962,22 @@ impl Game {
                         t_stats.hp -= 30;
                         final_hp = t_stats.hp;
                     }
-                    self.log(format!("Lightning Storm hit {} for 30 damage! (HP: {})", target_name, final_hp));
-                    
+                    self.log(format!(
+                        "Lightning Storm hit {} for 30 damage! (HP: {})",
+                        target_name, final_hp
+                    ));
+
                     let tcx = target_pos.x as f32 * 8.0 + 4.0;
                     let tcy = target_pos.y as f32 * 4.0 + 2.0;
-                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                        tcx, tcy - 2.0, "-30", Color(255, 80, 50), true
-                    ));
+                    self.vfx
+                        .floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            tcx,
+                            tcy - 2.0,
+                            "-30",
+                            Color(255, 80, 50),
+                            true,
+                        ));
                     if final_hp <= 0 {
                         let name_str = target_name.to_string();
                         self.handle_defeat(te, &name_str, target_class, target_pos);
@@ -862,9 +988,16 @@ impl Game {
             }
             CharacterClass::Healer => {
                 self.log("Healer Intro Skill: Holy Aura!");
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(cx, cy, 25));
-                self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(100, 255, 100), 0.2));
-                
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_heal(cx, cy, 25));
+                self.vfx
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(100, 255, 100),
+                        0.2,
+                    ));
+
                 for pe in players {
                     let mut final_hp = 0;
                     let mut p_class = CharacterClass::Warrior;
@@ -874,21 +1007,33 @@ impl Game {
                         p_class = *self.world.get::<CharacterClass>(pe).unwrap();
                     }
                     let p_name = Self::get_class_name(p_class);
-                    self.log(format!("Holy Aura healed {} for 40 HP! (HP: {})", p_name, final_hp));
-                    
+                    self.log(format!(
+                        "Holy Aura healed {} for 40 HP! (HP: {})",
+                        p_name, final_hp
+                    ));
+
                     let p_pos = *self.world.get::<Position>(pe).unwrap();
                     let pcx = p_pos.x as f32 * 8.0 + 4.0;
                     let pcy = p_pos.y as f32 * 4.0 + 2.0;
-                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                        pcx, pcy - 2.0, "+40", Color(50, 255, 50), true
-                    ));
-                    self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 8));
+                    self.vfx
+                        .floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            pcx,
+                            pcy - 2.0,
+                            "+40",
+                            Color(50, 255, 50),
+                            true,
+                        ));
+                    self.vfx
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 8));
                 }
             }
             _ => {}
         }
-        
-        self.camera.look_at(active_pos.x as f32, active_pos.y as f32);
+
+        self.camera
+            .look_at(active_pos.x as f32, active_pos.y as f32);
     }
 
     pub fn execute_skill(
@@ -907,34 +1052,58 @@ impl Game {
             (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => "Thunderbolt",
             (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => "Glacial Tempest",
             (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => "Holy Light",
-            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => "Divine Protection",
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
+                "Divine Protection"
+            }
             _ => "Unknown Skill",
         };
 
-        self.log(format!("{} cast {} at ({}, {})!", caster_name, skill_name, target_pos.x, target_pos.y));
+        self.log(format!(
+            "{} cast {} at ({}, {})!",
+            caster_name, skill_name, target_pos.x, target_pos.y
+        ));
 
         let cx = target_pos.x as f32 * 8.0 + 4.0;
         let cy = target_pos.y as f32 * 4.0 + 2.0;
 
         match (class, skill) {
             (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(cx, cy, 1.0));
-                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.3));
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_slash(cx, cy, 1.0));
+                self.vfx
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.3));
             }
             (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_fire(cx, cy, 25));
-                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(3.5, 0.5));
-                self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(255, 100, 30), 0.2));
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_fire(cx, cy, 25));
+                self.vfx
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(3.5, 0.5));
+                self.vfx
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(255, 100, 30),
+                        0.2,
+                    ));
             }
             (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
                 let caster_pos = *self.world.get::<Position>(caster).unwrap();
                 let ccx = caster_pos.x as f32 * 8.0 + 4.0;
                 let ccy = caster_pos.y as f32 * 4.0 + 2.0;
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_lightning(ccx, ccy, cx, cy));
-                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.2));
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_lightning(ccx, ccy, cx, cy));
+                self.vfx
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.2));
             }
             (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_ice(cx, cy, 25));
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_ice(cx, cy, 25));
                 self.vfx.aoe_rings.push(verryte_terminal::vfx::AoeRing {
                     cx: cx as i32,
                     cy: cy as i32,
@@ -947,10 +1116,17 @@ impl Game {
                 });
             }
             (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
-                self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(cx, cy, 20));
+                self.vfx
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_heal(cx, cy, 20));
             }
             (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
-                self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(100, 255, 100), 0.3));
+                self.vfx
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(100, 255, 100),
+                        0.3,
+                    ));
             }
             _ => {}
         }
@@ -972,18 +1148,31 @@ impl Game {
                         p_class = *self.world.get::<CharacterClass>(pe).unwrap();
                     }
                     let p_name = Self::get_class_name(p_class);
-                    self.log(format!("Healed {} for {} HP! (HP: {})", p_name, value, final_hp));
-                    
+                    self.log(format!(
+                        "Healed {} for {} HP! (HP: {})",
+                        p_name, value, final_hp
+                    ));
+
                     let p_pos = *self.world.get::<Position>(pe).unwrap();
                     let pcx = p_pos.x as f32 * 8.0 + 4.0;
                     let pcy = p_pos.y as f32 * 4.0 + 2.0;
-                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                        pcx, pcy - 2.0, &format!("+{}", value), Color(50, 255, 50), true
-                    ));
-                    self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 10));
+                    self.vfx
+                        .floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            pcx,
+                            pcy - 2.0,
+                            &format!("+{}", value),
+                            Color(50, 255, 50),
+                            true,
+                        ));
+                    self.vfx
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 10));
                 }
             } else {
-                if let Some((target_ent, target_team, target_stats, target_class)) = self.get_entity_at(target_pos) {
+                if let Some((target_ent, target_team, target_stats, target_class)) =
+                    self.get_entity_at(target_pos)
+                {
                     if target_team == Team::Player {
                         let mut final_hp = 0;
                         if let Some(stats) = self.world.get_mut::<Stats>(target_ent) {
@@ -991,10 +1180,19 @@ impl Game {
                             final_hp = stats.hp;
                         }
                         let target_name = Self::get_class_name(target_class);
-                        self.log(format!("Healed {} for {} HP! (HP: {})", target_name, value, final_hp));
-                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                            cx, cy - 2.0, &format!("+{}", value), Color(50, 255, 50), true
+                        self.log(format!(
+                            "Healed {} for {} HP! (HP: {})",
+                            target_name, value, final_hp
                         ));
+                        self.vfx
+                            .floating_texts
+                            .push(verryte_terminal::vfx::FloatingText::new(
+                                cx,
+                                cy - 2.0,
+                                &format!("+{}", value),
+                                Color(50, 255, 50),
+                                true,
+                            ));
                     } else {
                         self.log("Cannot heal enemies!");
                     }
@@ -1039,13 +1237,22 @@ impl Game {
                         t_stats.hp -= damage;
                         final_hp = t_stats.hp;
                     }
-                    self.log(format!("Hit {} for {} damage! (Target HP: {})", target_name, damage, final_hp));
-                    
+                    self.log(format!(
+                        "Hit {} for {} damage! (Target HP: {})",
+                        target_name, damage, final_hp
+                    ));
+
                     let tcx = target_pos.x as f32 * 8.0 + 4.0;
                     let tcy = target_pos.y as f32 * 4.0 + 2.0;
-                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                        tcx, tcy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
-                    ));
+                    self.vfx
+                        .floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            tcx,
+                            tcy - 2.0,
+                            &format!("-{}", damage),
+                            Color(255, 50, 50),
+                            true,
+                        ));
 
                     if final_hp <= 0 {
                         let name_str = target_name.to_string();
@@ -1054,10 +1261,12 @@ impl Game {
                         self.check_parry(target_pos);
                     }
                 }
-                
+
                 self.build_concert_energy(30);
             } else {
-                if let Some((target_ent, target_team, target_stats, target_class)) = self.get_entity_at(target_pos) {
+                if let Some((target_ent, target_team, target_stats, target_class)) =
+                    self.get_entity_at(target_pos)
+                {
                     if target_team == Team::Enemy {
                         let damage = std::cmp::max(1, value - target_stats.def);
                         let mut final_hp = 0;
@@ -1066,10 +1275,19 @@ impl Game {
                             final_hp = stats.hp;
                         }
                         let target_name = Self::get_class_name(target_class);
-                        self.log(format!("Hit {} for {} damage! (Target HP: {})", target_name, damage, final_hp));
-                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                            cx, cy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
+                        self.log(format!(
+                            "Hit {} for {} damage! (Target HP: {})",
+                            target_name, damage, final_hp
                         ));
+                        self.vfx
+                            .floating_texts
+                            .push(verryte_terminal::vfx::FloatingText::new(
+                                cx,
+                                cy - 2.0,
+                                &format!("-{}", damage),
+                                Color(255, 50, 50),
+                                true,
+                            ));
 
                         if final_hp <= 0 {
                             let name_str = target_name.to_string();
@@ -1077,7 +1295,7 @@ impl Game {
                         } else {
                             self.check_parry(target_pos);
                         }
-                        
+
                         self.build_concert_energy(25);
                     } else {
                         self.log("Cannot target player characters with damage skills!");
@@ -1089,7 +1307,39 @@ impl Game {
         }
     }
 
-    pub fn apply_action(&mut self, action: Action, _source: ActionSource) {
+    pub fn outcome(&self) -> Outcome {
+        self.world.resource::<GameState>().unwrap().outcome
+    }
+
+    pub fn apply_action(
+        &mut self,
+        action: Action,
+        source: ActionSource,
+    ) -> crate::snapshot::StepReport {
+        let before = self.snapshot();
+        self.apply_action_internal(action);
+        let after = self.snapshot();
+        crate::snapshot::StepReport {
+            action,
+            source,
+            before,
+            after,
+            events: self.take_events(),
+        }
+    }
+
+    pub fn run_pending_reports(&mut self) -> Vec<crate::snapshot::StepReport> {
+        let mut reports = Vec::new();
+        while let Some(action) = self.router.pop_action() {
+            reports.push(self.apply_action(action.action, action.source));
+        }
+        reports
+    }
+
+    fn apply_action_internal(&mut self, action: Action) {
+        if self.outcome() != Outcome::Playing && action != Action::Quit {
+            return;
+        }
         match action {
             Action::MoveNorth | Action::MoveSouth | Action::MoveEast | Action::MoveWest => {
                 let dir = action.direction().unwrap();
@@ -1115,28 +1365,29 @@ impl Game {
                     let sel_entity = selected_entity.unwrap();
                     let caster_pos = *self.world.get::<Position>(sel_entity).unwrap();
                     let caster_class = *self.world.get::<CharacterClass>(sel_entity).unwrap();
-                    
-                    let (range, ap_cost, is_aoe, damage_or_heal) = match (caster_class, state_clone.targeting) {
-                        (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
-                            (1, 2, false, 45)
-                        }
-                        (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
-                            (3, 3, true, 50)
-                        }
-                        (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
-                            (3, 2, false, 55)
-                        }
-                        (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
-                            (4, 3, true, 40)
-                        }
-                        (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
-                            (2, 2, false, 50)
-                        }
-                        (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
-                            (0, 3, true, 40)
-                        }
-                        _ => (1, 1, false, 0),
-                    };
+
+                    let (range, ap_cost, is_aoe, damage_or_heal) =
+                        match (caster_class, state_clone.targeting) {
+                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
+                                (1, 2, false, 45)
+                            }
+                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
+                                (3, 3, true, 50)
+                            }
+                            (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
+                                (3, 2, false, 55)
+                            }
+                            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
+                                (4, 3, true, 40)
+                            }
+                            (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
+                                (2, 2, false, 50)
+                            }
+                            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
+                                (0, 3, true, 40)
+                            }
+                            _ => (1, 1, false, 0),
+                        };
 
                     let dist = (caster_pos.x - cursor.x).abs() + (caster_pos.y - cursor.y).abs();
                     if range > 0 && dist > range {
@@ -1154,11 +1405,19 @@ impl Game {
 
                     if !ap_ok {
                         self.log("Not enough AP to cast this skill!");
-                        self.world.resource_mut::<GameState>().unwrap().targeting = crate::components::TargetingMode::None;
+                        self.world.resource_mut::<GameState>().unwrap().targeting =
+                            crate::components::TargetingMode::None;
                         return;
                     }
 
-                    self.execute_skill(sel_entity, caster_class, state_clone.targeting, cursor, damage_or_heal, is_aoe);
+                    self.execute_skill(
+                        sel_entity,
+                        caster_class,
+                        state_clone.targeting,
+                        cursor,
+                        damage_or_heal,
+                        is_aoe,
+                    );
 
                     let mut state_mut = self.world.resource_mut::<GameState>().unwrap();
                     state_mut.targeting = crate::components::TargetingMode::None;
@@ -1219,11 +1478,21 @@ impl Game {
 
                                     let target_cx = cursor.x as f32 * 8.0 + 4.0;
                                     let target_cy = cursor.y as f32 * 4.0 + 2.0;
-                                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                                        target_cx, target_cy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
+                                    self.vfx.floating_texts.push(
+                                        verryte_terminal::vfx::FloatingText::new(
+                                            target_cx,
+                                            target_cy - 2.0,
+                                            &format!("-{}", damage),
+                                            Color(255, 50, 50),
+                                            true,
+                                        ),
+                                    );
+                                    self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(
+                                        target_cx, target_cy, 1.0,
                                     ));
-                                    self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(target_cx, target_cy, 1.0));
-                                    self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.25));
+                                    self.vfx
+                                        .shakes
+                                        .push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.25));
 
                                     if let Some(log) =
                                         self.world.resource_mut::<Events<GameEvent>>()
@@ -1237,11 +1506,16 @@ impl Game {
 
                                     if defeated {
                                         let name_str = target_name.to_string();
-                                        self.handle_defeat(target_entity, &name_str, target_class, cursor);
+                                        self.handle_defeat(
+                                            target_entity,
+                                            &name_str,
+                                            target_class,
+                                            cursor,
+                                        );
                                     } else {
                                         self.check_parry(cursor);
                                     }
-                                    
+
                                     self.build_concert_energy(20);
 
                                     self.world
@@ -1290,10 +1564,20 @@ impl Game {
 
                                         let target_cx = cursor.x as f32 * 8.0 + 4.0;
                                         let target_cy = cursor.y as f32 * 4.0 + 2.0;
-                                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
-                                            target_cx, target_cy - 2.0, &format!("+{}", heal_val), Color(50, 255, 50), true
-                                        ));
-                                        self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(target_cx, target_cy, 15));
+                                        self.vfx.floating_texts.push(
+                                            verryte_terminal::vfx::FloatingText::new(
+                                                target_cx,
+                                                target_cy - 2.0,
+                                                &format!("+{}", heal_val),
+                                                Color(50, 255, 50),
+                                                true,
+                                            ),
+                                        );
+                                        self.vfx.particles.extend(
+                                            verryte_terminal::vfx::emit_heal(
+                                                target_cx, target_cy, 15,
+                                            ),
+                                        );
 
                                         if let Some(log) =
                                             self.world.resource_mut::<Events<GameEvent>>()
@@ -1304,7 +1588,7 @@ impl Game {
                                                 amount: heal_val,
                                             });
                                         }
-                                        
+
                                         self.build_concert_energy(15);
 
                                         self.world
@@ -1365,7 +1649,9 @@ impl Game {
                                     // Spawn movement particles
                                     let tcx = cursor.x as f32 * 8.0 + 4.0;
                                     let tcy = cursor.y as f32 * 4.0 + 2.0;
-                                    self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 5));
+                                    self.vfx
+                                        .particles
+                                        .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 5));
 
                                     if let Some(log) =
                                         self.world.resource_mut::<Events<GameEvent>>()
@@ -1465,6 +1751,23 @@ impl Game {
                     self.end_player_turn();
                 }
             }
+            Action::Inspect(point) => {
+                let (width, height) = {
+                    let map = self.world.resource::<TacticalMap>().unwrap();
+                    (map.width, map.height)
+                };
+                if point.x >= 0 && point.x < width as i16 && point.y >= 0 && point.y < height as i16
+                {
+                    let mut state = self.world.resource_mut::<GameState>().unwrap();
+                    state.cursor = point;
+                    self.camera.look_at(point.x as f32, point.y as f32);
+                }
+            }
+            Action::ClearCursor => {
+                let mut state = self.world.resource_mut::<GameState>().unwrap();
+                state.selected_entity = None;
+                self.log("Selection cleared.");
+            }
             Action::Quit => {
                 self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Quit;
             }
@@ -1553,7 +1856,8 @@ impl Game {
                     for ty in 0..map.height {
                         for tx in 0..map.width {
                             let target = Position::new(tx as i16, ty as i16);
-                            let dist = (caster_pos.x - target.x).abs() + (caster_pos.y - target.y).abs();
+                            let dist =
+                                (caster_pos.x - target.x).abs() + (caster_pos.y - target.y).abs();
                             if dist <= range {
                                 let rx = target.x as u16 * tile_w;
                                 let ry = target.y as u16 * tile_h;
@@ -1576,7 +1880,10 @@ impl Game {
         }
 
         // Draw telegraphed tiles in dark red/magenta overlay
-        let telegraph_zone = self.world.resource::<crate::components::TelegraphZone>().unwrap();
+        let telegraph_zone = self
+            .world
+            .resource::<crate::components::TelegraphZone>()
+            .unwrap();
         for pos in &telegraph_zone.tiles {
             let rx = pos.x as u16 * tile_w;
             let ry = pos.y as u16 * tile_h;
@@ -1607,8 +1914,8 @@ impl Game {
                 let sw = sprite_grid.width();
                 let sh = sprite_grid.height();
 
-                let rx = (pos.x as u16 * tile_w) + (tile_w - sw) / 2;
-                let ry = (pos.y as u16 * tile_h) + (tile_h - sh) / 2;
+                let rx = (pos.x as i32 * tile_w as i32) + (tile_w as i32 - sw as i32) / 2;
+                let ry = (pos.y as i32 * tile_h as i32) + (tile_h as i32 - sh as i32) / 2;
 
                 grid.blit(&sprite_grid, rx as i32, ry as i32);
             }
@@ -1698,11 +2005,7 @@ impl Game {
         let bar_len = 10;
         let filled_len = (ce_pct * bar_len as f32).round() as usize;
         let empty_len = bar_len - filled_len;
-        let bar_str = format!(
-            "[{}{}]",
-            "█".repeat(filled_len),
-            "░".repeat(empty_len)
-        );
+        let bar_str = format!("[{}{}]", "█".repeat(filled_len), "░".repeat(empty_len));
         let ce_display = format!("CONCERT: {}/100 {}", state.concert_energy, bar_str);
         let ce_color = if state.concert_energy >= 100 {
             Color(255, 215, 0) // Gold

@@ -1766,3 +1766,23 @@ sprites render correctly with VFX overlays.
 - Dropped Echoes with `Position` components originally blocked player movement. Restricting obstacle checks to entities with `Team` components resolved this.
 
 **Follow-ups.** Validate the rendering behavior in interactive TTY mode. Proceed to the next tactical RPG prototype steps, such as building the sprite pipeline or designing more complex boss fight patterns.
+
+## 2026-05-22 - tactical RPG script runner implementation
+
+**Goal.** Implement Step 8 of the Tactical RPG Roadmap: a non-interactive script runner binary (`wuthering-terminal-script`) for the `wuthering-terminal` prototype.
+
+**Changes.**
+- `prototype/wuthering-terminal/Cargo.toml` - registered the binary target `wuthering-terminal-script`.
+- `prototype/wuthering-terminal/src/action.rs:73` - added `default_commands` and `resolve_command_token` for command script tokenization and coordinate parsing (`inspect:x,y`).
+- `prototype/wuthering-terminal/src/game.rs:1092` - refactored `apply_action` to return `StepReport`, added `outcome` and `run_pending_reports` helpers, and implemented cursor inspection and clearing.
+- `prototype/wuthering-terminal/src/game.rs:1654` - fixed a subtraction overflow crash during sprite coordinate calculations by casting sprite/tile size dimensions to signed `i32` arithmetic.
+- `prototype/wuthering-terminal/src/lib.rs:10` - re-exported public parser helpers and added `test_script_execution` to test command routing.
+- `prototype/wuthering-terminal/src/bin/script.rs:1` - implemented the script runner CLI and interactive REPL shell.
+
+**Reasoning.** Standardized script running ensures that automated scripts, TTY players, and agents all run through the same public action queue. Comma separation during coordinate parsing splits the text into tokens in `InputRouter::inject_script_with` unless a mapping is defined. Binding the comma glyph `,` to `Action::ClearCursor` resolved this conflict without changing the parser.
+
+**Assumptions.** We assume exit code 0 is reserved for Victory, and exit code 1 is for Defeat, Quit, or Playing states.
+
+**Gotchas.** Using tiles of 8x4 size with 16x16 boss sprite sheets caused subtraction overflows under `u16` when calculating centers. Signed `i32` conversions resolved this.
+
+**Follow-ups.** None. All requirements of the tactical RPG prototype roadmap are complete.

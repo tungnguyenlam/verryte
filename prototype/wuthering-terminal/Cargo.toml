@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "wuthering-terminal"
 path = "src/main.rs"
 
+[[bin]]
+name = "wuthering-terminal-script"
+path = "src/bin/script.rs"
+
 [dependencies]
 verryte-core = { path = "../../crates/verryte-core", features = ["serde"] }
 verryte-input = { path = "../../crates/verryte-input", features = ["serde"] }
