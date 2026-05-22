@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 
 /// A point in a terminal grid or tile map.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Point {
     pub x: i16,
     pub y: i16,
@@ -393,6 +394,7 @@ impl TryFrom<Direction8> for Direction {
 
 /// Width and height of a rectangular grid.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Size {
     pub width: u16,
     pub height: u16,
@@ -435,6 +437,11 @@ impl From<Size> for (u16, u16) {
 
 /// A typed, fixed-size rectangular tile grid.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "T: serde::Serialize + serde::de::DeserializeOwned")
+)]
 pub struct TileGrid<T> {
     size: Size,
     tiles: Vec<T>,
@@ -827,6 +834,7 @@ impl<T> TileGrid<T> {
 
     /// Return every in-bounds point visible from `origin` within a Manhattan
     /// `radius`. Blocking tiles stop sight beyond themselves but remain visible.
+    #[deprecated(since = "0.1.0", note = "Use field_of_view instead")]
     pub fn visible_points<F>(&self, origin: Point, radius: u16, blocks_light: F) -> Vec<Point>
     where
         F: Fn(&T) -> bool,
@@ -2315,6 +2323,7 @@ fn cast_light<F, T>(
 /// Returned by [`TileGrid::bounding_box_of`] and usable for viewport
 /// calculations, camera framing, and spatial queries.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bounds {
     pub x: u16,
     pub y: u16,
@@ -4010,7 +4019,70 @@ mod tests {
 ..#
 ###";
         let open_grid = TileGrid::from_ascii(open_ascii, |ch, _, _| ch);
-        let open_filled = open_grid.flood_fill(Point::new(0, 0), |_, &tile| tile == '.');
+        let open_filled = open_grid.flood_fill4(Point::new(0, 0), |_, &tile| tile == '.');
         assert_eq!(open_filled.len(), 5);
+    }
+}
+
+/// Visibility state of a tile in a [`VisibilityMap`].
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Visibility {
+    #[default]
+    Hidden, // Never seen
+    Explored, // Seen in the past, but not currently visible
+    Visible,  // Currently in line of sight
+}
+
+/// Tracks field-of-view and exploration state for a grid.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct VisibilityMap {
+    grid: TileGrid<Visibility>,
+}
+
+impl VisibilityMap {
+    pub fn new(width: u16, height: u16) -> Self {
+        Self {
+            grid: TileGrid::new(width, height, Visibility::Hidden),
+        }
+    }
+
+    /// Reset all 'Visible' tiles to 'Explored'.
+    ///
+    /// Call this before a new FOV calculation to ensure only currently
+    /// visible tiles are marked as 'Visible'.
+    pub fn clear_visible(&mut self) {
+        for tile in self.grid.tiles_mut() {
+            if *tile == Visibility::Visible {
+                *tile = Visibility::Explored;
+            }
+        }
+    }
+
+    /// Mark a point as 'Visible'.
+    pub fn set_visible(&mut self, point: Point) {
+        self.grid.set(point, Visibility::Visible);
+    }
+
+    /// Get the visibility of a point. Returns 'Hidden' for out-of-bounds.
+    pub fn get(&self, point: Point) -> Visibility {
+        self.grid.get(point).copied().unwrap_or(Visibility::Hidden)
+    }
+
+    pub fn is_visible(&self, point: Point) -> bool {
+        self.get(point) == Visibility::Visible
+    }
+
+    pub fn is_explored(&self, point: Point) -> bool {
+        self.get(point) != Visibility::Hidden
+    }
+
+    pub fn width(&self) -> u16 {
+        self.grid.width()
+    }
+
+    pub fn height(&self) -> u16 {
+        self.grid.height()
     }
 }

@@ -30,6 +30,7 @@ use std::collections::{vec_deque, HashMap, VecDeque};
 /// Frontends (crossterm, termion, custom) translate their native key types
 /// into this enum so [`Bindings`] doesn't depend on any particular backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Key {
     Char(char),
     Enter,
@@ -127,6 +128,7 @@ impl std::fmt::Display for Key {
 
 /// Mouse buttons in a terminal-friendly shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MouseButton {
     Left,
     Right,
@@ -145,6 +147,7 @@ impl std::fmt::Display for MouseButton {
 
 /// Mouse wheel scroll direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ScrollDirection {
     Up,
     Down,
@@ -169,6 +172,7 @@ impl std::fmt::Display for ScrollDirection {
 /// need position-aware mouse behavior can inspect [`InputEvent::Mouse`] before
 /// routing it, while simple controls can still enter the shared action queue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MouseTrigger {
     pub button: MouseButton,
     pub pressed: bool,
@@ -183,6 +187,7 @@ impl MouseTrigger {
 /// One discrete input event. Frontends emit these; the router converts them
 /// (when bound) into game actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InputEvent {
     Key(Key),
     Mouse {
@@ -211,6 +216,7 @@ pub enum InputEvent {
 /// This is metadata only: games should still apply the contained action through
 /// the same systems no matter who produced it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ActionSource {
     Terminal,
     Script,
@@ -247,6 +253,11 @@ impl std::str::FromStr for ActionSource {
 
 /// One pending game action plus its control-plane provenance.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "A: serde::Serialize + serde::de::DeserializeOwned")
+)]
 pub struct QueuedAction<A> {
     pub action: A,
     pub source: ActionSource,
@@ -269,6 +280,11 @@ impl<A> QueuedAction<A> {
 /// recording a terminal session, storing an agent plan, or turning a failing
 /// test into a reproducible script without creating another action path.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "A: serde::Serialize + serde::de::DeserializeOwned")
+)]
 pub struct ActionTrace<A> {
     steps: Vec<QueuedAction<A>>,
 }
@@ -540,12 +556,55 @@ impl<A: Clone> Default for Bindings<A> {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<A: Clone + serde::Serialize> serde::Serialize for Bindings<A> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Bindings", 3)?;
+
+        let keys: Vec<(&Key, &A)> = self.by_key.iter().collect();
+        let mouse: Vec<(&MouseTrigger, &A)> = self.by_mouse.iter().collect();
+        let scroll: Vec<(&ScrollDirection, &A)> = self.by_scroll.iter().collect();
+
+        state.serialize_field("by_key", &keys)?;
+        state.serialize_field("by_mouse", &mouse)?;
+        state.serialize_field("by_scroll", &scroll)?;
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, A: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for Bindings<A> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct BindingsHelper<A> {
+            by_key: Vec<(Key, A)>,
+            by_mouse: Vec<(MouseTrigger, A)>,
+            by_scroll: Vec<(ScrollDirection, A)>,
+        }
+
+        let helper = BindingsHelper::deserialize(deserializer)?;
+        Ok(Bindings {
+            by_key: helper.by_key.into_iter().collect(),
+            by_mouse: helper.by_mouse.into_iter().collect(),
+            by_scroll: helper.by_scroll.into_iter().collect(),
+        })
+    }
+}
+
 /// Script/agent command bindings for a game's action vocabulary.
 ///
 /// `Bindings` maps neutral terminal events to actions. `CommandBindings` maps
 /// textual commands to the same actions, so a harness can parse input like
 /// `"north pickup east"` or compact glyph scripts like `"ne,."` and inject the
 /// resulting actions into [`InputRouter`].
+#[derive(Clone)]
 pub struct CommandBindings<A: Clone> {
     by_name: HashMap<String, A>,
     by_glyph: HashMap<char, A>,
@@ -732,6 +791,44 @@ impl<A: Clone> Default for CommandBindings<A> {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<A: Clone + serde::Serialize> serde::Serialize for CommandBindings<A> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CommandBindings", 2)?;
+
+        let names: Vec<(&String, &A)> = self.by_name.iter().collect();
+        let glyphs: Vec<(&char, &A)> = self.by_glyph.iter().collect();
+
+        state.serialize_field("by_name", &names)?;
+        state.serialize_field("by_glyph", &glyphs)?;
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, A: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for CommandBindings<A> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct CommandBindingsHelper<A> {
+            by_name: Vec<(String, A)>,
+            by_glyph: Vec<(char, A)>,
+        }
+
+        let helper = CommandBindingsHelper::deserialize(deserializer)?;
+        Ok(CommandBindings {
+            by_name: helper.by_name.into_iter().collect(),
+            by_glyph: helper.by_glyph.into_iter().collect(),
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommandParseError {
     UnknownCommand(String),
@@ -883,6 +980,10 @@ impl<A: Clone> InputRouter<A> {
     /// frontends that care about them can intercept before calling.
     pub fn handle(&mut self, event: InputEvent) -> bool {
         self.handle_from(event, ActionSource::Terminal)
+    }
+
+    pub fn handle_event(&mut self, event: InputEvent) -> bool {
+        self.handle(event)
     }
 
     /// Translate a terminal event into a game action using a custom translator
@@ -1076,6 +1177,10 @@ impl<A: Clone> InputRouter<A> {
             self.history.push(act.clone());
         }
         action
+    }
+
+    pub fn pop_action(&mut self) -> Option<QueuedAction<A>> {
+        self.next_queued()
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = A> + '_ {
@@ -2941,5 +3046,114 @@ mod tests {
         assert_eq!(cmds.glyph_count(), 0);
         assert_eq!(cmds.translate_name("north"), None);
         assert_eq!(cmds.translate_glyph('n'), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_roundtrip_action_source() {
+        let sources = [
+            ActionSource::Terminal,
+            ActionSource::Script,
+            ActionSource::Agent,
+            ActionSource::Replay,
+            ActionSource::Test,
+        ];
+        for source in sources {
+            let json = serde_json::to_string(&source).unwrap();
+            let roundtrip: ActionSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(source, roundtrip);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_roundtrip_key() {
+        let keys = [
+            Key::Char('a'),
+            Key::Enter,
+            Key::Up,
+            Key::F(5),
+            Key::Modified {
+                char: 'c',
+                ctrl: true,
+                alt: false,
+                shift: false,
+            },
+        ];
+        for key in keys {
+            let json = serde_json::to_string(&key).unwrap();
+            let roundtrip: Key = serde_json::from_str(&json).unwrap();
+            assert_eq!(key, roundtrip);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_roundtrip_input_event() {
+        let events = [
+            InputEvent::Key(Key::Char('x')),
+            InputEvent::Mouse {
+                x: 10,
+                y: 5,
+                button: MouseButton::Left,
+                pressed: true,
+            },
+            InputEvent::MouseScroll {
+                x: 0,
+                y: 0,
+                direction: ScrollDirection::Up,
+            },
+            InputEvent::Resize {
+                width: 80,
+                height: 24,
+            },
+        ];
+        for event in events {
+            let json = serde_json::to_string(&event).unwrap();
+            let roundtrip: InputEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event, roundtrip);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_roundtrip_bindings() {
+        #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+        enum DummyAction {
+            MoveUp,
+            Fire,
+        }
+
+        let mut bindings = Bindings::new();
+        bindings.bind(Key::Char('w'), DummyAction::MoveUp);
+        bindings.bind_mouse(MouseButton::Left, true, DummyAction::Fire);
+        bindings.bind_scroll(ScrollDirection::Up, DummyAction::MoveUp);
+
+        let json = serde_json::to_string(&bindings).unwrap();
+        let roundtrip: Bindings<DummyAction> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            roundtrip.translate(Key::Char('w')),
+            Some(DummyAction::MoveUp)
+        );
+        assert_eq!(
+            roundtrip.translate_mouse(MouseButton::Left, true),
+            Some(DummyAction::Fire)
+        );
+        assert_eq!(
+            roundtrip.translate_scroll(ScrollDirection::Up),
+            Some(DummyAction::MoveUp)
+        );
+
+        let mut cmd_bindings = CommandBindings::new();
+        cmd_bindings.bind_name("up", DummyAction::MoveUp);
+        cmd_bindings.bind_glyph('f', DummyAction::Fire);
+
+        let cmd_json = serde_json::to_string(&cmd_bindings).unwrap();
+        let cmd_roundtrip: CommandBindings<DummyAction> = serde_json::from_str(&cmd_json).unwrap();
+        assert_eq!(
+            cmd_roundtrip.translate_name("up"),
+            Some(DummyAction::MoveUp)
+        );
+        assert_eq!(cmd_roundtrip.translate_glyph('f'), Some(DummyAction::Fire));
     }
 }

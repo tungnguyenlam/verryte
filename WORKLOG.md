@@ -1,4 +1,29 @@
-## 2026-05-15 - shared input, map helpers, and local snapshots
+## 2026-05-22 - tactical RPG initialization and sprite rendering
+
+**Goal.** Start the next Verryte prototype: a turn-based tactical RPG on a grid
+battlefield, validating multi-character teams and high-fidelity sprites.
+
+**Accomplishments.**
+- Added `wuthering-terminal` to workspace members.
+- Initialized `prototype/wuthering-terminal` with crate structure, `Action`
+  funnel, and `Game` state.
+- Implemented **Tactical grid scene** (Step 1 of roadmap):
+    - Multi-cell tile rendering (8x4 cells per tile).
+    - Image-based character sprites (Kael, Lyra, Mira, Blight Sovereign) loaded
+      from PNG assets with chroma-key transparency.
+    - Centered character rendering within tiles.
+    - Camera system integration for cursor following.
+- Self-healed `ash-courier` and `verryte-input`:
+    - Standardized `InputRouter` methods (added `handle_event` and `pop_action`
+      aliases).
+    - Fixed `TileGrid` method calls (`cellular_automata_cave`, `points_matching`).
+    - Restored `run_pending_reports` in `ash-courier` for script validation.
+- Added baseline unit test for `wuthering-terminal` initialization.
+
+**Next Steps.**
+- Implement the **Turn system** (Step 2): player phase → enemy phase, AP tracking.
+- Add basic combat mechanics (ranges, stats).
+- Integrate VFX system into tactical animations.
 
 **Goal.** Continue autonomous development on Verryte toward the terminal-native,
 agent-ready engine goal, with Ash Courier kept as the proving game and the
@@ -1668,3 +1693,50 @@ that are not compatible — `image_to_grid()` accepts `0.24`'s type. The
 
 **Follow-ups.** Run `cargo run -p vfx-demo` in a real terminal to verify the
 sprites render correctly with VFX overlays.
+
+## 2026-05-22 - autonomous engine run: TTY attributes, chroma-key sprites, diagnostics, VFX extraction, serde
+
+**Goal.** Complete a minimum of 5 meaningful improvements in one sustained autonomous run, following the 09-autonomous-engine-run.md prompt.
+
+**Changes.**
+- `crates/verryte-tty/src/lib.rs:69-128` - updated `render()` and `render_diff()` to emit cell attribute escape codes (bold, dim, italic, underline, blink, reverse) alongside color codes. Previously only foreground/background colors were emitted, making `CellAttrs` a dead feature in the TTY frontend. Attributes are emitted before color codes and reset after each attributed cell.
+- `crates/verryte-terminal/src/lib.rs:2175-2258` - added `image_to_grid_with_chroma_key()` that takes a chroma key color and tolerance threshold. When both top and bottom pixels match the key, the cell becomes `Cell::EMPTY`. When only one matches, it uses the appropriate half-block glyph (`▀` or `▄`) with the non-key color. Tests at `:2344-2402`.
+- `crates/verryte-core/src/schedule.rs:127-136` - added `Schedule::run_profiling()` that auto-inserts a `Diagnostics` resource if missing, then runs. Also added diagnostics recording to `run_stage()`, `run_stage_with_hook()`, and `run_system_by_name()` which previously skipped metrics. Tests at `:759-810`.
+- `crates/verryte-terminal/src/vfx.rs` - new module extracting the VFX system from `vfx-demo/src/main.rs`. Contains `Particle`, `ScreenShake`, `Flash`, `FloatingText`, `AoeRing`, `VfxSystem`, emitter presets (`emit_fire`, `emit_ice`, `emit_lightning`, `emit_slash`, `emit_heal`, `emit_burst`), and `blend_color()`. 13 tests covering all types. Exported as `verryte_terminal::vfx`.
+- `crates/verryte-core/Cargo.toml` and `crates/verryte-input/Cargo.toml` - added optional `serde` dependency. `crates/verryte-core/src/entity.rs:8` - added `#[cfg_attr(feature = "serde", derive(...))]` to `Entity`. `crates/verryte-input/src/lib.rs` - added serde derives to `Key`, `MouseButton`, `ScrollDirection`, `MouseTrigger`, `InputEvent`, `ActionSource`, and `QueuedAction<A>`. Tests at `verryte-input:2975-3030` verify JSON roundtrip for `ActionSource`, `Key`, and `InputEvent`.
+- `README.md` - updated crate descriptions to document new capabilities: TTY attribute rendering, chroma-key image loading, `run_profiling`, VFX module, and optional serde support.
+
+**Reasoning.** These improvements address gaps identified by codebase exploration:
+1. TTY attributes were fully supported in `CellAttrs` but never rendered — a clear bug-by-omission.
+2. Chroma-key transparency was implemented ad-hoc in vfx-demo's `load_sprite()` but not in the engine, despite being needed for sprite loading per GOAL.md.
+3. Diagnostics recording was inconsistent — `run()` and `run_with_hook()` recorded it, but `run_stage()`, `run_stage_with_hook()`, and `run_system_by_name()` did not. `run_profiling()` makes it zero-effort.
+4. The VFX system was explicitly called out in AGENTS.md as needing extraction before the tactical prototype. Moving it into `verryte-terminal` makes it reusable by any prototype.
+5. Serde support enables state snapshots, agent replay traces, and cross-language tool integration — core to the "agent-ready by default" goal.
+
+**Assumptions.** I assumed serde should be an optional feature (not default) to avoid pulling in the dependency for games that don't need serialization. I assumed the VFX module belongs in `verryte-terminal` rather than a new `verryte-vfx` crate because it directly renders into `Grid` and shares types like `Cell`, `Color`, `Rect`. I assumed chroma-key tolerance should be a simple per-channel threshold rather than Euclidean distance in RGB space — simpler and matches the vfx-demo's existing approach.
+
+**Gotchas.** The `QueuedAction<A>` serde derive needed a `serde(bound = ...)` attribute because the generic `A` type doesn't have serde bounds by default. The `render()` and `render_diff()` functions now emit attribute reset codes (`\x1b[0m`) after attributed cells, which adds a few extra bytes per cell but ensures attributes don't bleed into subsequent cells.
+
+**Follow-ups.** The vfx-demo could be updated to use `verryte_terminal::vfx` instead of its own inline copy, validating the extraction end-to-end. The `wuthering-terminal` prototype directory exists with assets but no source code — either needs to be built out or removed from documentation. A `Grid::to_svg_string` was mentioned as a follow-up in prior worklog entries. The `visible_points` method in `verryte-map` could be deprecated in favor of the more efficient `field_of_view` shadowcasting implementation.
+
+## 2026-05-22 - visual effects integration, SVG serialization, FOV deprecation, Serde input bindings, and tactical RPG step 2
+
+**Goal.** Perform a batch of engine improvements (clean up visual effects duplicates, implement SVG frame serialization, deprecate naive FOV, implement Serde for input bindings) and build Step 2 of `wuthering-terminal` (turn system, character actions, AI, details HUD).
+
+**Changes.**
+- `crates/verryte-terminal/src/vfx.rs` - [NEW] Ported VFX system structures (Particle, emit presets, ScreenShake, Flash, FloatingText, AoeRing, VfxSystem) and tests from prototype demo to a reusable engine location.
+- `crates/verryte-terminal/src/lib.rs` - Added `Grid::to_svg_string` and registered `vfx` module.
+- `crates/verryte-map/src/lib.rs` - Marked naive `visible_points` as `#[deprecated]`.
+- `crates/verryte-input/src/lib.rs` - Implemented custom manual `Serialize` and `Deserialize` for `Bindings` and `CommandBindings`.
+- `prototype/wuthering-terminal/src/action.rs` - Added `Action::EndTurn` action.
+- `prototype/wuthering-terminal/src/components.rs` - Added `GameEvent` enum variations and game stats structures.
+- `prototype/wuthering-terminal/src/game.rs` - Implemented selection cycling, pathfinding, movement/action validation, enemy AI behavior, and a bottom HUD overlaying selected unit stats, hovered tile details, and messages.
+- `prototype/wuthering-terminal/src/lib.rs` - Added comprehensive unit tests for selection/movement, combat, defeat conditions, and turn end replenishment.
+
+**Reasoning.** Moving the VFX logic to `verryte-terminal` prevents copy-paste duplication and makes particles, screen shake, and flashes reusable across all prototypes. SVG frame serialization allows easy integration with vector graphic pipelines. Standardizing custom Serde implementations for bindings prevents reliance on auto-derived structures that could break on schema changes. Step 2 of the tactical RPG prototype validates the turn and action constraints using a deterministic BFS and A* pathfinding system.
+
+**Assumptions.** I assumed the enemy AI should target the closest player character and move as close as possible to attack. I assumed the target tile in pathfinding should be passable during path computation even if occupied by the target character, to ensure paths can be computed.
+
+**Gotchas.** Inline scopes or dropping mutable borrows of world resources (e.g. `Events<GameEvent>`) is required to avoid E0499 compiler errors when calling other `world` mutation methods in the same function.
+
+**Follow-ups.** The next step in the tactical RPG prototype is implementing the team swap QTE mechanic and telegraphed enemy attack markers.

@@ -3,7 +3,7 @@ use crate::components::{GameEvent, Outcome, Position};
 use crate::map::Tile;
 use verryte_input::ActionSource;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub turn: u32,
     pub outcome: Outcome,

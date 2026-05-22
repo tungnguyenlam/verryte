@@ -14,29 +14,29 @@ pub struct Hazard;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Chaser;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Battery {
     pub current: u32,
     pub max: u32,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BatteryPack;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RechargeStation {
     pub charges: u32,
 }
 
 /// Tracks the chaser's position from the previous tick to avoid backtracking.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PreviousPosition(pub Position);
 
 // ----------------------------------------------------------------------------
 // Resources — game-level state that systems read and write through the world.
 // ----------------------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Outcome {
     Playing,
     Won,
@@ -44,7 +44,7 @@ pub enum Outcome {
     Quit,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GameState {
     pub turn: u32,
     pub outcome: Outcome,
@@ -54,6 +54,7 @@ pub struct GameState {
     pub camera_zoom: i16,
     pub show_log: bool,
     pub high_fidelity: bool,
+    pub tier: verryte_terminal::ResolutionTier,
 }
 
 impl Default for GameState {
@@ -67,11 +68,12 @@ impl Default for GameState {
             camera_zoom: 0,
             show_log: true,
             high_fidelity: true,
+            tier: verryte_terminal::ResolutionTier::default(),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GameEvent {
     Moved {
         from: Position,

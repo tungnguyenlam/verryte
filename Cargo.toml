@@ -8,6 +8,7 @@ members = [
     "crates/verryte-tty",
     "prototype/ash-courier",
     "prototype/vfx-demo",
+    "prototype/wuthering-terminal",
 ]
 
 [workspace.package]

@@ -6,6 +6,7 @@
 //! worrying about dangling references — a stale handle simply fails to resolve.
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Entity {
     pub(crate) index: u32,
     pub(crate) generation: u32,

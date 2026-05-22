@@ -75,11 +75,14 @@ pub fn render(grid: &verryte_terminal::Grid) {
             if let Some(cell) = grid.get(x, y) {
                 let fg = to_crossterm_color(cell.fg);
                 let bg = to_crossterm_color(cell.bg);
+                let attrs = cell.attrs.to_ansi();
                 print!(
-                    "{}{}{}",
+                    "{}{}{}{}{}",
+                    attrs,
                     crossterm::style::SetForegroundColor(fg),
                     crossterm::style::SetBackgroundColor(bg),
-                    cell.glyph
+                    cell.glyph,
+                    if attrs.is_empty() { "" } else { "\x1b[0m" },
                 );
             }
         }
@@ -115,11 +118,14 @@ pub fn render_diff(prev: &verryte_terminal::Grid, next: &verryte_terminal::Grid)
             let _ = execute!(stdout, MoveTo(change.x, change.y));
             let fg = to_crossterm_color(cell.fg);
             let bg = to_crossterm_color(cell.bg);
+            let attrs = cell.attrs.to_ansi();
             print!(
-                "{}{}{}",
+                "{}{}{}{}{}",
+                attrs,
                 crossterm::style::SetForegroundColor(fg),
                 crossterm::style::SetBackgroundColor(bg),
-                cell.glyph
+                cell.glyph,
+                if attrs.is_empty() { "" } else { "\x1b[0m" },
             );
         }
     }

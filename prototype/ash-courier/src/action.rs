@@ -1,7 +1,7 @@
 use verryte_input::{Bindings, CommandBindings, Key, MouseButton};
 use verryte_map::{Direction, Point};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Action {
     MoveNorth,
     MoveSouth,

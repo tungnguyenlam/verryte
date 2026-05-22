@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "Map and spatial primitives for terminal-native Verryte games."
 
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]
+
 [dev-dependencies]
 verryte-core = { path = "../verryte-core" }
 

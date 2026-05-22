@@ -23,17 +23,19 @@ those pieces as the first proving game.
   bulk entity creation with shared components, `World::query_mut` for mutable
   single-component queries, `Entity::is_invalid` for sentinel checks,
   `Entity` with `Display` (`index#generation`), `Schedule::clear`,
-  `Schedule::remove_by_name`, and `Schedule::run_system_by_name` for runtime
+  `Schedule::remove_by_name`, `Schedule::insert_at`, and `Schedule::replace_by_name` for runtime
   schedule management and selective execution, `Schedule::add_conditional` for
   systems gated by a `RunCondition` predicate, `Schedule::add_stage` /
   `Schedule::run_stage` / `Schedule::run_stage_with_hook` for named execution
-  phases with optional per-system observability hooks, `Events::peek` /
+  phases with optional per-system observability hooks, `Schedule::run_profiling`
+  for zero-effort diagnostics (auto-inserts `Diagnostics` resource), `Events::peek` /
   `Events::last` for non-consuming event inspection, bounded
   `MessageLog::with_max`, a `Tag` marker component for entity grouping and
   filtering, `Rng` (seeded xorshift64 RNG) for reproducible randomness in
   tests, replays, and procedural generation (including `weighted_pick` for
   weighted random selection), and `GameClock` for tracking elapsed ticks,
   pause state, and real-time duration.
+  Optional `serde` feature enables `Serialize`/`Deserialize` on `Entity`.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse/scroll
   bindings, script command bindings, sourced queued actions, replayable
   `ActionTrace`s, router-level script injection, pending queue snapshots and
@@ -53,6 +55,9 @@ those pieces as the first proving game.
   editing (A/E/B/F/U/W/K), and
   `ActionSource` with `Display`/`FromStr` for serialization and debugging.
   `Key`, `MouseButton`, and `ScrollDirection` have `Display` for logging.
+  Optional `serde` feature enables `Serialize`/`Deserialize` on `Key`,
+  `MouseButton`, `ScrollDirection`, `MouseTrigger`, `InputEvent`,
+  `ActionSource`, and `QueuedAction<A>`.
 - `crates/verryte-map` - reusable grid/spatial primitives: `Point`
   (with `Display`, `From<(i16,i16)>`), `Direction` (with `Display`,
   `From<Direction> for Direction8`), `Direction8` (with `Display`,
@@ -105,9 +110,16 @@ those pieces as the first proving game.
   `is_reverse`, `is_blink`, `is_empty`). `Color` has `Display` (`#RRGGBB`),
   `From<(u8,u8,u8)>`. `Rect` has `Display` and `From<(u16,u16,u16,u16)>`. `Grid::fill_background`
   sets the background color across all cells without changing glyphs.
+  `image_to_grid` converts PNG images to half-block terminal grids, and
+  `image_to_grid_with_chroma_key` adds transparency support for sprite loading.
+  The `vfx` module provides a reusable visual effects system: particles
+  (fire, ice, lightning, slash, heal, burst), screen shake, flash overlays,
+  floating damage text, and AoE ring indicators — all rendered directly into
+  a `Grid` with emitter presets (`emit_fire`, `emit_ice`, `emit_lightning`, etc.).
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
   input polling with full modifier key passthrough (Ctrl, Alt, Shift produce
-  `Key::Modified` events), Grid rendering with ANSI colors, incremental
+  `Key::Modified` events), Grid rendering with ANSI colors and cell attributes
+  (bold, dim, italic, underline, blink, reverse), incremental
   diff-based rendering (`render_diff`) with automatic full-render fallback
   on terminal resize, and
   `terminal_size()` for querying the current terminal dimensions.

@@ -25,6 +25,7 @@
 /// - Seeded dungeon generation
 /// - Any game system that needs randomness with a known seed
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Rng {
     state: u64,
 }

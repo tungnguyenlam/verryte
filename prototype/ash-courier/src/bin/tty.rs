@@ -56,11 +56,11 @@ fn clamp_terminal((term_w, term_h): (u16, u16)) -> (u16, u16) {
     (term_w.max(40), term_h.max(16))
 }
 
-fn viewport_dimensions(width: u16, height: u16, zoom: i16) -> (u16, u16) {
+fn viewport_dimensions(width: u16, height: u16, zoom: f32) -> (u16, u16) {
     let base_w = (width / 2).saturating_sub(2);
     let base_h = height.saturating_sub(2);
-    let vp_w = ((base_w as i16) + zoom * 2).max(10) as u16;
-    let vp_h = ((base_h as i16) + zoom).max(5) as u16;
+    let vp_w = ((base_w as f32) / zoom).max(10.0) as u16;
+    let vp_h = ((base_h as f32) / zoom).max(5.0) as u16;
     (vp_w, vp_h)
 }
 
@@ -72,7 +72,7 @@ struct InspectLayout {
 impl InspectLayout {
     fn new(game: &Game, term_size: (u16, u16)) -> Self {
         let (term_w, term_h) = clamp_terminal(term_size);
-        let zoom = game.state().camera_zoom;
+        let zoom = game.camera.zoom;
         let (vp_w, vp_h) = viewport_dimensions(term_w, term_h, zoom);
         let map = game.map();
         let inner_w = vp_w.min(map.width);
@@ -118,7 +118,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
 
     // Derive layout from terminal size.
     // Viewport: left side, roughly half width, most of height.
-    let (vp_w, vp_h) = viewport_dimensions(w, h, game.state().camera_zoom);
+    let (vp_w, vp_h) = viewport_dimensions(w, h, game.camera.zoom);
     let vp_rect = Rect::new(0, 0, vp_w.saturating_add(2), vp_h.saturating_add(2));
     root.draw_rounded_panel(
         vp_rect,
@@ -208,9 +208,9 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
         );
 
         let pkg_color = if state.has_package {
-            palette.item
+            palette.accent
         } else {
-            palette.ui_dim
+            palette.ui_muted
         };
         write_line(
             &mut row_offset,
@@ -275,9 +275,9 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
 
         let (outcome_str, outcome_color) = match state.outcome {
             Outcome::Playing => ("Playing", palette.ui_title),
-            Outcome::Won => ("WON! Press Q to exit.", palette.goal),
-            Outcome::Lost => ("LOST! Press Q to exit.", palette.hazard),
-            Outcome::Quit => ("Quit", palette.ui_dim),
+            Outcome::Won => ("WON! Press Q to exit.", palette.success),
+            Outcome::Lost => ("LOST! Press Q to exit.", palette.danger),
+            Outcome::Quit => ("Quit", palette.ui_muted),
         };
         write_line(
             &mut row_offset,
@@ -293,7 +293,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
             right_x + 2,
             hint_y,
             "Arrows/WASD: Move | SPACE: Wait | G: Pick | D: Drop | 1-5: ScanR",
-            palette.ui_dim,
+            palette.ui_muted,
             palette.background,
         );
         if hint_y + 1 < h {
@@ -301,7 +301,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
                 right_x + 2,
                 hint_y + 1,
                 "X: Scan | R: Safety | P/O: Path steps | Mouse L: Inspect | Q: Quit",
-                palette.ui_dim,
+                palette.ui_muted,
                 palette.background,
             );
         }
@@ -310,7 +310,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
                 right_x + 2,
                 hint_y + 2,
                 "[/]: Zoom camera | TAB: Toggle Log",
-                palette.ui_dim,
+                palette.ui_muted,
                 palette.background,
             );
         }
@@ -320,7 +320,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
             right_x + 2,
             hint_y,
             "Arrows/WASD: Move | SPACE: Wait | G: Pick | D: Drop | 1-5: ScanR",
-            palette.ui_dim,
+            palette.ui_muted,
             palette.background,
         );
         if hint_y + 1 < h {
@@ -328,7 +328,7 @@ fn render_game(game: &Game, (term_w, term_h): (u16, u16)) -> Grid {
                 right_x + 2,
                 hint_y + 1,
                 "X: Scan | [/]: Zoom | TAB: Log | Mouse L: Inspect | Q: Quit",
-                palette.ui_dim,
+                palette.ui_muted,
                 palette.background,
             );
         }

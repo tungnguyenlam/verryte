@@ -4,6 +4,7 @@
 /// the number of retained messages; when the cap is reached the oldest entries
 /// are dropped so that memory stays predictable for long-running sessions.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MessageLog {
     messages: Vec<String>,
     max: Option<usize>,

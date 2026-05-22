@@ -1,13 +1,13 @@
 use verryte_map::{Point, TileGrid};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Tile {
     Floor,
     Wall,
     Goal,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Map {
     pub width: u16,
     pub height: u16,

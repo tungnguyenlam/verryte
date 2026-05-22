@@ -34,11 +34,15 @@ use std::time::{Duration, Instant};
 /// - Measuring how long a game session has been running
 /// - Pausing game logic during menus, cutscenes, or dialogs
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GameClock {
     elapsed_ticks: u64,
     paused: bool,
+    #[cfg_attr(feature = "serde", serde(skip, default = "Instant::now"))]
     started_at: Instant,
+    #[cfg_attr(feature = "serde", serde(skip))]
     paused_at: Option<Instant>,
+    #[cfg_attr(feature = "serde", serde(default))]
     total_paused_duration: Duration,
 }
 

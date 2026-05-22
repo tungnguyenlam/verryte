@@ -124,6 +124,19 @@ impl Schedule {
         }
     }
 
+    /// Run all systems in order, ensuring a `Diagnostics` resource exists.
+    ///
+    /// This is a convenience method that inserts a default `Diagnostics`
+    /// resource if one is not already present, then runs all systems.
+    /// Metrics are automatically recorded and can be inspected afterward
+    /// via `world.resource::<Diagnostics>()`.
+    pub fn run_profiling(&self, world: &mut World) {
+        if !world.has_resource::<Diagnostics>() {
+            world.insert_resource(Diagnostics::new());
+        }
+        self.run(world);
+    }
+
     /// Run all systems in order, calling `on_system` with each system's name
     /// before it executes. Systems whose condition is not met are skipped
     /// without calling the hook.
@@ -209,7 +222,12 @@ impl Schedule {
                         return false;
                     }
                 }
+                let start = std::time::Instant::now();
                 (system.func)(world);
+                let elapsed = start.elapsed();
+                if let Some(diags) = world.resource_mut::<Diagnostics>() {
+                    diags.record(system.name, elapsed);
+                }
                 return true;
             }
         }
@@ -248,7 +266,12 @@ impl Schedule {
                     continue;
                 }
             }
+            let sys_start = std::time::Instant::now();
             (system.func)(world);
+            let elapsed = sys_start.elapsed();
+            if let Some(diags) = world.resource_mut::<Diagnostics>() {
+                diags.record(system.name, elapsed);
+            }
         }
         true
     }
@@ -285,7 +308,12 @@ impl Schedule {
                 }
             }
             on_system(system.name);
+            let sys_start = std::time::Instant::now();
             (system.func)(world);
+            let elapsed = sys_start.elapsed();
+            if let Some(diags) = world.resource_mut::<Diagnostics>() {
+                diags.record(system.name, elapsed);
+            }
         }
         true
     }
@@ -727,5 +755,58 @@ mod tests {
         let metrics = diags.systems.get("bump").unwrap();
         assert_eq!(metrics.call_count, 1);
         assert!(metrics.total_duration >= std::time::Duration::from_nanos(0));
+    }
+
+    #[test]
+    fn run_profiling_inserts_diagnostics_automatically() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+
+        let mut schedule = Schedule::new();
+        schedule.add_named("bump", bump);
+
+        // No Diagnostics resource inserted — run_profiling should add one.
+        assert!(!world.has_resource::<Diagnostics>());
+        schedule.run_profiling(&mut world);
+
+        let diags = world.resource::<Diagnostics>().unwrap();
+        let metrics = diags.systems.get("bump").unwrap();
+        assert_eq!(metrics.call_count, 1);
+    }
+
+    #[test]
+    fn run_stage_records_diagnostics() {
+        let mut world = World::new();
+        world.insert_resource(Diagnostics::new());
+        world.insert_resource(Counter(0));
+
+        let mut schedule = Schedule::new();
+        schedule.add_stage("logic");
+        schedule.add_named("bump", bump);
+        schedule.add_named("double", double);
+
+        schedule.run_stage("logic", &mut world);
+
+        let diags = world.resource::<Diagnostics>().unwrap();
+        assert_eq!(diags.systems.get("bump").unwrap().call_count, 1);
+        assert_eq!(diags.systems.get("double").unwrap().call_count, 1);
+    }
+
+    #[test]
+    fn run_system_by_name_records_diagnostics() {
+        let mut world = World::new();
+        world.insert_resource(Diagnostics::new());
+        world.insert_resource(Counter(0));
+
+        let mut schedule = Schedule::new();
+        schedule.add_named("bump", bump);
+        schedule.add_named("double", double);
+
+        schedule.run_system_by_name("bump", &mut world);
+
+        let diags = world.resource::<Diagnostics>().unwrap();
+        assert_eq!(diags.systems.get("bump").unwrap().call_count, 1);
+        // double was not run
+        assert!(diags.systems.get("double").is_none());
     }
 }

@@ -9,8 +9,11 @@
 //! lets the same game be rendered, snapshot-tested, or fed to an agent
 //! without rewiring the engine.
 
+pub mod vfx;
+
 /// 24-bit RGB color.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Color(pub u8, pub u8, pub u8);
 
 impl Color {
@@ -46,6 +49,7 @@ impl From<Color> for (u8, u8, u8) {
 
 /// Bitflags for terminal cell text attributes.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CellAttrs {
     pub bold: bool,
     pub underline: bool,
@@ -154,6 +158,7 @@ impl CellAttrs {
 
 /// One terminal cell.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Cell {
     pub glyph: char,
     pub fg: Color,
@@ -232,17 +237,18 @@ pub struct CellChange {
 /// }
 /// ```
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Layer {
-    pub name: &'static str,
+    pub name: String,
     pub order: u8,
     pub grid: Grid,
     pub visible: bool,
 }
 
 impl Layer {
-    pub fn new(name: &'static str, order: u8, grid: Grid) -> Self {
+    pub fn new<S: Into<String>>(name: S, order: u8, grid: Grid) -> Self {
         Self {
-            name,
+            name: name.into(),
             order,
             grid,
             visible: true,
@@ -264,6 +270,7 @@ impl Layer {
 
 /// Integer rectangle in terminal-cell coordinates.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Rect {
     pub x: u16,
     pub y: u16,
@@ -372,6 +379,7 @@ impl From<(u16, u16, u16, u16)> for Rect {
 
 /// Horizontal text alignment within a bounded width.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Alignment {
     #[default]
     Left,
@@ -389,8 +397,82 @@ impl std::fmt::Display for Alignment {
     }
 }
 
+/// Viewport camera that manages position and zoom levels.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Camera {
+    pub center_x: f32,
+    pub center_y: f32,
+    pub zoom: f32,
+    pub smooth: bool,
+    pub target_x: f32,
+    pub target_y: f32,
+    pub lerp_factor: f32,
+}
+
+impl Camera {
+    pub fn new(x: f32, y: f32) -> Self {
+        Self {
+            center_x: x,
+            center_y: y,
+            zoom: 1.0,
+            smooth: false,
+            target_x: x,
+            target_y: y,
+            lerp_factor: 0.1,
+        }
+    }
+
+    pub fn with_smooth(mut self, factor: f32) -> Self {
+        self.smooth = true;
+        self.lerp_factor = factor;
+        self
+    }
+
+    pub fn look_at(&mut self, x: f32, y: f32) {
+        if self.smooth {
+            self.target_x = x;
+            self.target_y = y;
+        } else {
+            self.center_x = x;
+            self.center_y = y;
+            self.target_x = x;
+            self.target_y = y;
+        }
+    }
+
+    pub fn tick(&mut self) {
+        if self.smooth {
+            self.center_x += (self.target_x - self.center_x) * self.lerp_factor;
+            self.center_y += (self.target_y - self.center_y) * self.lerp_factor;
+        }
+    }
+
+    /// Calculate the top-left corner of the viewport for a given window size.
+    pub fn top_left(&self, width: u16, height: u16) -> (i16, i16) {
+        let zoomed_w = (width as f32 / self.zoom).round() as u16;
+        let zoomed_h = (height as f32 / self.zoom).round() as u16;
+        let x = (self.center_x - (zoomed_w as f32 / 2.0)).round() as i16;
+        let y = (self.center_y - (zoomed_h as f32 / 2.0)).round() as i16;
+        (x, y)
+    }
+
+    /// Return the [`Rect`] representing the current viewport in grid coordinates.
+    pub fn viewport_rect(&self, width: u16, height: u16) -> Rect {
+        let (x, y) = self.top_left(width, height);
+        let zoomed_w = (width as f32 / self.zoom).round() as u16;
+        let zoomed_h = (height as f32 / self.zoom).round() as u16;
+        Rect {
+            x: x.max(0) as u16,
+            y: y.max(0) as u16,
+            width: zoomed_w,
+            height: zoomed_h,
+        }
+    }
+}
 /// A fixed-size rectangular cell buffer.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Grid {
     width: u16,
     height: u16,
@@ -548,6 +630,11 @@ impl Grid {
     pub fn get(&self, x: u16, y: u16) -> Option<&Cell> {
         let i = self.index(x, y)?;
         Some(&self.cells[i])
+    }
+
+    pub fn get_mut(&mut self, x: u16, y: u16) -> Option<&mut Cell> {
+        let i = self.index(x, y)?;
+        Some(&mut self.cells[i])
     }
 
     /// Copy a rectangular viewport out of this grid.
@@ -1312,6 +1399,105 @@ impl Grid {
         out
     }
 
+    /// Convert the grid contents into a standalone vector SVG string.
+    ///
+    /// This is useful for high-fidelity vector snapshots, web embedding, or
+    /// rendering terminal screens inside web browsers with absolute scalability.
+    pub fn to_svg_string(&self) -> String {
+        let cell_w = 9.0;
+        let cell_h = 18.0;
+        let svg_w = self.width as f32 * cell_w;
+        let svg_h = self.height as f32 * cell_h;
+
+        let mut out = String::with_capacity(self.cells.len() * 80 + 300);
+        // SVG header
+        out.push_str(&format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{:.1}" height="{:.1}" viewBox="0 0 {:.1} {:.1}">"#,
+            svg_w, svg_h, svg_w, svg_h
+        ));
+        // Add styling for monospace text rendering
+        out.push_str(r#"<style>text { font-family: monospace; font-size: 14px; text-anchor: middle; dominant-baseline: middle; }</style>"#);
+        // Base black background for the entire grid
+        out.push_str(&format!(
+            r#"<rect width="{:.1}" height="{:.1}" fill="black"/>"#,
+            svg_w, svg_h
+        ));
+
+        // Draw background rects for cells that aren't BLACK background
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let cell = &self.cells[(y as usize) * (self.width as usize) + (x as usize)];
+                if cell.bg != Color::BLACK {
+                    let rx = x as f32 * cell_w;
+                    let ry = y as f32 * cell_h;
+                    out.push_str(&format!(
+                        r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" fill="rgb({},{},{})"/>"#,
+                        rx, ry, cell_w, cell_h, cell.bg.0, cell.bg.1, cell.bg.2
+                    ));
+                }
+            }
+        }
+
+        // Draw text characters
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let cell = &self.cells[(y as usize) * (self.width as usize) + (x as usize)];
+                if cell.glyph != ' ' {
+                    let cx = x as f32 * cell_w + cell_w / 2.0;
+                    let cy = y as f32 * cell_h + cell_h / 2.0;
+                    let escaped = match cell.glyph {
+                        '&' => "&amp;",
+                        '<' => "&lt;",
+                        '>' => "&gt;",
+                        '"' => "&quot;",
+                        '\'' => "&apos;",
+                        _ => {
+                            if cell.glyph.is_control() {
+                                " "
+                            } else {
+                                ""
+                            }
+                        }
+                    };
+
+                    let mut style = String::new();
+                    if cell.attrs.bold {
+                        style.push_str("font-weight:bold;");
+                    } else if cell.attrs.dim {
+                        style.push_str("opacity:0.6;");
+                    }
+                    if cell.attrs.italic {
+                        style.push_str("font-style:italic;");
+                    }
+                    if cell.attrs.underline {
+                        style.push_str("text-decoration:underline;");
+                    }
+
+                    let style_attr = if style.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(" style=\"{}\"", style)
+                    };
+
+                    if escaped.is_empty() {
+                        out.push_str(&format!(
+                            r#"<text x="{:.1}" y="{:.1}" fill="rgb({},{},{})"{}>{}</text>"#,
+                            cx, cy, cell.fg.0, cell.fg.1, cell.fg.2, style_attr, cell.glyph
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            r#"<text x="{:.1}" y="{:.1}" fill="rgb({},{},{})"{}>{}</text>"#,
+                            cx, cy, cell.fg.0, cell.fg.1, cell.fg.2, style_attr, escaped
+                        ));
+                    }
+                }
+            }
+        }
+
+        out.push_str("</svg>");
+        out
+    }
+
     /// Draw a circle outline using the midpoint circle algorithm.
     ///
     /// The circle is centered at `(cx, cy)` with the given `radius`. Cells are
@@ -1620,134 +1806,148 @@ pub fn write_wrapped_text(
 /// let player_cell = Cell::new('@').with_fg(palette.player);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ColorPalette {
-    pub name: &'static str,
+    pub name: String,
     pub background: Color,
     pub foreground: Color,
-    pub player: Color,
-    pub wall: Color,
-    pub floor: Color,
-    pub hazard: Color,
-    pub item: Color,
-    pub goal: Color,
+    pub primary: Color,
+    pub secondary: Color,
+    pub accent: Color,
+    pub danger: Color,
+    pub success: Color,
+    pub info: Color,
+    pub warning: Color,
     pub ui_border: Color,
     pub ui_title: Color,
     pub ui_text: Color,
     pub ui_highlight: Color,
-    pub ui_dim: Color,
+    pub ui_muted: Color,
 }
 
 impl ColorPalette {
     /// A dark dungeon theme with muted earth tones.
     pub fn dark_dungeon() -> Self {
         Self {
-            name: "dark_dungeon",
+            name: "dark_dungeon".to_string(),
             background: Color(15, 15, 20),
             foreground: Color(200, 200, 200),
-            player: Color(100, 220, 100),
-            wall: Color(80, 80, 90),
-            floor: Color(50, 50, 55),
-            hazard: Color(220, 80, 80),
-            item: Color(220, 200, 80),
-            goal: Color(80, 180, 220),
+            primary: Color(80, 80, 90),   // walls
+            secondary: Color(50, 50, 55), // floor
+            accent: Color(220, 200, 80),  // items
+            danger: Color(220, 80, 80),   // hazards
+            success: Color(80, 180, 220), // goal
+            info: Color(100, 220, 100),   // player
+            warning: Color(220, 150, 50),
             ui_border: Color(100, 100, 110),
             ui_title: Color(220, 200, 80),
             ui_text: Color(200, 200, 200),
             ui_highlight: Color(100, 220, 100),
-            ui_dim: Color(100, 100, 100),
+            ui_muted: Color(100, 100, 100),
         }
     }
 
     /// A light theme suitable for bright terminals.
     pub fn light_classic() -> Self {
         Self {
-            name: "light_classic",
+            name: "light_classic".to_string(),
             background: Color(240, 240, 240),
             foreground: Color(30, 30, 30),
-            player: Color(0, 120, 0),
-            wall: Color(120, 120, 120),
-            floor: Color(220, 220, 220),
-            hazard: Color(180, 30, 30),
-            item: Color(180, 140, 0),
-            goal: Color(0, 100, 180),
+            primary: Color(120, 120, 120),
+            secondary: Color(220, 220, 220),
+            accent: Color(180, 140, 0),
+            danger: Color(180, 30, 30),
+            success: Color(0, 100, 180),
+            info: Color(0, 120, 0),
+            warning: Color(150, 80, 0),
             ui_border: Color(150, 150, 150),
-            ui_title: Color(180, 140, 0),
+            ui_title: Color(0, 80, 150),
             ui_text: Color(30, 30, 30),
-            ui_highlight: Color(0, 120, 0),
-            ui_dim: Color(150, 150, 150),
+            ui_highlight: Color(200, 230, 200),
+            ui_muted: Color(180, 180, 180),
         }
     }
 
     /// A high-contrast amber-on-black theme reminiscent of vintage terminals.
     pub fn amber_terminal() -> Self {
         Self {
-            name: "amber_terminal",
+            name: "amber_terminal".to_string(),
             background: Color(10, 8, 5),
             foreground: Color(255, 180, 50),
-            player: Color(255, 220, 100),
-            wall: Color(120, 90, 30),
-            floor: Color(40, 30, 15),
-            hazard: Color(255, 80, 50),
-            item: Color(255, 220, 100),
-            goal: Color(200, 255, 150),
+            primary: Color(120, 90, 30),
+            secondary: Color(40, 30, 15),
+            accent: Color(255, 220, 100),
+            danger: Color(255, 80, 50),
+            success: Color(200, 255, 150),
+            info: Color(255, 220, 100),
+            warning: Color(255, 150, 50),
             ui_border: Color(180, 140, 40),
             ui_title: Color(255, 220, 100),
             ui_text: Color(255, 180, 50),
             ui_highlight: Color(255, 255, 150),
-            ui_dim: Color(100, 80, 30),
+            ui_muted: Color(100, 80, 30),
         }
     }
 
     /// A cyberpunk neon theme with vivid colors on dark backgrounds.
     pub fn cyberpunk() -> Self {
         Self {
-            name: "cyberpunk",
+            name: "cyberpunk".to_string(),
             background: Color(10, 5, 20),
             foreground: Color(200, 200, 255),
-            player: Color(0, 255, 200),
-            wall: Color(60, 30, 80),
-            floor: Color(20, 15, 35),
-            hazard: Color(255, 50, 100),
-            item: Color(255, 255, 0),
-            goal: Color(100, 100, 255),
+            primary: Color(60, 30, 80),
+            secondary: Color(20, 15, 35),
+            accent: Color(255, 255, 0),
+            danger: Color(255, 50, 100),
+            success: Color(100, 100, 255),
+            info: Color(0, 255, 200),
+            warning: Color(255, 150, 50),
             ui_border: Color(80, 50, 120),
             ui_title: Color(0, 255, 200),
             ui_text: Color(200, 200, 255),
             ui_highlight: Color(0, 255, 200),
-            ui_dim: Color(80, 60, 100),
+            ui_muted: Color(80, 60, 100),
         }
     }
 
-    /// Create a cell with the floor color as background.
-    pub fn floor_cell(&self, glyph: char) -> Cell {
+    /// Create a cell with the secondary color as background.
+    pub fn secondary_cell(&self, glyph: char) -> Cell {
         Cell::new(glyph)
             .with_fg(self.foreground)
-            .with_bg(self.floor)
+            .with_bg(self.secondary)
     }
 
-    /// Create a cell with the wall color.
-    pub fn wall_cell(&self, glyph: char) -> Cell {
-        Cell::new(glyph).with_fg(self.wall).with_bg(self.background)
+    /// Create a cell with the primary color.
+    pub fn primary_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph)
+            .with_fg(self.primary)
+            .with_bg(self.background)
     }
 
-    /// Create a cell for the player character.
-    pub fn player_cell(&self, glyph: char) -> Cell {
-        Cell::new(glyph).with_fg(self.player).with_bg(self.floor)
+    /// Create a cell for the info character (e.g. player).
+    pub fn info_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph).with_fg(self.info).with_bg(self.secondary)
     }
 
-    /// Create a cell for a hazard tile.
-    pub fn hazard_cell(&self, glyph: char) -> Cell {
-        Cell::new(glyph).with_fg(self.hazard).with_bg(self.floor)
+    /// Create a cell for a danger tile (e.g. hazard).
+    pub fn danger_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph)
+            .with_fg(self.danger)
+            .with_bg(self.secondary)
     }
 
-    /// Create a cell for an item tile.
-    pub fn item_cell(&self, glyph: char) -> Cell {
-        Cell::new(glyph).with_fg(self.item).with_bg(self.floor)
+    /// Create a cell for an accent tile (e.g. item).
+    pub fn accent_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph)
+            .with_fg(self.accent)
+            .with_bg(self.secondary)
     }
 
-    /// Create a cell for the goal tile.
-    pub fn goal_cell(&self, glyph: char) -> Cell {
-        Cell::new(glyph).with_fg(self.goal).with_bg(self.floor)
+    /// Create a cell for the success tile (e.g. goal).
+    pub fn success_cell(&self, glyph: char) -> Cell {
+        Cell::new(glyph)
+            .with_fg(self.success)
+            .with_bg(self.secondary)
     }
 }
 
@@ -1777,6 +1977,7 @@ impl Default for ColorPalette {
 /// layers.composite(&mut frame);
 /// ```
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Layers {
     layers: Vec<Layer>,
 }
@@ -1843,12 +2044,68 @@ impl Default for Layers {
     }
 }
 
+/// Visual fidelity tiers for adaptive resolution rendering.
+///
+/// Tier selection is based on terminal dimensions (columns and rows).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ResolutionTier {
+    #[default]
+    TINY, // 6x8
+    SMALL,  // 8x12
+    MEDIUM, // 12x16
+    LARGE,  // 16x20
+    XLARGE, // 20x24
+    ULTRA,  // 28x32
+}
+
+impl ResolutionTier {
+    pub const ALL: [ResolutionTier; 6] = [
+        ResolutionTier::TINY,
+        ResolutionTier::SMALL,
+        ResolutionTier::MEDIUM,
+        ResolutionTier::LARGE,
+        ResolutionTier::XLARGE,
+        ResolutionTier::ULTRA,
+    ];
+
+    /// Select the appropriate tier for a given terminal width and height.
+    pub fn from_size(width: u16, height: u16) -> Self {
+        if width >= 160 && height >= 48 {
+            ResolutionTier::ULTRA
+        } else if width >= 140 && height >= 42 {
+            ResolutionTier::XLARGE
+        } else if width >= 120 && height >= 36 {
+            ResolutionTier::LARGE
+        } else if width >= 100 && height >= 30 {
+            ResolutionTier::MEDIUM
+        } else if width >= 80 && height >= 24 {
+            ResolutionTier::SMALL
+        } else {
+            ResolutionTier::TINY
+        }
+    }
+
+    /// Returns the target sprite width and height for this tier.
+    pub fn sprite_size(self) -> (u16, u16) {
+        match self {
+            ResolutionTier::TINY => (6, 4), // 6x8 pixels packed into 6x4 half-blocks
+            ResolutionTier::SMALL => (8, 6), // 8x12 pixels -> 8x6 cells
+            ResolutionTier::MEDIUM => (12, 8), // 12x16 pixels -> 12x8 cells
+            ResolutionTier::LARGE => (16, 10), // 16x20 pixels -> 16x10 cells
+            ResolutionTier::XLARGE => (20, 12), // 20x24 pixels -> 20x12 cells
+            ResolutionTier::ULTRA => (28, 16), // 28x32 pixels -> 28x16 cells
+        }
+    }
+}
+
 /// A single animation frame: a [`Grid`] with an associated display duration.
 ///
 /// Frames are used in [`Sprite`] and [`SpriteSheet`] to build animated
 /// terminal graphics. The duration is in arbitrary ticks — the game loop
 /// decides how many ticks each frame should display.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Frame {
     pub grid: Grid,
     pub duration: u32,
@@ -1866,48 +2123,78 @@ impl Frame {
 /// games can advance them each tick and render the current frame. Sprites
 /// loop by default and can be paused or reset.
 ///
-/// # Example
-///
-/// ```ignore
-/// let mut sprite = Sprite::new("walk", vec![
-///     Frame::new(grid_frame_1, 2),
-///     Frame::new(grid_frame_2, 2),
-///     Frame::new(grid_frame_3, 2),
-/// ]);
-///
-/// // Each game tick:
-/// sprite.tick();
-/// let current_grid = sprite.current_frame();
-/// ```
+/// Verryte supports adaptive resolution: a sprite can hold different frame
+/// sequences for different [`ResolutionTier`]s.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Sprite {
     pub name: String,
-    frames: Vec<Frame>,
-    current: usize,
+    tiers: std::collections::BTreeMap<ResolutionTier, Vec<Frame>>,
+    current_tier: ResolutionTier,
+    current_frame: usize,
     elapsed: u32,
     paused: bool,
 }
 
 impl Sprite {
     pub fn new<S: Into<String>>(name: S, frames: Vec<Frame>) -> Self {
+        let mut tiers = std::collections::BTreeMap::new();
+        tiers.insert(ResolutionTier::default(), frames);
         Self {
             name: name.into(),
-            frames,
-            current: 0,
+            tiers,
+            current_tier: ResolutionTier::default(),
+            current_frame: 0,
             elapsed: 0,
             paused: false,
         }
     }
 
+    /// Add a frame sequence for a specific resolution tier.
+    pub fn with_tier(mut self, tier: ResolutionTier, frames: Vec<Frame>) -> Self {
+        self.tiers.insert(tier, frames);
+        self
+    }
+
+    /// Set the current resolution tier. If the tier is not available,
+    /// it falls back to the nearest available lower tier.
+    pub fn set_tier(&mut self, tier: ResolutionTier) {
+        if self.tiers.contains_key(&tier) {
+            self.current_tier = tier;
+        } else {
+            // Fallback to highest available tier that is <= requested tier.
+            if let Some((&t, _)) = self.tiers.range(..=tier).next_back() {
+                self.current_tier = t;
+            } else if let Some((&t, _)) = self.tiers.range(tier..).next() {
+                // Or highest if none are lower.
+                self.current_tier = t;
+            }
+        }
+        // Reset current frame if out of bounds for the new tier.
+        if let Some(frames) = self.tiers.get(&self.current_tier) {
+            if self.current_frame >= frames.len() {
+                self.current_frame = 0;
+                self.elapsed = 0;
+            }
+        }
+    }
+
     /// Advance the sprite by one tick. Returns `true` if the frame changed.
     pub fn tick(&mut self) -> bool {
-        if self.paused || self.frames.is_empty() {
+        if self.paused {
             return false;
         }
+        let Some(frames) = self.tiers.get(&self.current_tier) else {
+            return false;
+        };
+        if frames.is_empty() {
+            return false;
+        }
+
         self.elapsed += 1;
-        if self.elapsed >= self.frames[self.current].duration {
+        if self.elapsed >= frames[self.current_frame].duration {
             self.elapsed = 0;
-            self.current = (self.current + 1) % self.frames.len();
+            self.current_frame = (self.current_frame + 1) % frames.len();
             true
         } else {
             false
@@ -1916,17 +2203,21 @@ impl Sprite {
 
     /// Get the current frame's grid.
     pub fn current_frame(&self) -> &Grid {
-        &self.frames[self.current].grid
+        let frames = self.tiers.get(&self.current_tier).expect("tier must exist");
+        &frames[self.current_frame].grid
     }
 
     /// Get the current frame index.
     pub fn current_index(&self) -> usize {
-        self.current
+        self.current_frame
     }
 
-    /// Get the total number of frames.
+    /// Get the total number of frames in the current tier.
     pub fn frame_count(&self) -> usize {
-        self.frames.len()
+        self.tiers
+            .get(&self.current_tier)
+            .map(|f| f.len())
+            .unwrap_or(0)
     }
 
     /// Pause or resume the sprite.
@@ -1941,15 +2232,17 @@ impl Sprite {
 
     /// Reset to the first frame.
     pub fn reset(&mut self) {
-        self.current = 0;
+        self.current_frame = 0;
         self.elapsed = 0;
     }
 
     /// Jump to a specific frame. Clamped to valid range.
     pub fn set_frame(&mut self, index: usize) {
-        if !self.frames.is_empty() {
-            self.current = index.min(self.frames.len() - 1);
-            self.elapsed = 0;
+        if let Some(frames) = self.tiers.get(&self.current_tier) {
+            if !frames.is_empty() {
+                self.current_frame = index.min(frames.len() - 1);
+                self.elapsed = 0;
+            }
         }
     }
 }
@@ -2173,16 +2466,112 @@ pub fn image_to_grid(img: &image::DynamicImage) -> Grid {
     grid
 }
 
+/// Translates a graphical image into a terminal cell grid with chroma-key transparency.
+///
+/// Pixels matching the `chroma_key` color (within `tolerance`) become transparent.
+/// When both top and bottom pixels are transparent, the cell becomes `Cell::EMPTY`.
+/// When only the top pixel is transparent, the cell uses `▄` with the bottom color as fg.
+/// When only the bottom pixel is transparent, the cell uses `▀` with the top color as fg.
+///
+/// This is useful for loading character sprites with white/transparent backgrounds.
+pub fn image_to_grid_with_chroma_key(
+    img: &image::DynamicImage,
+    chroma_key: Color,
+    tolerance: u8,
+) -> Grid {
+    use image::GenericImageView;
+    let (width, height) = img.dimensions();
+    let grid_width = width as u16;
+    let grid_height = ((height + 1) / 2) as u16;
+    let mut grid = Grid::new(grid_width, grid_height);
+
+    let is_chroma = |c: Color| -> bool {
+        let dr = (c.0 as i16 - chroma_key.0 as i16).abs() as u8;
+        let dg = (c.1 as i16 - chroma_key.1 as i16).abs() as u8;
+        let db = (c.2 as i16 - chroma_key.2 as i16).abs() as u8;
+        dr < tolerance && dg < tolerance && db < tolerance
+    };
+
+    for y in 0..grid_height {
+        for x in 0..grid_width {
+            let img_x = x as u32;
+            let img_y_top = (y * 2) as u32;
+            let img_y_bottom = (y * 2 + 1) as u32;
+
+            let top_pixel = img.get_pixel(img_x, img_y_top);
+            let top_color = Color(top_pixel[0], top_pixel[1], top_pixel[2]);
+            let top_transparent = is_chroma(top_color);
+
+            let (bottom_color, bottom_transparent) = if img_y_bottom < height {
+                let bottom_pixel = img.get_pixel(img_x, img_y_bottom);
+                let c = Color(bottom_pixel[0], bottom_pixel[1], bottom_pixel[2]);
+                (c, is_chroma(c))
+            } else {
+                (Color::BLACK, false)
+            };
+
+            let cell = if top_transparent && bottom_transparent {
+                Cell::EMPTY
+            } else if top_transparent {
+                Cell {
+                    glyph: '▄',
+                    fg: bottom_color,
+                    bg: Color::BLACK,
+                    attrs: CellAttrs::NONE,
+                }
+            } else if bottom_transparent {
+                Cell {
+                    glyph: '▀',
+                    fg: top_color,
+                    bg: Color::BLACK,
+                    attrs: CellAttrs::NONE,
+                }
+            } else {
+                Cell {
+                    glyph: '▀',
+                    fg: top_color,
+                    bg: bottom_color,
+                    attrs: CellAttrs::NONE,
+                }
+            };
+            grid.put(x, y, cell);
+        }
+    }
+
+    grid
+}
+
 /// Represents a visual asset mapping to different fidelity levels.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum VisualAsset {
     SingleCell { glyph: char, fg: Color, bg: Color },
     BlockSprite(Grid),
     Animated(Sprite),
 }
 
+impl VisualAsset {
+    /// Render the asset at a given resolution tier.
+    pub fn render(&self, tier: ResolutionTier) -> Grid {
+        match self {
+            VisualAsset::SingleCell { glyph, fg, bg } => {
+                let mut grid = Grid::new(1, 1);
+                grid.put(0, 0, Cell::new(*glyph).with_fg(*fg).with_bg(*bg));
+                grid
+            }
+            VisualAsset::BlockSprite(grid) => grid.clone(),
+            VisualAsset::Animated(sprite) => {
+                let mut s = sprite.clone();
+                s.set_tier(tier);
+                s.current_frame().clone()
+            }
+        }
+    }
+}
+
 /// A registry mapping semantic keys to visual assets.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VisualRegistry {
     assets: std::collections::HashMap<String, VisualAsset>,
 }
@@ -2264,6 +2653,54 @@ mod tests {
         assert_eq!(cell_1_1.glyph, '▀');
         assert_eq!(cell_1_1.fg, Color(0, 255, 255));
         assert_eq!(cell_1_1.bg, Color(255, 0, 255));
+    }
+
+    #[test]
+    fn test_image_to_grid_with_chroma_key() {
+        use image::{DynamicImage, Rgb, RgbImage};
+        let mut img_buf = RgbImage::new(2, 4);
+        // Column 0: red/green (no transparency)
+        img_buf.put_pixel(0, 0, Rgb([255, 0, 0]));
+        img_buf.put_pixel(0, 1, Rgb([0, 255, 0]));
+        // Column 0 bottom: blue/white (white = chroma key)
+        img_buf.put_pixel(0, 2, Rgb([0, 0, 255]));
+        img_buf.put_pixel(0, 3, Rgb([255, 255, 255]));
+
+        // Column 1: white/black (top = chroma key)
+        img_buf.put_pixel(1, 0, Rgb([255, 255, 255]));
+        img_buf.put_pixel(1, 1, Rgb([0, 0, 0]));
+        // Column 1 bottom: white/white (both = chroma key)
+        img_buf.put_pixel(1, 2, Rgb([255, 255, 255]));
+        img_buf.put_pixel(1, 3, Rgb([255, 255, 255]));
+
+        let img = DynamicImage::ImageRgb8(img_buf);
+        let white = Color(255, 255, 255);
+        let grid = image_to_grid_with_chroma_key(&img, white, 30);
+
+        assert_eq!(grid.width(), 2);
+        assert_eq!(grid.height(), 2);
+
+        // (0,0): red top, green bottom — no transparency
+        let c = grid.get(0, 0).unwrap();
+        assert_eq!(c.glyph, '▀');
+        assert_eq!(c.fg, Color(255, 0, 0));
+        assert_eq!(c.bg, Color(0, 255, 0));
+
+        // (0,1): blue top, white bottom — bottom is transparent, use ▀
+        let c = grid.get(0, 1).unwrap();
+        assert_eq!(c.glyph, '▀');
+        assert_eq!(c.fg, Color(0, 0, 255));
+        assert_eq!(c.bg, Color::BLACK);
+
+        // (1,0): white top, black bottom — top is transparent, use ▄
+        let c = grid.get(1, 0).unwrap();
+        assert_eq!(c.glyph, '▄');
+        assert_eq!(c.fg, Color(0, 0, 0));
+        assert_eq!(c.bg, Color::BLACK);
+
+        // (1,1): white/white — both transparent, Cell::EMPTY
+        let c = grid.get(1, 1).unwrap();
+        assert!(c.is_transparent());
     }
 
     #[test]
@@ -2904,6 +3341,29 @@ mod tests {
     }
 
     #[test]
+    fn to_svg_string_renders_correctly() {
+        let mut grid = Grid::new(3, 1);
+        grid.put(0, 0, Cell::new('R').with_fg(Color::RED));
+        grid.put(
+            1,
+            0,
+            Cell::new('G').with_fg(Color::GREEN).with_bg(Color::WHITE),
+        );
+        grid.put(2, 0, Cell::new('<').with_fg(Color::BLUE));
+
+        let svg = grid.to_svg_string();
+        assert!(svg.starts_with("<svg"));
+        assert!(svg.ends_with("</svg>"));
+        assert!(svg.contains("width=\"27.0\""));
+        assert!(svg.contains("height=\"18.0\""));
+        assert!(svg.contains("fill=\"black\""));
+        assert!(svg.contains("rgb(220,60,60)")); // Red fg
+        assert!(svg.contains("rgb(80,200,120)")); // Green fg
+        assert!(svg.contains("rgb(230,230,230)")); // White bg
+        assert!(svg.contains("&lt;")); // Escaped '<'
+    }
+
+    #[test]
     fn layer_composite_respects_order_and_visibility() {
         let mut bg = Grid::new(4, 2);
         bg.write_str(0, 0, "....", Color::BLACK, Color::BLACK);
@@ -2934,7 +3394,7 @@ mod tests {
         let layers = vec![
             Layer::new("bg", 0, bg),
             Layer {
-                name: "hidden",
+                name: "hidden".to_string(),
                 order: 1,
                 grid: overlay,
                 visible: false,
@@ -2992,20 +3452,20 @@ mod tests {
         let p = ColorPalette::dark_dungeon();
         assert_eq!(p.name, "dark_dungeon");
         assert_eq!(p.background, Color(15, 15, 20));
-        assert_eq!(p.player, Color(100, 220, 100));
-        assert_eq!(p.hazard, Color(220, 80, 80));
+        assert_eq!(p.info, Color(100, 220, 100));
+        assert_eq!(p.danger, Color(220, 80, 80));
     }
 
     #[test]
     fn color_palette_creates_cells_with_correct_colors() {
         let p = ColorPalette::dark_dungeon();
-        let player = p.player_cell('@');
+        let player = p.info_cell('@');
         assert_eq!(player.glyph, '@');
-        assert_eq!(player.fg, p.player);
-        assert_eq!(player.bg, p.floor);
+        assert_eq!(player.fg, p.info);
+        assert_eq!(player.bg, p.secondary);
 
-        let wall = p.wall_cell('#');
-        assert_eq!(wall.fg, p.wall);
+        let wall = p.primary_cell('#');
+        assert_eq!(wall.fg, p.primary);
         assert_eq!(wall.bg, p.background);
     }
 
@@ -3071,7 +3531,7 @@ mod tests {
         layers.add(Layer::new("map", 0, Grid::new(1, 1)));
         layers.add(Layer::new("entities", 10, Grid::new(1, 1)));
 
-        let names: Vec<&str> = layers.iter().map(|l| l.name).collect();
+        let names: Vec<&str> = layers.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, vec!["map", "entities", "ui"]);
     }
 

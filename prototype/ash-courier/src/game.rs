@@ -1,7 +1,7 @@
 use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, Schedule, World};
 use verryte_input::{ActionSource, Bindings, InputEvent, InputRouter};
-use verryte_map::{Direction, Point, TileGrid};
-use verryte_terminal::{Cell, ColorPalette, Grid, Rect};
+use verryte_map::{Direction, Point, TileGrid, Visibility, VisibilityMap};
+use verryte_terminal::{Cell, Color, ColorPalette, Grid, Rect};
 
 use crate::action::{default_bindings, Action};
 use crate::components::{
@@ -12,10 +12,32 @@ use crate::map::{Map, Tile};
 use crate::snapshot::{ActionResult, Snapshot, StepReport};
 use crate::systems::resolve_tile_system;
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SaveState {
+    clock_ticks: u64,
+    rng_state: u64,
+    game_state: GameState,
+    messages: Vec<String>,
+    map: Map,
+    fov: VisibilityMap,
+    camera: verryte_terminal::Camera,
+    entities: Vec<EntityData>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct EntityData {
+    kind: String,
+    pos: Position,
+    battery: Option<Battery>,
+    charges: Option<u32>,
+}
+
 pub struct Game {
     pub world: World,
     pub schedule: Schedule,
     pub router: InputRouter<Action>,
+    pub fov: VisibilityMap,
+    pub camera: verryte_terminal::Camera,
     player: Entity,
 }
 
@@ -27,104 +49,87 @@ impl Game {
 
     /// Build a game with a specific RNG seed for reproducible behavior.
     pub fn with_seed(seed: u64) -> Self {
-        Self::from_layout_with_seed(DEFAULT_MAP, default_bindings(), seed)
-            .expect("default map is well-formed")
+        Self::from_layout_with_seed(DEFAULT_MAP, default_bindings(), seed).unwrap()
     }
 
-    /// Build a game from an ASCII map layout.
-    ///
-    /// Map symbols:
-    /// * `#` — wall
-    /// * `.` — floor
-    /// * `@` — player spawn (floor underneath)
-    /// * `p` — package on floor
-    /// * `h` — hazard on floor
-    /// * `G` — goal tile
+    /// Build a game using a specific layout and keymap.
     pub fn from_layout(rows: &[&str], bindings: Bindings<Action>) -> Result<Self, MapError> {
         Self::from_layout_with_seed(rows, bindings, 1)
     }
 
-    /// Build a game from an ASCII map layout with a specific RNG seed.
     pub fn from_layout_with_seed(
         rows: &[&str],
         bindings: Bindings<Action>,
         seed: u64,
     ) -> Result<Self, MapError> {
+        let mut world = World::new();
+
         let height = rows.len() as u16;
         if height == 0 {
             return Err(MapError::Empty);
         }
-        let width = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
-        if width == 0 {
-            return Err(MapError::Empty);
-        }
-        let mut map = Map::new(width, height);
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0) as u16;
 
-        let mut world = World::new();
-        let mut player_spawn: Option<Position> = None;
+        let mut map = Map::new(width, height);
+        let mut player_pos_opt = None;
+        let mut player_entity_opt = None;
 
         for (y, row) in rows.iter().enumerate() {
             for (x, ch) in row.chars().enumerate() {
-                let (tile, entity_kind) = match ch {
-                    '#' => (Tile::Wall, None),
-                    '.' => (Tile::Floor, None),
-                    '@' => (Tile::Floor, Some(SpawnKind::Player)),
-                    'p' => (Tile::Floor, Some(SpawnKind::Package)),
-                    'h' => (Tile::Floor, Some(SpawnKind::Hazard)),
-                    'c' => (Tile::Floor, Some(SpawnKind::Chaser)),
-                    'b' => (Tile::Floor, Some(SpawnKind::BatteryPack)),
-                    'R' => (Tile::Floor, Some(SpawnKind::RechargeStation)),
-                    'G' => (Tile::Goal, None),
-                    ' ' => (Tile::Wall, None), // treat padding as wall
-                    other => return Err(MapError::UnknownGlyph(other)),
-                };
-                map.set(x as u16, y as u16, tile);
-                if let Some(kind) = entity_kind {
-                    let pos = Position {
-                        x: x as i16,
-                        y: y as i16,
-                    };
-                    match kind {
-                        SpawnKind::Player => {
-                            if player_spawn.is_some() {
-                                return Err(MapError::DuplicatePlayer);
-                            }
-                            player_spawn = Some(pos);
+                let pt = Point::new(x as i16, y as i16);
+                match ch {
+                    '@' => {
+                        if player_pos_opt.is_some() {
+                            return Err(MapError::DuplicatePlayer);
                         }
-                        SpawnKind::Package => {
-                            world.builder().with(pos).with(Package).build();
-                        }
-                        SpawnKind::Hazard => {
-                            world.builder().with(pos).with(Hazard).build();
-                        }
-                        SpawnKind::Chaser => {
-                            world.builder().with(pos).with(Hazard).with(Chaser).build();
-                        }
-                        SpawnKind::BatteryPack => {
-                            world.builder().with(pos).with(BatteryPack).build();
-                        }
-                        SpawnKind::RechargeStation => {
-                            world
-                                .builder()
-                                .with(pos)
-                                .with(RechargeStation { charges: 3 })
-                                .build();
-                        }
+                        player_pos_opt = Some(pt);
+                        map.set(x as u16, y as u16, Tile::Floor);
+                        let e = world
+                            .builder()
+                            .with(pt)
+                            .with(Player)
+                            .with(Battery {
+                                current: 100,
+                                max: 100,
+                            })
+                            .build();
+                        player_entity_opt = Some(e);
                     }
+                    '#' => map.set(x as u16, y as u16, Tile::Wall),
+                    'G' => {
+                        map.set(x as u16, y as u16, Tile::Goal);
+                    }
+                    'p' => {
+                        map.set(x as u16, y as u16, Tile::Floor);
+                        world.builder().with(pt).with(Package).build();
+                    }
+                    'h' => {
+                        map.set(x as u16, y as u16, Tile::Floor);
+                        world.builder().with(pt).with(Hazard).build();
+                    }
+                    'c' => {
+                        map.set(x as u16, y as u16, Tile::Floor);
+                        world.builder().with(pt).with(Hazard).with(Chaser).build();
+                    }
+                    'b' => {
+                        map.set(x as u16, y as u16, Tile::Floor);
+                        world.builder().with(pt).with(BatteryPack).build();
+                    }
+                    'R' => {
+                        map.set(x as u16, y as u16, Tile::Floor);
+                        world
+                            .builder()
+                            .with(pt)
+                            .with(RechargeStation { charges: 3 })
+                            .build();
+                    }
+                    _ => map.set(x as u16, y as u16, Tile::Floor),
                 }
             }
         }
 
-        let player_spawn = player_spawn.ok_or(MapError::NoPlayer)?;
-        let player = world
-            .builder()
-            .with(player_spawn)
-            .with(Player)
-            .with(Battery {
-                current: 100,
-                max: 100,
-            })
-            .build();
+        let player = player_entity_opt.ok_or(MapError::NoPlayer)?;
+        let player_pos = player_pos_opt.unwrap();
 
         world.insert_resource(map);
         world.insert_resource(GameState::default());
@@ -139,37 +144,29 @@ impl Game {
         schedule.add_named("resolve", resolve_tile_system);
         schedule.add_named("messages", crate::systems::message_system);
 
-        Ok(Self {
+        let mut game = Self {
             world,
             schedule,
             router: InputRouter::new(bindings),
+            fov: VisibilityMap::new(width, height),
+            camera: verryte_terminal::Camera::new(player_pos.x as f32, player_pos.y as f32),
             player,
-        })
+        };
+        game.update_fov();
+        game.update_camera();
+        Ok(game)
     }
 
-    /// Build a game on a procedurally generated cave map.
-    ///
-    /// Uses cellular automata to carve an organic cave, then places the player,
-    /// a package, a goal, and hazards at reachable positions. The `seed`
-    /// controls map generation and RNG; the `width`/`height` set the grid
-    /// dimensions (minimum 10×10).
     pub fn from_cave(width: u16, height: u16, seed: u64) -> Self {
         let width = width.max(10);
         let height = height.max(10);
-        let mut grid = TileGrid::new(width, height, crate::map::Tile::Wall);
-        grid.cellular_automata_cave(
-            crate::map::Tile::Wall,
-            crate::map::Tile::Floor,
-            0.42,
-            5,
-            4,
-            seed,
-        );
+        let mut grid = TileGrid::new(width, height, Tile::Wall);
+        grid.cellular_automata_cave(Tile::Wall, Tile::Floor, 0.42, 5, 4, seed);
 
         // Collect walkable tiles (floor only, not wall or goal).
         let walkable: Vec<Point> = grid
             .iter()
-            .filter(|(_, tile)| matches!(tile, crate::map::Tile::Floor))
+            .filter(|(_, tile)| matches!(tile, Tile::Floor))
             .map(|(p, _)| p)
             .collect();
         assert!(
@@ -180,18 +177,11 @@ impl Game {
         Self::from_generated_grid(grid, walkable, width, height, seed)
     }
 
-    /// Build a game on a procedurally generated BSP dungeon map.
-    ///
-    /// Uses binary space partitioning to create a structured room-and-corridor
-    /// layout, then places the player, a package, a goal, and hazards at room
-    /// centers or reachable positions. The `seed` controls generation.
-    /// The `width`/`height` set the grid dimensions (minimum 10×10).
     pub fn from_bsp(width: u16, height: u16, seed: u64) -> Self {
         let width = width.max(10);
         let height = height.max(10);
-        let mut grid = TileGrid::new(width, height, crate::map::Tile::Wall);
-        let centers =
-            grid.generate_bsp_dungeon(crate::map::Tile::Wall, crate::map::Tile::Floor, 3, seed);
+        let mut grid = TileGrid::new(width, height, Tile::Wall);
+        let centers = grid.generate_bsp_dungeon(Tile::Wall, Tile::Floor, 3, seed);
 
         if centers.is_empty() {
             // Fallback: generate a cave instead.
@@ -201,7 +191,7 @@ impl Game {
         // Collect walkable tiles.
         let walkable: Vec<Point> = grid
             .iter()
-            .filter(|(_, tile)| matches!(tile, crate::map::Tile::Floor))
+            .filter(|(_, tile)| matches!(tile, Tile::Floor))
             .map(|(p, _)| p)
             .collect();
         assert!(
@@ -212,9 +202,8 @@ impl Game {
         Self::from_generated_grid(grid, walkable, width, height, seed)
     }
 
-    /// Shared helper: place entities on a generated grid and wire up the ECS.
     fn from_generated_grid(
-        mut grid: TileGrid<crate::map::Tile>,
+        mut grid: TileGrid<Tile>,
         mut walkable: Vec<Point>,
         width: u16,
         height: u16,
@@ -229,7 +218,7 @@ impl Game {
         // Pick goal (far from player if possible).
         let goal_idx = rng.pick_index(walkable.len()).unwrap();
         let goal_pt = walkable.remove(goal_idx);
-        grid.set(goal_pt, crate::map::Tile::Goal);
+        grid.set(goal_pt, Tile::Goal);
 
         // Pick package.
         let pkg_idx = rng.pick_index(walkable.len()).unwrap();
@@ -255,7 +244,7 @@ impl Game {
             None
         };
 
-        let map = crate::map::Map {
+        let map = Map {
             width,
             height,
             tiles: grid,
@@ -330,38 +319,40 @@ impl Game {
         schedule.add_named("resolve", resolve_tile_system);
         schedule.add_named("messages", crate::systems::message_system);
 
-        Self {
+        let mut game = Self {
             world,
             schedule,
             router: InputRouter::new(default_bindings()),
+            fov: VisibilityMap::new(width, height),
+            camera: verryte_terminal::Camera::new(player_pt.x as f32, player_pt.y as f32),
             player,
-        }
+        };
+        game.update_fov();
+        game.update_camera();
+        game
     }
 
-    /// Reset the game to its initial state using the default map.
-    ///
-    /// This is the agent-ready restart path: reuse the same `Game` struct
-    /// (and its `InputRouter`) while resetting all world state to a fresh
-    /// default game. Pending router actions are also cleared.
     pub fn reset(&mut self) {
         let fresh = Self::new();
         self.world = fresh.world;
         self.schedule = fresh.schedule;
         self.player = fresh.player;
+        self.fov = fresh.fov;
+        self.camera = fresh.camera;
         self.router.clear();
     }
 
-    /// Reset the game using a specific layout.
     pub fn reset_from_layout(&mut self, rows: &[&str]) -> Result<(), MapError> {
         let fresh = Self::from_layout(rows, default_bindings())?;
         self.world = fresh.world;
         self.schedule = fresh.schedule;
         self.player = fresh.player;
+        self.fov = fresh.fov;
+        self.camera = fresh.camera;
         self.router.clear();
         Ok(())
     }
 
-    /// Reset the game using a specific layout and seed.
     pub fn reset_from_layout_with_seed(
         &mut self,
         rows: &[&str],
@@ -371,30 +362,41 @@ impl Game {
         self.world = fresh.world;
         self.schedule = fresh.schedule;
         self.player = fresh.player;
+        self.fov = fresh.fov;
+        self.camera = fresh.camera;
         self.router.clear();
         Ok(())
     }
 
-    /// Reset the game to a new procedurally generated cave.
     pub fn reset_from_cave(&mut self, width: u16, height: u16, seed: u64) {
         let fresh = Self::from_cave(width, height, seed);
         self.world = fresh.world;
         self.schedule = fresh.schedule;
         self.player = fresh.player;
+        self.fov = fresh.fov;
+        self.camera = fresh.camera;
         self.router.clear();
     }
 
-    /// Reset the game to a new procedurally generated BSP dungeon.
     pub fn reset_from_bsp(&mut self, width: u16, height: u16, seed: u64) {
         let fresh = Self::from_bsp(width, height, seed);
         self.world = fresh.world;
         self.schedule = fresh.schedule;
         self.player = fresh.player;
+        self.fov = fresh.fov;
+        self.camera = fresh.camera;
         self.router.clear();
     }
 
     pub fn player_entity(&self) -> Entity {
         self.player
+    }
+
+    pub fn player_position(&self) -> Position {
+        *self
+            .world
+            .get::<Position>(self.player)
+            .expect("player has position")
     }
 
     pub fn state(&self) -> &GameState {
@@ -409,137 +411,120 @@ impl Game {
             .expect("game state resource")
     }
 
-    pub fn clock(&self) -> &GameClock {
-        self.world
-            .resource::<GameClock>()
-            .expect("game clock resource")
-    }
-
     pub fn map(&self) -> &Map {
         self.world.resource::<Map>().expect("map resource")
     }
 
-    pub fn player_position(&self) -> Position {
-        *self
-            .world
-            .get::<Position>(self.player)
-            .expect("player has position")
+    pub fn clock(&self) -> &GameClock {
+        self.world.resource::<GameClock>().expect("clock resource")
+    }
+
+    pub fn messages(&self) -> Vec<String> {
+        self.world
+            .resource::<MessageLog>()
+            .map(|log| log.messages().to_vec())
+            .unwrap_or_default()
     }
 
     pub fn outcome(&self) -> Outcome {
         self.state().outcome
     }
 
+    pub fn handle_event(&mut self, event: InputEvent) -> bool {
+        self.router.handle_event(event)
+    }
+
+    pub fn handle_event_with<F>(&mut self, event: InputEvent, f: F) -> bool
+    where
+        F: FnOnce(InputEvent) -> Option<Action>,
+    {
+        self.router.handle_with(event, f)
+    }
+
     pub fn is_over(&self) -> bool {
         !matches!(self.outcome(), Outcome::Playing)
     }
 
-    /// Drain the router and apply each action. Stops if the game ends.
-    /// Returns the number of actions consumed.
-    pub fn run_pending(&mut self) -> usize {
-        self.run_pending_reports().len()
-    }
-
-    /// Drain pending actions and keep a report for each applied action.
-    pub fn run_pending_reports(&mut self) -> Vec<StepReport> {
-        if self.is_over() {
-            let queued_quit = matches!(
-                self.router.peek(),
-                Some(queued) if queued.action == Action::Quit
-            );
-            if queued_quit {
-                let queued = self.router.next_queued().expect("peek returned Some");
-                let report = self.step_from(queued.action, queued.source);
-                self.router.clear();
-                return vec![report];
-            }
-            self.router.clear();
-            return Vec::new();
-        }
-        let mut reports = Vec::new();
-        while let Some(queued) = self.router.next_queued() {
-            reports.push(self.step_from(queued.action, queued.source));
-            if self.is_over() {
-                self.router.clear();
-                break;
-            }
-        }
-        reports
-    }
-
-    /// Feed a terminal event in. Same downstream path as `inject`/scripts.
-    pub fn handle_event(&mut self, event: InputEvent) -> bool {
-        self.router.handle(event)
-    }
-
-    /// Feed a terminal event in with a custom translation hook, falling back to
-    /// bindings when the hook returns `None`.
-    pub fn handle_event_with<F>(&mut self, event: InputEvent, translate: F) -> bool
-    where
-        F: FnOnce(InputEvent) -> Option<Action>,
-    {
-        self.router.handle_with(event, translate)
-    }
-
-    /// Inject one action and apply it immediately.
     pub fn inject_apply(&mut self, action: Action) {
         self.router.inject(action);
         self.run_pending();
     }
 
-    /// Apply one action and return the state delta an agent or script runner
-    /// can inspect.
-    pub fn step(&mut self, action: Action) -> StepReport {
-        self.step_from(action, ActionSource::Test)
+    pub fn run_pending(&mut self) {
+        while let Some(action) = self.router.pop_action() {
+            self.apply_action(action.action, action.source);
+        }
     }
 
-    /// Apply one sourced action and return the state delta an agent or script
-    /// runner can inspect. The source is report metadata only; behavior is
-    /// still entirely controlled by [`Self::apply`].
-    pub fn step_from(&mut self, action: Action, source: ActionSource) -> StepReport {
+    pub fn run_pending_reports(&mut self) -> Vec<StepReport> {
+        let mut reports = Vec::new();
+        while let Some(action) = self.router.pop_action() {
+            reports.push(self.apply_action(action.action, action.source));
+        }
+        reports
+    }
+
+    pub fn inject_script(&mut self, script: &str, source: ActionSource) -> Result<usize, String> {
+        self.router
+            .inject_script(&crate::action::default_commands(), script, source)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Apply one action with a default ActionSource::Test source.
+    pub fn step(&mut self, action: Action) -> StepReport {
+        self.apply_action(action, ActionSource::Test)
+    }
+
+    pub fn apply_action(&mut self, action: Action, source: ActionSource) -> StepReport {
         let before = self.snapshot();
-        let result = self.apply(action);
-        let events = self.drain_events();
+        let old_turn = before.turn;
+
+        let result = self.apply_action_internal(action);
+
         let after = self.snapshot();
+        let turn_advanced = after.turn > old_turn;
+        let changed = before != after;
+
         StepReport {
             action,
             source,
             result,
-            changed: before != after,
-            turn_advanced: after.turn > before.turn,
             before,
             after,
-            events,
+            changed,
+            turn_advanced,
+            events: self.take_events(),
         }
     }
 
-    /// Apply a single action against the game state.
-    ///
-    /// This is the spine of `terminal event -> game action -> game system ->
-    /// observable state`. Interactive frontends, scripts, tests, and agents
-    /// all converge here.
-    pub fn apply(&mut self, action: Action) -> ActionResult {
-        self.clear_events();
+    fn apply_action_internal(&mut self, action: Action) -> ActionResult {
+        if self.outcome() != Outcome::Playing && action != Action::Quit {
+            return ActionResult::IgnoredGameOver;
+        }
+
         let result = match action {
-            Action::Quit => {
-                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Quit;
-                self.send_event(GameEvent::OutcomeChanged(Outcome::Quit));
-                ActionResult::Ended(Outcome::Quit)
+            Action::MoveNorth | Action::MoveSouth | Action::MoveEast | Action::MoveWest => {
+                let direction = action.direction().unwrap();
+                if self.try_move(direction) {
+                    self.advance_turn();
+                    ActionResult::Advanced
+                } else {
+                    ActionResult::NoOp
+                }
             }
-            _ if self.is_over() => ActionResult::IgnoredGameOver,
             Action::Wait => {
-                self.send_event(GameEvent::Waited {
-                    at: self.player_position(),
-                });
+                let pos = self.player_position();
+                self.send_event(GameEvent::Waited { at: pos });
                 self.advance_turn();
                 ActionResult::Advanced
             }
             Action::Scan => {
+                let pos = self.player_position();
                 let visible_tiles = self.visible_tiles();
                 let visible_hazards = self.visible_hazards_in(&visible_tiles);
                 self.world.resource_mut::<GameState>().unwrap().scans += 1;
                 self.send_event(GameEvent::Scanned {
-                    at: self.player_position(),
+                    at: pos,
                     visible_tiles: visible_tiles.len(),
                     visible_hazards: visible_hazards.len(),
                 });
@@ -547,11 +532,12 @@ impl Game {
                 ActionResult::Advanced
             }
             Action::ScanRadius(radius) => {
+                let pos = self.player_position();
                 let visible_tiles = self.map().visible_from(self.player_position(), radius);
                 let visible_hazards = self.visible_hazards_in(&visible_tiles);
                 self.world.resource_mut::<GameState>().unwrap().scans += 1;
                 self.send_event(GameEvent::Scanned {
-                    at: self.player_position(),
+                    at: pos,
                     visible_tiles: visible_tiles.len(),
                     visible_hazards: visible_hazards.len(),
                 });
@@ -559,55 +545,83 @@ impl Game {
                 ActionResult::Advanced
             }
             Action::Inspect(point) => {
-                if !self.map().in_bounds(point) {
-                    ActionResult::NoOp
-                } else {
+                if self.map().in_bounds(point) {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.cursor = Some(point);
                     let tile = self.map().tile(point.x, point.y);
-                    self.world.resource_mut::<GameState>().unwrap().cursor = Some(point);
                     self.send_event(GameEvent::Inspected { at: point, tile });
-                    self.schedule
-                        .run_system_by_name("messages", &mut self.world);
                     ActionResult::Updated
+                } else {
+                    ActionResult::NoOp
                 }
             }
             Action::ClearCursor => {
-                let cursor = self
-                    .world
-                    .resource_mut::<GameState>()
-                    .unwrap()
-                    .cursor
-                    .take();
-                if let Some(cursor) = cursor {
-                    self.send_event(GameEvent::CursorCleared { at: cursor });
-                    self.schedule
-                        .run_system_by_name("messages", &mut self.world);
+                let mut state = self.world.resource_mut::<GameState>().unwrap();
+                if let Some(at) = state.cursor.take() {
+                    self.send_event(GameEvent::CursorCleared { at });
                     ActionResult::Updated
                 } else {
                     ActionResult::NoOp
                 }
             }
             Action::PickUp => {
-                if self.try_pick_up() {
+                let pos = self.player_position();
+                let item = self
+                    .world
+                    .query2::<Position, Package>()
+                    .into_iter()
+                    .find(|(_, p, _)| **p == pos);
+                if let Some((e, _, _)) = item {
+                    self.world.despawn(e);
+                    self.world.resource_mut::<GameState>().unwrap().has_package = true;
+                    self.send_event(GameEvent::PickedUp { at: pos });
+                    self.advance_turn();
+                    ActionResult::Advanced
+                } else {
+                    let battery = self
+                        .world
+                        .query2::<Position, BatteryPack>()
+                        .into_iter()
+                        .find(|(_, p, _)| **p == pos);
+                    if let Some((e, _, _)) = battery {
+                        self.world.despawn(e);
+                        if let Some(b) = self.world.get_mut::<Battery>(self.player) {
+                            b.current = (b.current + 25).min(b.max);
+                        }
+                        self.send_event(GameEvent::PickedUpBattery {
+                            at: pos,
+                            amount: 25,
+                        });
+                        self.advance_turn();
+                        ActionResult::Advanced
+                    } else {
+                        ActionResult::NoOp
+                    }
+                }
+            }
+            Action::Drop => {
+                if self.state().has_package {
+                    let pos = self.player_position();
+                    self.world.builder().with(pos).with(Package).build();
+                    self.world.resource_mut::<GameState>().unwrap().has_package = false;
+                    self.send_event(GameEvent::Dropped { at: pos });
                     self.advance_turn();
                     ActionResult::Advanced
                 } else {
                     ActionResult::NoOp
                 }
             }
-            Action::Drop => {
-                if self.try_drop_package() {
-                    self.advance_turn();
-                    ActionResult::Advanced
-                } else {
-                    ActionResult::NoOp
-                }
+            Action::Quit => {
+                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Quit;
+                self.send_event(GameEvent::OutcomeChanged(Outcome::Quit));
+                ActionResult::Ended(Outcome::Quit)
             }
             Action::StepToPackage => {
                 let packages = self
                     .world
                     .query2::<Position, Package>()
                     .into_iter()
-                    .map(|(_, pos, _)| *pos)
+                    .map(|(_, p, _)| *p)
                     .collect::<Vec<_>>();
                 self.next_step_direction_toward_any(&packages).map_or(
                     ActionResult::NoOp,
@@ -663,6 +677,12 @@ impl Game {
             Action::ZoomCamera(amount) => {
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.camera_zoom = (state.camera_zoom + amount).clamp(-5, 5);
+                if amount > 0 {
+                    self.camera.zoom *= 0.8;
+                } else if amount < 0 {
+                    self.camera.zoom *= 1.25;
+                }
+                self.camera.zoom = self.camera.zoom.clamp(0.2, 5.0);
                 ActionResult::Updated
             }
             Action::ToggleLog => {
@@ -673,6 +693,26 @@ impl Game {
             Action::ToggleHighFidelity => {
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.high_fidelity = !state.high_fidelity;
+                state.tier = match state.tier {
+                    verryte_terminal::ResolutionTier::TINY => {
+                        verryte_terminal::ResolutionTier::SMALL
+                    }
+                    verryte_terminal::ResolutionTier::SMALL => {
+                        verryte_terminal::ResolutionTier::MEDIUM
+                    }
+                    verryte_terminal::ResolutionTier::MEDIUM => {
+                        verryte_terminal::ResolutionTier::LARGE
+                    }
+                    verryte_terminal::ResolutionTier::LARGE => {
+                        verryte_terminal::ResolutionTier::XLARGE
+                    }
+                    verryte_terminal::ResolutionTier::XLARGE => {
+                        verryte_terminal::ResolutionTier::ULTRA
+                    }
+                    verryte_terminal::ResolutionTier::ULTRA => {
+                        verryte_terminal::ResolutionTier::TINY
+                    }
+                };
                 ActionResult::Updated
             }
             mv => mv.direction().map_or(ActionResult::NoOp, |direction| {
@@ -727,34 +767,23 @@ impl Game {
         result
     }
 
-    pub fn messages(&self) -> Vec<String> {
-        self.world
-            .resource::<MessageLog>()
-            .unwrap()
-            .messages()
-            .to_vec()
-    }
-
     fn try_move(&mut self, direction: Direction) -> bool {
-        let current = self.player_position();
-        let target = current.step(direction);
-        match self.map().tile(target.x, target.y) {
-            Tile::Wall => {
-                self.send_event(GameEvent::Blocked {
-                    from: current,
-                    to: target,
-                });
-                false
-            }
-            Tile::Floor | Tile::Goal => {
-                *self.world.get_mut::<Position>(self.player).unwrap() = target;
-                self.send_event(GameEvent::Moved {
-                    from: current,
-                    to: target,
-                });
-                self.check_battery_pickup(target);
-                true
-            }
+        let pos = self.player_position();
+        let next = pos.step(direction);
+        if self.map().is_walkable(next) {
+            *self.world.get_mut::<Position>(self.player).unwrap() = next;
+            self.send_event(GameEvent::Moved {
+                from: pos,
+                to: next,
+            });
+            self.check_battery_pickup(next);
+            true
+        } else {
+            self.send_event(GameEvent::Blocked {
+                from: pos,
+                to: next,
+            });
+            false
         }
     }
 
@@ -776,75 +805,27 @@ impl Game {
         }
     }
 
-    fn check_recharge_station(&mut self) {
-        if self.is_over() {
-            return;
-        }
-        let pos = self.player_position();
-        let found = self
-            .world
-            .query2::<Position, RechargeStation>()
-            .into_iter()
-            .find_map(|(e, station_pos, station)| (*station_pos == pos).then_some((e, *station)));
-        if let Some((entity, station)) = found {
-            let mut recharged = false;
-            if let Some(battery) = self.world.get_mut::<Battery>(self.player) {
-                if battery.current < battery.max {
-                    battery.current = (battery.current + 25).min(battery.max);
-                    recharged = true;
-                }
-            }
-            let next_charges = station.charges.saturating_sub(1);
-            if next_charges == 0 {
-                self.world.despawn(entity);
-            } else {
-                if let Some(s) = self.world.get_mut::<RechargeStation>(entity) {
-                    s.charges = next_charges;
-                }
-            }
-            if recharged {
-                self.send_event(GameEvent::PickedUpBattery {
-                    at: pos,
-                    amount: 25,
-                });
-            }
-        }
-    }
-
-    fn try_pick_up(&mut self) -> bool {
-        let pos = self.player_position();
-        let found = self
-            .world
-            .query2::<Position, Package>()
-            .into_iter()
-            .find_map(|(e, package_pos, _)| (*package_pos == pos).then_some(e));
-        if let Some(entity) = found {
-            self.world.despawn(entity);
-            self.world.resource_mut::<GameState>().unwrap().has_package = true;
-            self.send_event(GameEvent::PickedUp { at: pos });
-            true
-        } else {
-            false
-        }
-    }
-
-    fn try_drop_package(&mut self) -> bool {
-        if !self.state().has_package {
-            return false;
-        }
-
-        let pos = self.player_position();
-        let entity = self.world.spawn();
-        self.world.insert(entity, pos);
-        self.world.insert(entity, Package);
-        self.world.resource_mut::<GameState>().unwrap().has_package = false;
-        self.send_event(GameEvent::Dropped { at: pos });
-        true
-    }
-
     fn advance_turn(&mut self) {
         self.world.resource_mut::<GameClock>().unwrap().tick();
         self.world.resource_mut::<GameState>().unwrap().turn += 1;
+        self.update_fov();
+        self.update_camera();
+    }
+
+    pub fn update_camera(&mut self) {
+        let player_pos = self.player_position();
+        self.camera
+            .look_at(player_pos.x as f32, player_pos.y as f32);
+        self.camera.tick();
+    }
+
+    pub fn update_fov(&mut self) {
+        let player_pos = self.player_position();
+        let visible = self.map().visible_from(player_pos, 5);
+        self.fov.clear_visible();
+        for pt in visible {
+            self.fov.set_visible(pt);
+        }
     }
 
     fn clear_events(&mut self) {
@@ -854,6 +835,14 @@ impl Game {
             .clear();
     }
 
+    fn take_events(&mut self) -> Vec<GameEvent> {
+        self.world
+            .resource_mut::<Events<GameEvent>>()
+            .expect("game event resource")
+            .drain()
+            .collect()
+    }
+
     fn send_event(&mut self, event: GameEvent) {
         self.world
             .resource_mut::<Events<GameEvent>>()
@@ -861,12 +850,102 @@ impl Game {
             .send(event);
     }
 
-    fn drain_events(&mut self) -> Vec<GameEvent> {
-        self.world
-            .resource_mut::<Events<GameEvent>>()
-            .expect("game event resource")
-            .drain()
-            .collect()
+    fn goal_positions(&self) -> Vec<Position> {
+        self.map()
+            .tiles
+            .points_matching(|_, t| matches!(t, Tile::Goal))
+    }
+
+    fn shortest_path_to_any(&self, start: Position, targets: &[Position]) -> Option<Vec<Position>> {
+        self.map()
+            .tiles
+            .nearest_path4(start, targets.iter().copied(), |_, t| {
+                matches!(t, Tile::Floor | Tile::Goal)
+            })
+    }
+
+    fn shortest_distance_to_any(&self, start: Position, targets: &[Position]) -> Option<u16> {
+        self.map()
+            .tiles
+            .distance_to_nearest4(start, targets.iter().copied(), |_, t| {
+                matches!(t, Tile::Floor | Tile::Goal)
+            })
+    }
+
+    fn next_step_direction_toward_any(&self, targets: &[Position]) -> Option<Direction> {
+        let pos = self.player_position();
+        let path = self.shortest_path_to_any(pos, targets)?;
+        if path.len() > 1 {
+            self.map().tiles.direction_to(pos, path[1])
+        } else {
+            None
+        }
+    }
+
+    fn safety_step_direction(&self) -> Option<Direction> {
+        let player = self.player_position();
+        let hazards = self
+            .world
+            .query2::<Position, Hazard>()
+            .into_iter()
+            .map(|(_, p, _)| *p)
+            .collect::<Vec<_>>();
+        let chasers = self
+            .world
+            .query2::<Position, Chaser>()
+            .into_iter()
+            .map(|(_, p, _)| *p)
+            .collect::<Vec<_>>();
+
+        let mut all_threats = hazards;
+        all_threats.extend(chasers);
+
+        let next = *self.safer_neighbors_from(player, &all_threats).first()?;
+        self.map().tiles.direction_to(player, next)
+    }
+
+    fn safer_neighbors_from(&self, from: Position, threats: &[Position]) -> Vec<Position> {
+        self.map()
+            .tiles
+            .safer_neighbors4(from, threats.iter().copied(), |_, tile| {
+                matches!(tile, Tile::Floor | Tile::Goal)
+            })
+    }
+
+    fn check_recharge_station(&mut self) {
+        if self.is_over() {
+            return;
+        }
+        let pos = self.player_position();
+        let station_data = self
+            .world
+            .query2::<Position, RechargeStation>()
+            .into_iter()
+            .find(|(_, p, _)| **p == pos)
+            .map(|(e, _, s)| (e, s.charges));
+        if let Some((e, charges)) = station_data {
+            let mut recharged = false;
+            if let Some(b) = self.world.get_mut::<Battery>(self.player) {
+                if b.current < b.max {
+                    b.current = (b.current + 25).min(b.max);
+                    recharged = true;
+                }
+            }
+            let next_charges = charges.saturating_sub(1);
+            if next_charges == 0 {
+                self.world.despawn(e);
+            } else {
+                if let Some(station_mut) = self.world.get_mut::<RechargeStation>(e) {
+                    station_mut.charges = next_charges;
+                }
+            }
+            if recharged {
+                self.send_event(GameEvent::PickedUpBattery {
+                    at: pos,
+                    amount: 25,
+                });
+            }
+        }
     }
 
     fn visible_tiles(&self) -> Vec<Position> {
@@ -882,125 +961,27 @@ impl Game {
             .collect()
     }
 
-    fn goal_positions(&self) -> Vec<Position> {
-        self.map()
-            .tiles
-            .points()
-            .filter(|point| matches!(self.map().tile(point.x, point.y), Tile::Goal))
-            .collect()
-    }
-
-    fn shortest_path_to_any(&self, from: Position, targets: &[Position]) -> Option<Vec<Position>> {
-        self.map()
-            .nearest_walkable_path(from, targets.iter().copied())
-    }
-
-    fn shortest_distance_to_any(&self, from: Position, targets: &[Position]) -> Option<u16> {
-        self.map()
-            .nearest_walkable_distance(from, targets.iter().copied())
-    }
-
-    fn next_step_direction_toward_any(&self, targets: &[Position]) -> Option<Direction> {
-        let from = self.player_position();
-        let path = self.shortest_path_to_any(from, targets)?;
-        let next = *path.get(1)?;
-        self.map().tiles.direction_to(from, next)
-    }
-
-    fn safety_step_direction(&self) -> Option<Direction> {
-        let player = self.player_position();
-        let hazards = self
-            .world
-            .query2::<Position, Hazard>()
-            .into_iter()
-            .map(|(_, pos, _)| *pos)
-            .collect::<Vec<_>>();
-        let next = *self.safer_neighbors_from(player, &hazards).first()?;
-        self.map().tiles.direction_to(player, next)
-    }
-
-    fn safer_neighbors_from(&self, from: Position, hazards: &[Position]) -> Vec<Position> {
-        self.map()
-            .tiles
-            .safer_neighbors4(from, hazards.iter().copied(), |_, tile| {
-                matches!(tile, Tile::Floor | Tile::Goal)
-            })
-    }
-
     pub fn save_to_string(&self) -> String {
-        let mut out = String::new();
-        out.push_str("--- VERB SAVE STATE ---\n");
-        out.push_str("version: 1\n");
+        let mut entities = Vec::new();
 
-        let clock = self.clock();
-        out.push_str(&format!("clock_ticks: {}\n", clock.elapsed_ticks()));
-
-        let rng = self.world.resource::<Rng>().unwrap();
-        out.push_str(&format!("rng_seed: {}\n", rng.seed_value()));
-
-        let state = self.state();
-        out.push_str(&format!("state_turn: {}\n", state.turn));
-
-        let outcome_str = match state.outcome {
-            Outcome::Playing => "Playing",
-            Outcome::Won => "Won",
-            Outcome::Lost => "Lost",
-            Outcome::Quit => "Quit",
-        };
-        out.push_str(&format!("state_outcome: {}\n", outcome_str));
-        out.push_str(&format!("state_has_package: {}\n", state.has_package));
-        out.push_str(&format!("state_scans: {}\n", state.scans));
-
-        if let Some(cursor) = state.cursor {
-            out.push_str(&format!("state_cursor: {},{}\n", cursor.x, cursor.y));
-        } else {
-            out.push_str("state_cursor: None\n");
-        }
-        out.push_str(&format!("state_camera_zoom: {}\n", state.camera_zoom));
-        out.push_str(&format!("state_show_log: {}\n", state.show_log));
-        out.push_str(&format!("state_high_fidelity: {}\n", state.high_fidelity));
-
-        out.push_str("messages:\n");
-        if let Some(log) = self.world.resource::<MessageLog>() {
-            for msg in log.messages() {
-                out.push_str(&format!("- {}\n", msg));
-            }
-        }
-
-        let map = self.map();
-        out.push_str("map:\n");
-        out.push_str(&format!("  width: {}\n", map.width));
-        out.push_str(&format!("  height: {}\n", map.height));
-        out.push_str("  grid:\n");
-        for y in 0..map.height {
-            out.push_str("  ");
-            for x in 0..map.width {
-                let ch = match map.tile(x as i16, y as i16) {
-                    Tile::Wall => '#',
-                    Tile::Floor => '.',
-                    Tile::Goal => 'G',
-                };
-                out.push(ch);
-            }
-            out.push('\n');
-        }
-
-        out.push_str("entities:\n");
         // Player
         let player_pos = self.player_position();
-        if let Some(battery) = self.world.get::<Battery>(self.player) {
-            out.push_str("- kind: Player\n");
-            out.push_str(&format!("  x: {}\n", player_pos.x));
-            out.push_str(&format!("  y: {}\n", player_pos.y));
-            out.push_str(&format!("  battery_current: {}\n", battery.current));
-            out.push_str(&format!("  battery_max: {}\n", battery.max));
-        }
+        let battery = self.world.get::<Battery>(self.player).cloned();
+        entities.push(EntityData {
+            kind: "Player".to_string(),
+            pos: player_pos,
+            battery,
+            charges: None,
+        });
 
         // Package
         for (_, pos, _) in self.world.query2::<Position, Package>() {
-            out.push_str("- kind: Package\n");
-            out.push_str(&format!("  x: {}\n", pos.x));
-            out.push_str(&format!("  y: {}\n", pos.y));
+            entities.push(EntityData {
+                kind: "Package".to_string(),
+                pos: *pos,
+                battery: None,
+                charges: None,
+            });
         }
 
         // Chasers (which are also Hazards)
@@ -1014,331 +995,114 @@ impl Game {
         // Hazards (excluding Chasers)
         for (e, pos, _) in self.world.query2::<Position, Hazard>() {
             if !chaser_entities.contains(&e) {
-                out.push_str("- kind: Hazard\n");
-                out.push_str(&format!("  x: {}\n", pos.x));
-                out.push_str(&format!("  y: {}\n", pos.y));
+                entities.push(EntityData {
+                    kind: "Hazard".to_string(),
+                    pos: *pos,
+                    battery: None,
+                    charges: None,
+                });
             }
         }
 
         // Chasers
         for (_, pos, _) in self.world.query2::<Position, Chaser>() {
-            out.push_str("- kind: Chaser\n");
-            out.push_str(&format!("  x: {}\n", pos.x));
-            out.push_str(&format!("  y: {}\n", pos.y));
+            entities.push(EntityData {
+                kind: "Chaser".to_string(),
+                pos: *pos,
+                battery: None,
+                charges: None,
+            });
         }
 
         // BatteryPack
         for (_, pos, _) in self.world.query2::<Position, BatteryPack>() {
-            out.push_str("- kind: BatteryPack\n");
-            out.push_str(&format!("  x: {}\n", pos.x));
-            out.push_str(&format!("  y: {}\n", pos.y));
+            entities.push(EntityData {
+                kind: "BatteryPack".to_string(),
+                pos: *pos,
+                battery: None,
+                charges: None,
+            });
         }
 
         // RechargeStation
         for (_, pos, s) in self.world.query2::<Position, RechargeStation>() {
-            out.push_str("- kind: RechargeStation\n");
-            out.push_str(&format!("  x: {}\n", pos.x));
-            out.push_str(&format!("  y: {}\n", pos.y));
-            out.push_str(&format!("  charges: {}\n", s.charges));
+            entities.push(EntityData {
+                kind: "RechargeStation".to_string(),
+                pos: *pos,
+                battery: None,
+                charges: Some(s.charges),
+            });
         }
 
-        out
+        let save = SaveState {
+            clock_ticks: self.clock().elapsed_ticks(),
+            rng_state: self.world.resource::<Rng>().unwrap().seed_value(),
+            game_state: *self.state(),
+            messages: self.messages(),
+            map: self.map().clone(),
+            fov: self.fov.clone(),
+            camera: self.camera.clone(),
+            entities,
+        };
+
+        serde_json::to_string_pretty(&save).unwrap_or_default()
     }
 
     pub fn load_from_string(&mut self, s: &str) -> Result<(), String> {
-        let mut clock_ticks = 0u64;
-        let mut rng_seed = 1u64;
-        let mut state_turn = 0u32;
-        let mut state_outcome = Outcome::Playing;
-        let mut state_has_package = false;
-        let mut state_scans = 0u32;
-        let mut state_cursor: Option<Position> = None;
-        let mut state_camera_zoom = 0i16;
-        let mut state_show_log = true;
-        let mut state_high_fidelity = true;
-
-        let mut messages = Vec::new();
-
-        let mut map_width = 0u16;
-        let mut map_height = 0u16;
-        let mut map_rows = Vec::new();
-
-        #[derive(Debug)]
-        struct RawEntity {
-            kind: String,
-            x: i16,
-            y: i16,
-            battery_current: Option<u32>,
-            battery_max: Option<u32>,
-            charges: Option<u32>,
-        }
-
-        let mut entities = Vec::new();
-        let mut current_entity: Option<RawEntity> = None;
-
-        let mut section = "";
-
-        for line in s.lines() {
-            let line_trimmed = line.trim_end();
-            if line_trimmed.is_empty() || line_trimmed.starts_with("---") {
-                continue;
-            }
-
-            if line_trimmed == "messages:" {
-                section = "messages";
-                continue;
-            } else if line_trimmed == "map:" {
-                section = "map";
-                continue;
-            } else if line_trimmed == "entities:" {
-                section = "entities";
-                continue;
-            }
-
-            if section == "messages" {
-                if let Some(stripped) = line_trimmed.strip_prefix("- ") {
-                    messages.push(stripped.to_string());
-                }
-                continue;
-            } else if section == "map" {
-                if line_trimmed.starts_with("  grid:") {
-                    section = "map_grid";
-                    continue;
-                }
-                let trimmed = line_trimmed.trim();
-                if let Some((k, v)) = trimmed.split_once(':') {
-                    let k = k.trim();
-                    let v = v.trim();
-                    match k {
-                        "width" => {
-                            map_width =
-                                v.parse().map_err(|e| format!("invalid map width: {}", e))?
-                        }
-                        "height" => {
-                            map_height = v
-                                .parse()
-                                .map_err(|e| format!("invalid map height: {}", e))?
-                        }
-                        _ => {}
-                    }
-                }
-                continue;
-            } else if section == "map_grid" {
-                if let Some(stripped) = line_trimmed.strip_prefix("  ") {
-                    let row_str = stripped.to_string();
-                    map_rows.push(row_str);
-                    if map_rows.len() as u16 == map_height {
-                        section = "";
-                    }
-                }
-                continue;
-            } else if section == "entities" {
-                let trimmed = line_trimmed.trim();
-                if trimmed.starts_with("- ") {
-                    if let Some(ent) = current_entity.take() {
-                        entities.push(ent);
-                    }
-                    if let Some((_k, v)) = trimmed.split_once(':') {
-                        current_entity = Some(RawEntity {
-                            kind: v.trim().to_string(),
-                            x: 0,
-                            y: 0,
-                            battery_current: None,
-                            battery_max: None,
-                            charges: None,
-                        });
-                    }
-                } else if let Some((k, v)) = trimmed.split_once(':') {
-                    let k = k.trim();
-                    let v = v.trim();
-                    if let Some(ref mut ent) = current_entity {
-                        match k {
-                            "x" => {
-                                ent.x = v.parse().map_err(|e| format!("invalid entity x: {}", e))?
-                            }
-                            "y" => {
-                                ent.y = v.parse().map_err(|e| format!("invalid entity y: {}", e))?
-                            }
-                            "battery_current" => {
-                                ent.battery_current = Some(
-                                    v.parse()
-                                        .map_err(|e| format!("invalid battery_current: {}", e))?,
-                                )
-                            }
-                            "battery_max" => {
-                                ent.battery_max = Some(
-                                    v.parse()
-                                        .map_err(|e| format!("invalid battery_max: {}", e))?,
-                                )
-                            }
-                            "charges" => {
-                                ent.charges =
-                                    Some(v.parse().map_err(|e| format!("invalid charges: {}", e))?)
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if let Some((k, v)) = line_trimmed.split_once(':') {
-                let k = k.trim();
-                let v = v.trim();
-                match k {
-                    "clock_ticks" => {
-                        clock_ticks = v
-                            .parse()
-                            .map_err(|e| format!("invalid clock_ticks: {}", e))?
-                    }
-                    "rng_seed" => {
-                        rng_seed = v.parse().map_err(|e| format!("invalid rng_seed: {}", e))?
-                    }
-                    "state_turn" => {
-                        state_turn = v
-                            .parse()
-                            .map_err(|e| format!("invalid state_turn: {}", e))?
-                    }
-                    "state_outcome" => {
-                        state_outcome = match v {
-                            "Playing" => Outcome::Playing,
-                            "Won" => Outcome::Won,
-                            "Lost" => Outcome::Lost,
-                            "Quit" => Outcome::Quit,
-                            _ => return Err(format!("unknown state_outcome: {}", v)),
-                        };
-                    }
-                    "state_has_package" => {
-                        state_has_package = v
-                            .parse()
-                            .map_err(|e| format!("invalid state_has_package: {}", e))?
-                    }
-                    "state_scans" => {
-                        state_scans = v
-                            .parse()
-                            .map_err(|e| format!("invalid state_scans: {}", e))?
-                    }
-                    "state_cursor" => {
-                        if v == "None" {
-                            state_cursor = None;
-                        } else if let Some((xs, ys)) = v.split_once(',') {
-                            let x = xs.parse().map_err(|e| format!("invalid cursor x: {}", e))?;
-                            let y = ys.parse().map_err(|e| format!("invalid cursor y: {}", e))?;
-                            state_cursor = Some(Position { x, y });
-                        }
-                    }
-                    "state_camera_zoom" => {
-                        state_camera_zoom = v
-                            .parse()
-                            .map_err(|e| format!("invalid state_camera_zoom: {}", e))?
-                    }
-                    "state_show_log" => {
-                        state_show_log = v
-                            .parse()
-                            .map_err(|e| format!("invalid state_show_log: {}", e))?
-                    }
-                    "state_high_fidelity" => {
-                        state_high_fidelity = v
-                            .parse()
-                            .map_err(|e| format!("invalid state_high_fidelity: {}", e))?
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if let Some(ent) = current_entity.take() {
-            entities.push(ent);
-        }
-
-        if map_width == 0 || map_height == 0 || map_rows.len() as u16 != map_height {
-            return Err("missing or invalid map grid".to_string());
-        }
+        let save: SaveState = serde_json::from_str(s).map_err(|e| format!("json error: {}", e))?;
 
         let mut new_world = World::new();
 
-        let mut map = Map::new(map_width, map_height);
-        for (y, row) in map_rows.iter().enumerate() {
-            for (x, ch) in row.chars().enumerate() {
-                let tile = match ch {
-                    '#' => Tile::Wall,
-                    '.' => Tile::Floor,
-                    'G' => Tile::Goal,
-                    _ => return Err(format!("unknown tile character: {}", ch)),
-                };
-                map.set(x as u16, y as u16, tile);
-            }
-        }
-
         let mut clock = GameClock::new();
-        clock.set_elapsed_ticks(clock_ticks);
+        clock.set_elapsed_ticks(save.clock_ticks);
         new_world.insert_resource(clock);
-
-        new_world.insert_resource(Rng::seed(rng_seed));
-
-        let game_state = GameState {
-            turn: state_turn,
-            outcome: state_outcome,
-            has_package: state_has_package,
-            scans: state_scans,
-            cursor: state_cursor,
-            camera_zoom: state_camera_zoom,
-            show_log: state_show_log,
-            high_fidelity: state_high_fidelity,
-        };
-        new_world.insert_resource(game_state);
-
+        new_world.insert_resource(Rng::seed(save.rng_state));
+        new_world.insert_resource(save.game_state);
         new_world.insert_resource(Events::<GameEvent>::with_capacity(16));
 
         let mut log = MessageLog::with_max(50);
-        for msg in messages {
+        for msg in save.messages {
             log.push(msg);
         }
         new_world.insert_resource(log);
-
-        new_world.insert_resource(map);
+        new_world.insert_resource(save.map);
         new_world.insert_resource(default_visual_registry());
 
         let mut player_entity_opt = None;
-        for ent in entities {
-            let pos = Position { x: ent.x, y: ent.y };
+        for ent in save.entities {
             match ent.kind.as_str() {
                 "Player" => {
-                    let battery_current = ent.battery_current.unwrap_or(100);
-                    let battery_max = ent.battery_max.unwrap_or(100);
-                    let player = new_world
-                        .builder()
-                        .with(pos)
-                        .with(Player)
-                        .with(Battery {
-                            current: battery_current,
-                            max: battery_max,
-                        })
-                        .build();
+                    let player = new_world.builder().with(ent.pos).with(Player);
+                    let player = if let Some(battery) = ent.battery {
+                        player.with(battery)
+                    } else {
+                        player
+                    };
+                    let player = player.build();
                     player_entity_opt = Some(player);
                 }
                 "Package" => {
-                    new_world.builder().with(pos).with(Package).build();
+                    new_world.builder().with(ent.pos).with(Package).build();
                 }
                 "Hazard" => {
-                    new_world.builder().with(pos).with(Hazard).build();
+                    new_world.builder().with(ent.pos).with(Hazard).build();
                 }
                 "Chaser" => {
                     new_world
                         .builder()
-                        .with(pos)
+                        .with(ent.pos)
                         .with(Hazard)
                         .with(Chaser)
                         .build();
                 }
                 "BatteryPack" => {
-                    new_world.builder().with(pos).with(BatteryPack).build();
+                    new_world.builder().with(ent.pos).with(BatteryPack).build();
                 }
                 "RechargeStation" => {
                     let charges = ent.charges.unwrap_or(3);
                     new_world
                         .builder()
-                        .with(pos)
+                        .with(ent.pos)
                         .with(RechargeStation { charges })
                         .build();
                 }
@@ -1351,6 +1115,8 @@ impl Game {
 
         self.world = new_world;
         self.player = player;
+        self.fov = save.fov;
+        self.camera = save.camera;
 
         Ok(())
     }
@@ -1377,182 +1143,115 @@ impl Game {
         let mut grid = Grid::new(map.width, map.height);
 
         let registry = self.world.resource::<verryte_terminal::VisualRegistry>();
-        let high_fidelity = self.state().high_fidelity;
+        let tier = self.state().tier;
 
         // Render terrain
         for y in 0..map.height {
             for x in 0..map.width {
-                let cell = if high_fidelity {
-                    if let Some(reg) = registry {
-                        let key = match map.tile(x as i16, y as i16) {
-                            Tile::Wall => "wall",
-                            Tile::Floor => "floor",
-                            Tile::Goal => "goal",
-                        };
-                        if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
-                            reg.get(key)
-                        {
-                            *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
-                        } else {
-                            match map.tile(x as i16, y as i16) {
-                                Tile::Wall => Cell::new('#').with_fg(palette.wall),
-                                Tile::Floor => Cell::new('.').with_fg(palette.floor),
-                                Tile::Goal => Cell::new('G').with_fg(palette.goal),
-                            }
-                        }
+                let pt = Point::new(x as i16, y as i16);
+                let visibility = self.fov.get(pt);
+                if visibility == Visibility::Hidden {
+                    grid.put(
+                        x,
+                        y,
+                        Cell::new(' ').with_fg(Color::BLACK).with_bg(Color::BLACK),
+                    );
+                    continue;
+                }
+
+                let is_explored = visibility == Visibility::Explored;
+
+                let cell = if !self.state().high_fidelity {
+                    match map.tile(x as i16, y as i16) {
+                        Tile::Wall => Cell::new('#').with_fg(palette.primary),
+                        Tile::Floor => Cell::new('.').with_fg(palette.secondary),
+                        Tile::Goal => Cell::new('G').with_fg(palette.success),
+                    }
+                } else if let Some(reg) = registry {
+                    let key = match map.tile(x as i16, y as i16) {
+                        Tile::Wall => "wall",
+                        Tile::Floor => "floor",
+                        Tile::Goal => "goal",
+                    };
+                    if let Some(asset) = reg.get(key) {
+                        *asset.render(tier).get(0, 0).unwrap_or(&Cell::EMPTY)
                     } else {
                         match map.tile(x as i16, y as i16) {
-                            Tile::Wall => Cell::new('#').with_fg(palette.wall),
-                            Tile::Floor => Cell::new('.').with_fg(palette.floor),
-                            Tile::Goal => Cell::new('G').with_fg(palette.goal),
+                            Tile::Wall => Cell::new('#').with_fg(palette.primary),
+                            Tile::Floor => Cell::new('.').with_fg(palette.secondary),
+                            Tile::Goal => Cell::new('G').with_fg(palette.success),
                         }
                     }
                 } else {
                     match map.tile(x as i16, y as i16) {
-                        Tile::Wall => Cell::new('#').with_fg(palette.wall),
-                        Tile::Floor => Cell::new('.').with_fg(palette.floor),
-                        Tile::Goal => Cell::new('G').with_fg(palette.goal),
+                        Tile::Wall => Cell::new('#').with_fg(palette.primary),
+                        Tile::Floor => Cell::new('.').with_fg(palette.secondary),
+                        Tile::Goal => Cell::new('G').with_fg(palette.success),
                     }
+                };
+
+                let cell = if is_explored {
+                    let mut dimmed = cell;
+                    dimmed.fg = Color(dimmed.fg.0 / 3, dimmed.fg.1 / 3, dimmed.fg.2 / 3);
+                    dimmed.bg = Color(dimmed.bg.0 / 3, dimmed.bg.1 / 3, dimmed.bg.2 / 3);
+                    dimmed
+                } else {
+                    cell
                 };
                 grid.put(x, y, cell);
             }
         }
 
-        // Layer order: hazards, packages, player on top.
-        for (_, pos, _) in self.world.query2::<Position, Hazard>() {
-            let cell = if high_fidelity {
-                if let Some(reg) = registry {
-                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
-                        reg.get("hazard")
-                    {
-                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
+        // Helper to render entities
+        let mut render_entity =
+            |key: &str, pos: Position, fallback_glyph: char, fallback_color: Color| {
+                if !self.fov.is_visible(pos) {
+                    return;
+                }
+                let cell = if !self.state().high_fidelity {
+                    Cell::new(fallback_glyph).with_fg(fallback_color)
+                } else if let Some(reg) = registry {
+                    if let Some(asset) = reg.get(key) {
+                        *asset.render(tier).get(0, 0).unwrap_or(&Cell::EMPTY)
                     } else {
-                        Cell::new('h').with_fg(palette.hazard)
+                        Cell::new(fallback_glyph).with_fg(fallback_color)
                     }
                 } else {
-                    Cell::new('h').with_fg(palette.hazard)
-                }
-            } else {
-                Cell::new('h').with_fg(palette.hazard)
+                    Cell::new(fallback_glyph).with_fg(fallback_color)
+                };
+                grid.put(pos.x as u16, pos.y as u16, cell);
             };
-            grid.put(pos.x as u16, pos.y as u16, cell);
+
+        for (_, pos, _) in self.world.query2::<Position, Hazard>() {
+            render_entity("hazard", *pos, 'h', palette.danger);
         }
 
         for (_, pos, _) in self.world.query2::<Position, Chaser>() {
-            let cell = if high_fidelity {
-                if let Some(reg) = registry {
-                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
-                        reg.get("chaser")
-                    {
-                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
-                    } else {
-                        Cell::new('c').with_fg(palette.player)
-                    }
-                } else {
-                    Cell::new('c').with_fg(palette.player)
-                }
-            } else {
-                Cell::new('c').with_fg(palette.player)
-            };
-            grid.put(pos.x as u16, pos.y as u16, cell);
+            render_entity("chaser", *pos, 'c', palette.info);
         }
 
         for (_, pos, _) in self.world.query2::<Position, Package>() {
-            let cell = if high_fidelity {
-                if let Some(reg) = registry {
-                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
-                        reg.get("package")
-                    {
-                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
-                    } else {
-                        Cell::new('p').with_fg(palette.item)
-                    }
-                } else {
-                    Cell::new('p').with_fg(palette.item)
-                }
-            } else {
-                Cell::new('p').with_fg(palette.item)
-            };
-            grid.put(pos.x as u16, pos.y as u16, cell);
+            render_entity("package", *pos, 'p', palette.accent);
         }
 
         for (_, pos, _) in self.world.query2::<Position, BatteryPack>() {
-            let cell = if high_fidelity {
-                if let Some(reg) = registry {
-                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
-                        reg.get("battery_pack")
-                    {
-                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
-                    } else {
-                        Cell::new('b').with_fg(palette.item)
-                    }
-                } else {
-                    Cell::new('b').with_fg(palette.item)
-                }
-            } else {
-                Cell::new('b').with_fg(palette.item)
-            };
-            grid.put(pos.x as u16, pos.y as u16, cell);
+            render_entity("battery_pack", *pos, 'b', palette.accent);
         }
 
         for (_, pos, _) in self.world.query2::<Position, RechargeStation>() {
-            let cell = if high_fidelity {
-                if let Some(reg) = registry {
-                    if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) =
-                        reg.get("recharge_station")
-                    {
-                        *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
-                    } else {
-                        Cell::new('R').with_fg(palette.item)
-                    }
-                } else {
-                    Cell::new('R').with_fg(palette.item)
-                }
-            } else {
-                Cell::new('R').with_fg(palette.item)
-            };
-            grid.put(pos.x as u16, pos.y as u16, cell);
+            render_entity("recharge_station", *pos, 'R', palette.accent);
         }
 
         let player_pos = self.player_position();
-        let player_cell = if high_fidelity {
-            if let Some(reg) = registry {
-                let key = if self.state().has_package {
-                    "player_carrying"
-                } else {
-                    "player"
-                };
-                if let Some(verryte_terminal::VisualAsset::BlockSprite(sprite_grid)) = reg.get(key)
-                {
-                    *sprite_grid.get(0, 0).unwrap_or(&Cell::EMPTY)
-                } else {
-                    let player_color = if self.state().has_package {
-                        palette.player
-                    } else {
-                        palette.foreground
-                    };
-                    Cell::new('@').with_fg(player_color)
-                }
-            } else {
-                let player_color = if self.state().has_package {
-                    palette.player
-                } else {
-                    palette.foreground
-                };
-                Cell::new('@').with_fg(player_color)
-            }
+        let player_color = if self.state().has_package {
+            palette.info
         } else {
-            let player_color = if self.state().has_package {
-                palette.player
-            } else {
-                palette.foreground
-            };
-            Cell::new('@').with_fg(player_color)
+            palette.foreground
         };
-        grid.put(player_pos.x as u16, player_pos.y as u16, player_cell);
+        render_entity("player", player_pos, '@', player_color);
 
         if let Some(cursor) = self.state().cursor {
-            if self.map().in_bounds(cursor) {
+            if self.map().in_bounds(cursor) && self.fov.is_explored(cursor) {
                 let x = cursor.x as u16;
                 let y = cursor.y as u16;
                 if let Some(cell) = grid.get(x, y).copied() {
@@ -1566,25 +1265,14 @@ impl Game {
     /// Render a clipped viewport centered as closely as possible on the player.
     pub fn render_viewport(&self, width: u16, height: u16) -> Grid {
         let frame = self.render();
-        let origin = self.viewport_origin(width, height);
-        let x = origin.x.max(0) as u16;
-        let y = origin.y.max(0) as u16;
-        frame.viewport(Rect::new(
-            x,
-            y,
-            width.min(frame.width()),
-            height.min(frame.height()),
-        ))
+        let rect = self.camera.viewport_rect(width, height);
+        frame.viewport(rect)
     }
 
     /// Top-left map coordinate for a viewport centered on the player.
     pub fn viewport_origin(&self, width: u16, height: u16) -> Position {
-        let map = self.map();
-        let player = self.player_position();
-        Position {
-            x: centered_origin(player.x, width, map.width) as i16,
-            y: centered_origin(player.y, height, map.height) as i16,
-        }
+        let rect = self.camera.viewport_rect(width, height);
+        Position::new(rect.x as i16, rect.y as i16)
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -1612,7 +1300,12 @@ impl Game {
         chasers.sort_unstable();
         let map = self.map();
         let state = self.state();
-        let visible_tiles = self.visible_tiles();
+        let mut visible_tiles = Vec::new();
+        for pt in map.tiles.points() {
+            if self.fov.is_visible(pt) {
+                visible_tiles.push(pt);
+            }
+        }
         let visible_hazards = self.visible_hazards_in(&visible_tiles);
         let reachable_tiles = map.reachable_from(player);
         let goals = self.goal_positions();
@@ -1710,15 +1403,6 @@ impl Default for Game {
     fn default() -> Self {
         Self::new()
     }
-}
-
-enum SpawnKind {
-    Player,
-    Package,
-    Hazard,
-    Chaser,
-    BatteryPack,
-    RechargeStation,
 }
 
 fn centered_origin(center: i16, span: u16, limit: u16) -> u16 {
