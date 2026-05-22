@@ -28,6 +28,7 @@ pub struct Game {
     pub schedule: Schedule,
     pub router: InputRouter<Action>,
     pub camera: Camera,
+    pub vfx: verryte_terminal::vfx::VfxSystem,
 }
 
 impl Game {
@@ -44,7 +45,10 @@ impl Game {
             outcome: Outcome::Playing,
             cursor: Position::new(5, 5),
             selected_entity: None,
+            concert_energy: 0,
+            targeting: crate::components::TargetingMode::None,
         });
+        world.insert_resource(crate::components::TelegraphZone::default());
         world.insert_resource(GameClock::new());
         world.insert_resource(Rng::seed(1));
         world.insert_resource(Events::<GameEvent>::with_capacity(16));
@@ -59,6 +63,7 @@ impl Game {
             schedule: Schedule::new(),
             router: InputRouter::new(default_bindings()),
             camera: Camera::new(5.0, 5.0),
+            vfx: verryte_terminal::vfx::VfxSystem::new(),
         };
 
         game.spawn_character(Position::new(4, 4), Team::Player, CharacterClass::Warrior);
@@ -178,7 +183,7 @@ impl Game {
 
     pub fn is_occupied_except(&self, pos: Position, except: Entity) -> bool {
         for (e, p) in self.world.query::<Position>() {
-            if e != except && *p == pos {
+            if e != except && *p == pos && self.world.get::<Team>(e).is_some() {
                 return true;
             }
         }
@@ -203,7 +208,7 @@ impl Game {
 
         let mut occupied = HashSet::new();
         for (e, p) in self.world.query::<Position>() {
-            if e != entity {
+            if e != entity && self.world.get::<Team>(e).is_some() {
                 occupied.insert(*p);
             }
         }
@@ -219,7 +224,7 @@ impl Game {
         let map = self.world.resource::<TacticalMap>().unwrap();
         let mut occupied = HashSet::new();
         for (e, p) in self.world.query::<Position>() {
-            if e != entity {
+            if e != entity && self.world.get::<Team>(e).is_some() {
                 occupied.insert(*p);
             }
         }
@@ -283,6 +288,60 @@ impl Game {
     }
 
     pub fn end_player_turn(&mut self) {
+        // Execute any telegraphed attacks first!
+        let telegraph_tiles = {
+            let mut telegraph_zone = self.world.resource_mut::<crate::components::TelegraphZone>().unwrap();
+            let tiles = telegraph_zone.tiles.clone();
+            telegraph_zone.tiles.clear();
+            tiles
+        };
+
+        if !telegraph_tiles.is_empty() {
+            self.log("Blight Sovereign releases Dark Annihilation!");
+            
+            // VFX feedback!
+            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(120, 0, 180), 0.3));
+            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(4.5, 0.6));
+
+            let mut hit_count = 0;
+            // Check all player characters standing in telegraph tiles
+            let mut players = Vec::new();
+            for (e, p, team) in self.world.query2::<Position, Team>() {
+                if *team == Team::Player && telegraph_tiles.contains(p) {
+                    players.push(e);
+                }
+            }
+
+            for pe in players {
+                let target_class = *self.world.get::<CharacterClass>(pe).unwrap();
+                let target_pos = *self.world.get::<Position>(pe).unwrap();
+                let target_name = Self::get_class_name(target_class);
+                let mut final_hp = 0;
+                if let Some(stats) = self.world.get_mut::<Stats>(pe) {
+                    stats.hp -= 50; // Fixed high damage
+                    final_hp = stats.hp;
+                }
+                self.log(format!("Dark Annihilation hit {} for 50 damage! (HP: {})", target_name, final_hp));
+                hit_count += 1;
+
+                let cx = target_pos.x as f32 * 8.0 + 4.0;
+                let cy = target_pos.y as f32 * 4.0 + 2.0;
+                self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                    cx, cy - 2.0, "-50", Color(255, 20, 20), true
+                ));
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_fire(cx, cy, 15));
+
+                if final_hp <= 0 {
+                    let name_str = target_name.to_string();
+                    self.handle_defeat(pe, &name_str, target_class, target_pos);
+                }
+            }
+
+            if hit_count == 0 {
+                self.log("Dark Annihilation missed everyone!");
+            }
+        }
+
         {
             let mut state = self.world.resource_mut::<GameState>().unwrap();
             state.phase = TurnPhase::Enemy;
@@ -385,6 +444,49 @@ impl Game {
 
                 let range = 2; // Boss attack range
                 if min_dist <= range {
+                    // Boss is next to a player. Let's decide whether to telegraph or normal attack!
+                    let rng_val = {
+                        let mut rng = self.world.resource_mut::<Rng>().unwrap();
+                        rng.next_u32(100)
+                    };
+
+                    let telegraph_active = {
+                        let telegraph_zone = self.world.resource::<crate::components::TelegraphZone>().unwrap();
+                        !telegraph_zone.tiles.is_empty()
+                    };
+
+                    if !telegraph_active && enemy_class == CharacterClass::Boss && rng_val < 40 {
+                        // Boss chooses to telegraph a 3x3 attack around player_pos!
+                        let mut tiles = Vec::new();
+                        for dy in -1..=1 {
+                            for dx in -1..=1 {
+                                let tx = player_pos.x + dx;
+                                let ty = player_pos.y + dy;
+                                tiles.push(Position::new(tx, ty));
+                            }
+                        }
+                        {
+                            let mut telegraph_zone = self.world.resource_mut::<crate::components::TelegraphZone>().unwrap();
+                            telegraph_zone.tiles = tiles;
+                            telegraph_zone.damage = 50;
+                        }
+                        
+                        if let Some(stats) = self.world.get_mut::<Stats>(enemy_entity) {
+                            stats.ap = 0; // Spends all AP to telegraph
+                        }
+                        
+                        self.log("Blight Sovereign is charging Dark Annihilation! Area telegraphed in RED.");
+                        
+                        // Spawn dark particles
+                        let ex = enemy_pos.x as f32 * 8.0 + 4.0;
+                        let ey = enemy_pos.y as f32 * 4.0 + 2.0;
+                        self.vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                            ex, ey, 30, Color(120, 20, 180), &['░', '▓', '✦', '¤']
+                        ));
+                        self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
+                        break;
+                    }
+
                     let mut ap_ok = false;
                     if let Some(stats) = self.world.get_mut::<Stats>(enemy_entity) {
                         if stats.ap >= 1 {
@@ -410,6 +512,14 @@ impl Game {
                             enemy_name, player_name, damage, final_hp
                         ));
 
+                        let target_cx = player_pos.x as f32 * 8.0 + 4.0;
+                        let target_cy = player_pos.y as f32 * 4.0 + 2.0;
+                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                            target_cx, target_cy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
+                        ));
+                        self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(target_cx, target_cy, -1.0));
+                        self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.25));
+
                         if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
                             log.send(GameEvent::Attacked {
                                 attacker: enemy_entity,
@@ -419,14 +529,9 @@ impl Game {
                         }
 
                         if defeated {
-                            self.log(format!("{} was defeated!", player_name));
-                            if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
-                                log.send(GameEvent::Defeated {
-                                    entity: player_entity,
-                                });
-                            }
-                            self.world.despawn(player_entity);
-
+                            let name_str = player_name.to_string();
+                            self.handle_defeat(player_entity, &name_str, player_class, player_pos);
+                            
                             let mut player_exists = false;
                             for (_e, team) in self.world.query::<Team>() {
                                 if *team == Team::Player {
@@ -496,6 +601,494 @@ impl Game {
         }
     }
 
+    pub fn try_absorb_echo(&mut self, pos: Position) {
+        let mut echo_to_absorb = None;
+        for (e, p, _echo) in self.world.query2::<Position, crate::components::EchoItem>() {
+            if *p == pos {
+                echo_to_absorb = Some(e);
+                break;
+            }
+        }
+        if let Some(echo_ent) = echo_to_absorb {
+            self.world.despawn(echo_ent);
+            self.log("Absorbed Blight Sovereign Echo! Echo absorbed successfully.");
+            self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+            
+            // Spawn absorption VFX
+            self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(pos.x as f32 * 8.0 + 4.0, pos.y as f32 * 4.0 + 2.0, 30));
+            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.6));
+            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(200, 255, 200), 0.3));
+        }
+    }
+
+    pub fn handle_defeat(&mut self, entity: Entity, name: &str, class: CharacterClass, pos: Position) {
+        self.log(format!("{} was defeated!", name));
+        if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+            log.send(GameEvent::Defeated { entity });
+        }
+        self.world.despawn(entity);
+
+        if class == CharacterClass::Boss {
+            self.log("Blight Sovereign dropped an Echo! Move a character to its tile to absorb it.");
+            self.world.builder()
+                .with(pos)
+                .with(crate::components::EchoItem { class })
+                .build();
+            
+            // Visual boss death burst
+            self.vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                pos.x as f32 * 8.0 + 4.0,
+                pos.y as f32 * 4.0 + 2.0,
+                40,
+                Color(180, 50, 255),
+                &['✦', '✧', '░', '▓', '¤']
+            ));
+            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.8));
+            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(255, 255, 255), 0.4));
+        } else {
+            let mut enemy_exists = false;
+            for (_e, team) in self.world.query::<Team>() {
+                if *team == Team::Enemy {
+                    enemy_exists = true;
+                    break;
+                }
+            }
+            let mut echo_exists = false;
+            for (_e, _echo) in self.world.query::<crate::components::EchoItem>() {
+                echo_exists = true;
+                break;
+            }
+            if !enemy_exists && !echo_exists {
+                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+                self.log("Victory! All enemies defeated.");
+            }
+        }
+    }
+
+    pub fn build_concert_energy(&mut self, amount: u32) {
+        let mut energy = 0;
+        if let Some(mut state) = self.world.resource_mut::<GameState>() {
+            state.concert_energy = std::cmp::min(100, state.concert_energy + amount);
+            energy = state.concert_energy;
+        }
+        self.log(format!("Concert Energy: {}/100", energy));
+    }
+
+    pub fn check_parry(&mut self, target_pos: Position) {
+        let mut target_is_boss = false;
+        for (_e, class, pos) in self.world.query2::<CharacterClass, Position>() {
+            if *class == CharacterClass::Boss && *pos == target_pos {
+                target_is_boss = true;
+                break;
+            }
+        }
+
+        if !target_is_boss {
+            return;
+        }
+
+        let mut player_in_telegraph = false;
+        let mut acting_pos = None;
+        if let Some(state) = self.world.resource::<GameState>() {
+            if let Some(sel_ent) = state.selected_entity {
+                if let Some(pos) = self.world.get::<Position>(sel_ent) {
+                    acting_pos = Some(*pos);
+                }
+            }
+        }
+
+        if let Some(telegraph_zone) = self.world.resource::<crate::components::TelegraphZone>() {
+            if let Some(pos) = acting_pos {
+                if telegraph_zone.tiles.contains(&pos) {
+                    player_in_telegraph = true;
+                }
+            } else {
+                for (_e, team, pos) in self.world.query2::<Team, Position>() {
+                    if *team == Team::Player && telegraph_zone.tiles.contains(pos) {
+                        player_in_telegraph = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if player_in_telegraph {
+            self.log("PARRY! Blight Sovereign's telegraphed attack was canceled!");
+            if let Some(mut telegraph_zone) = self.world.resource_mut::<crate::components::TelegraphZone>() {
+                telegraph_zone.tiles.clear();
+            }
+            
+            // Stun the boss
+            let mut boss_ent = None;
+            for (e, class) in self.world.query::<CharacterClass>() {
+                if *class == CharacterClass::Boss {
+                    boss_ent = Some(e);
+                    break;
+                }
+            }
+            if let Some(be) = boss_ent {
+                if let Some(mut stats) = self.world.get_mut::<Stats>(be) {
+                    stats.ap = 0;
+                    self.log("Blight Sovereign is STUNNED and loses its action points!");
+                }
+            }
+            
+            self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(255, 255, 255), 0.25));
+            self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.5));
+            let cx = target_pos.x as f32 * 8.0 + 4.0;
+            let cy = target_pos.y as f32 * 4.0 + 2.0;
+            self.vfx.particles.extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
+            self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                cx, cy - 2.0, "PARRIED!", Color(255, 255, 100), true
+            ));
+        }
+    }
+
+    pub fn trigger_qte_swap(&mut self, active_ent: Entity) {
+        let mut players = Vec::new();
+        for (e, team) in self.world.query::<Team>() {
+            if *team == Team::Player {
+                players.push(e);
+            }
+        }
+        players.sort();
+        if players.len() <= 1 {
+            self.log("Need at least 2 player characters on field to QTE swap!");
+            return;
+        }
+
+        let current_idx = players.iter().position(|&e| e == active_ent).unwrap();
+        let next_idx = (current_idx + 1) % players.len();
+        let next_ent = players[next_idx];
+
+        let active_pos = *self.world.get::<Position>(active_ent).unwrap();
+        let next_pos = *self.world.get::<Position>(next_ent).unwrap();
+
+        // Swap positions
+        if let Some(pos) = self.world.get_mut::<Position>(active_ent) {
+            *pos = next_pos;
+        }
+        if let Some(pos) = self.world.get_mut::<Position>(next_ent) {
+            *pos = active_pos;
+        }
+
+        self.world.resource_mut::<GameState>().unwrap().concert_energy = 0;
+        self.world.resource_mut::<GameState>().unwrap().selected_entity = Some(next_ent);
+
+        let next_class = *self.world.get::<CharacterClass>(next_ent).unwrap();
+        let active_class = *self.world.get::<CharacterClass>(active_ent).unwrap();
+        let active_name = Self::get_class_name(active_class);
+        let next_name = Self::get_class_name(next_class);
+
+        self.log(format!("QTE Swap! {} swaps in for {} at ({}, {})!", next_name, active_name, active_pos.x, active_pos.y));
+
+        let cx = active_pos.x as f32 * 8.0 + 4.0;
+        let cy = active_pos.y as f32 * 4.0 + 2.0;
+
+        match next_class {
+            CharacterClass::Warrior => {
+                self.log("Warrior Intro Skill: Cloud Slasher!");
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(cx, cy, 1.0));
+                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
+                
+                let mut targets = Vec::new();
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team == Team::Enemy && (p.x - active_pos.x).abs() <= 1 && (p.y - active_pos.y).abs() <= 1 {
+                        targets.push(e);
+                    }
+                }
+                for te in targets {
+                    let target_class = *self.world.get::<CharacterClass>(te).unwrap();
+                    let target_pos = *self.world.get::<Position>(te).unwrap();
+                    let target_name = Self::get_class_name(target_class);
+                    let mut final_hp = 0;
+                    if let Some(t_stats) = self.world.get_mut::<Stats>(te) {
+                        t_stats.hp -= 20;
+                        final_hp = t_stats.hp;
+                    }
+                    self.log(format!("Cloud Slasher hit {} for 20 damage! (HP: {})", target_name, final_hp));
+                    
+                    let tcx = target_pos.x as f32 * 8.0 + 4.0;
+                    let tcy = target_pos.y as f32 * 4.0 + 2.0;
+                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                        tcx, tcy - 2.0, "-20", Color(255, 80, 50), true
+                    ));
+                    if final_hp <= 0 {
+                        let name_str = target_name.to_string();
+                        self.handle_defeat(te, &name_str, target_class, target_pos);
+                    } else {
+                        self.check_parry(target_pos);
+                    }
+                }
+            }
+            CharacterClass::Mage => {
+                self.log("Mage Intro Skill: Lightning Storm!");
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
+                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.3));
+                
+                let mut targets = Vec::new();
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team == Team::Enemy {
+                        let dx = (p.x - active_pos.x).abs();
+                        let dy = (p.y - active_pos.y).abs();
+                        if (dx == 0 && dy <= 2) || (dy == 0 && dx <= 2) {
+                            targets.push(e);
+                        }
+                    }
+                }
+                for te in targets {
+                    let target_class = *self.world.get::<CharacterClass>(te).unwrap();
+                    let target_pos = *self.world.get::<Position>(te).unwrap();
+                    let target_name = Self::get_class_name(target_class);
+                    let mut final_hp = 0;
+                    if let Some(t_stats) = self.world.get_mut::<Stats>(te) {
+                        t_stats.hp -= 30;
+                        final_hp = t_stats.hp;
+                    }
+                    self.log(format!("Lightning Storm hit {} for 30 damage! (HP: {})", target_name, final_hp));
+                    
+                    let tcx = target_pos.x as f32 * 8.0 + 4.0;
+                    let tcy = target_pos.y as f32 * 4.0 + 2.0;
+                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                        tcx, tcy - 2.0, "-30", Color(255, 80, 50), true
+                    ));
+                    if final_hp <= 0 {
+                        let name_str = target_name.to_string();
+                        self.handle_defeat(te, &name_str, target_class, target_pos);
+                    } else {
+                        self.check_parry(target_pos);
+                    }
+                }
+            }
+            CharacterClass::Healer => {
+                self.log("Healer Intro Skill: Holy Aura!");
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(cx, cy, 25));
+                self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(100, 255, 100), 0.2));
+                
+                for pe in players {
+                    let mut final_hp = 0;
+                    let mut p_class = CharacterClass::Warrior;
+                    if let Some(stats) = self.world.get_mut::<Stats>(pe) {
+                        stats.hp = std::cmp::min(stats.max_hp, stats.hp + 40);
+                        final_hp = stats.hp;
+                        p_class = *self.world.get::<CharacterClass>(pe).unwrap();
+                    }
+                    let p_name = Self::get_class_name(p_class);
+                    self.log(format!("Holy Aura healed {} for 40 HP! (HP: {})", p_name, final_hp));
+                    
+                    let p_pos = *self.world.get::<Position>(pe).unwrap();
+                    let pcx = p_pos.x as f32 * 8.0 + 4.0;
+                    let pcy = p_pos.y as f32 * 4.0 + 2.0;
+                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                        pcx, pcy - 2.0, "+40", Color(50, 255, 50), true
+                    ));
+                    self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 8));
+                }
+            }
+            _ => {}
+        }
+        
+        self.camera.look_at(active_pos.x as f32, active_pos.y as f32);
+    }
+
+    pub fn execute_skill(
+        &mut self,
+        caster: Entity,
+        class: CharacterClass,
+        skill: crate::components::TargetingMode,
+        target_pos: Position,
+        value: i32,
+        is_aoe: bool,
+    ) {
+        let caster_name = Self::get_class_name(class);
+        let skill_name = match (class, skill) {
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => "Heavy Slash",
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => "Dragon Fire",
+            (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => "Thunderbolt",
+            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => "Glacial Tempest",
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => "Holy Light",
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => "Divine Protection",
+            _ => "Unknown Skill",
+        };
+
+        self.log(format!("{} cast {} at ({}, {})!", caster_name, skill_name, target_pos.x, target_pos.y));
+
+        let cx = target_pos.x as f32 * 8.0 + 4.0;
+        let cy = target_pos.y as f32 * 4.0 + 2.0;
+
+        match (class, skill) {
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(cx, cy, 1.0));
+                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.3));
+            }
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_fire(cx, cy, 25));
+                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(3.5, 0.5));
+                self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(255, 100, 30), 0.2));
+            }
+            (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
+                let caster_pos = *self.world.get::<Position>(caster).unwrap();
+                let ccx = caster_pos.x as f32 * 8.0 + 4.0;
+                let ccy = caster_pos.y as f32 * 4.0 + 2.0;
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_lightning(ccx, ccy, cx, cy));
+                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.2));
+            }
+            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_ice(cx, cy, 25));
+                self.vfx.aoe_rings.push(verryte_terminal::vfx::AoeRing {
+                    cx: cx as i32,
+                    cy: cy as i32,
+                    max_radius: 12.0,
+                    current_radius: 1.0,
+                    expand_speed: 18.0,
+                    color: Color(100, 180, 255),
+                    lifetime: 0.6,
+                    max_lifetime: 0.6,
+                });
+            }
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(cx, cy, 20));
+            }
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
+                self.vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(Color(100, 255, 100), 0.3));
+            }
+            _ => {}
+        }
+
+        if class == CharacterClass::Healer {
+            if skill == crate::components::TargetingMode::Skill2 {
+                let mut players = Vec::new();
+                for (e, team) in self.world.query::<Team>() {
+                    if *team == Team::Player {
+                        players.push(e);
+                    }
+                }
+                for pe in players {
+                    let mut final_hp = 0;
+                    let mut p_class = CharacterClass::Warrior;
+                    if let Some(stats) = self.world.get_mut::<Stats>(pe) {
+                        stats.hp = std::cmp::min(stats.max_hp, stats.hp + value);
+                        final_hp = stats.hp;
+                        p_class = *self.world.get::<CharacterClass>(pe).unwrap();
+                    }
+                    let p_name = Self::get_class_name(p_class);
+                    self.log(format!("Healed {} for {} HP! (HP: {})", p_name, value, final_hp));
+                    
+                    let p_pos = *self.world.get::<Position>(pe).unwrap();
+                    let pcx = p_pos.x as f32 * 8.0 + 4.0;
+                    let pcy = p_pos.y as f32 * 4.0 + 2.0;
+                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                        pcx, pcy - 2.0, &format!("+{}", value), Color(50, 255, 50), true
+                    ));
+                    self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 10));
+                }
+            } else {
+                if let Some((target_ent, target_team, target_stats, target_class)) = self.get_entity_at(target_pos) {
+                    if target_team == Team::Player {
+                        let mut final_hp = 0;
+                        if let Some(stats) = self.world.get_mut::<Stats>(target_ent) {
+                            stats.hp = std::cmp::min(stats.max_hp, stats.hp + value);
+                            final_hp = stats.hp;
+                        }
+                        let target_name = Self::get_class_name(target_class);
+                        self.log(format!("Healed {} for {} HP! (HP: {})", target_name, value, final_hp));
+                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                            cx, cy - 2.0, &format!("+{}", value), Color(50, 255, 50), true
+                        ));
+                    } else {
+                        self.log("Cannot heal enemies!");
+                    }
+                } else {
+                    self.log("No player character at target location!");
+                }
+            }
+        } else {
+            if is_aoe {
+                let mut targets = Vec::new();
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team == Team::Enemy {
+                        let is_in_aoe = match (class, skill) {
+                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
+                                (p.x - target_pos.x).abs() <= 1 && (p.y - target_pos.y).abs() <= 1
+                            }
+                            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
+                                let dx = (p.x - target_pos.x).abs();
+                                let dy = (p.y - target_pos.y).abs();
+                                (dx == 0 && dy <= 2) || (dy == 0 && dx <= 2)
+                            }
+                            _ => false,
+                        };
+                        if is_in_aoe {
+                            targets.push(e);
+                        }
+                    }
+                }
+
+                if targets.is_empty() {
+                    self.log("Skill hit no enemies.");
+                }
+
+                for te in targets {
+                    let target_class = *self.world.get::<CharacterClass>(te).unwrap();
+                    let target_pos = *self.world.get::<Position>(te).unwrap();
+                    let target_name = Self::get_class_name(target_class);
+                    let mut final_hp = 0;
+                    let mut damage = value;
+                    if let Some(t_stats) = self.world.get_mut::<Stats>(te) {
+                        damage = std::cmp::max(1, value - t_stats.def);
+                        t_stats.hp -= damage;
+                        final_hp = t_stats.hp;
+                    }
+                    self.log(format!("Hit {} for {} damage! (Target HP: {})", target_name, damage, final_hp));
+                    
+                    let tcx = target_pos.x as f32 * 8.0 + 4.0;
+                    let tcy = target_pos.y as f32 * 4.0 + 2.0;
+                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                        tcx, tcy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
+                    ));
+
+                    if final_hp <= 0 {
+                        let name_str = target_name.to_string();
+                        self.handle_defeat(te, &name_str, target_class, target_pos);
+                    } else {
+                        self.check_parry(target_pos);
+                    }
+                }
+                
+                self.build_concert_energy(30);
+            } else {
+                if let Some((target_ent, target_team, target_stats, target_class)) = self.get_entity_at(target_pos) {
+                    if target_team == Team::Enemy {
+                        let damage = std::cmp::max(1, value - target_stats.def);
+                        let mut final_hp = 0;
+                        if let Some(stats) = self.world.get_mut::<Stats>(target_ent) {
+                            stats.hp -= damage;
+                            final_hp = stats.hp;
+                        }
+                        let target_name = Self::get_class_name(target_class);
+                        self.log(format!("Hit {} for {} damage! (Target HP: {})", target_name, damage, final_hp));
+                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                            cx, cy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
+                        ));
+
+                        if final_hp <= 0 {
+                            let name_str = target_name.to_string();
+                            self.handle_defeat(target_ent, &name_str, target_class, target_pos);
+                        } else {
+                            self.check_parry(target_pos);
+                        }
+                        
+                        self.build_concert_energy(25);
+                    } else {
+                        self.log("Cannot target player characters with damage skills!");
+                    }
+                } else {
+                    self.log("No enemy target at position!");
+                }
+            }
+        }
+    }
+
     pub fn apply_action(&mut self, action: Action, _source: ActionSource) {
         match action {
             Action::MoveNorth | Action::MoveSouth | Action::MoveEast | Action::MoveWest => {
@@ -504,16 +1097,75 @@ impl Game {
                     let map = self.world.resource::<TacticalMap>().unwrap();
                     (map.width, map.height)
                 };
-                let state = self.world.resource_mut::<GameState>().unwrap();
+                let mut state = self.world.resource_mut::<GameState>().unwrap();
                 state.cursor = state.cursor.step(dir);
                 state.cursor.x = state.cursor.x.clamp(0, width as i16 - 1);
                 state.cursor.y = state.cursor.y.clamp(0, height as i16 - 1);
+                let target_pos = state.cursor;
                 self.camera
-                    .look_at(state.cursor.x as f32, state.cursor.y as f32);
+                    .look_at(target_pos.x as f32, target_pos.y as f32);
             }
             Action::Confirm => {
-                let cursor = self.world.resource::<GameState>().unwrap().cursor;
-                let selected_entity = self.world.resource::<GameState>().unwrap().selected_entity;
+                let state_clone = self.world.resource::<GameState>().unwrap().clone();
+                let cursor = state_clone.cursor;
+                let selected_entity = state_clone.selected_entity;
+
+                // Handle skill casting confirmation
+                if state_clone.targeting != crate::components::TargetingMode::None {
+                    let sel_entity = selected_entity.unwrap();
+                    let caster_pos = *self.world.get::<Position>(sel_entity).unwrap();
+                    let caster_class = *self.world.get::<CharacterClass>(sel_entity).unwrap();
+                    
+                    let (range, ap_cost, is_aoe, damage_or_heal) = match (caster_class, state_clone.targeting) {
+                        (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
+                            (1, 2, false, 45)
+                        }
+                        (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
+                            (3, 3, true, 50)
+                        }
+                        (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
+                            (3, 2, false, 55)
+                        }
+                        (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
+                            (4, 3, true, 40)
+                        }
+                        (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
+                            (2, 2, false, 50)
+                        }
+                        (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
+                            (0, 3, true, 40)
+                        }
+                        _ => (1, 1, false, 0),
+                    };
+
+                    let dist = (caster_pos.x - cursor.x).abs() + (caster_pos.y - cursor.y).abs();
+                    if range > 0 && dist > range {
+                        self.log("Target is out of skill range!");
+                        return;
+                    }
+
+                    let mut ap_ok = false;
+                    if let Some(stats) = self.world.get_mut::<Stats>(sel_entity) {
+                        if stats.ap >= ap_cost {
+                            stats.ap -= ap_cost;
+                            ap_ok = true;
+                        }
+                    }
+
+                    if !ap_ok {
+                        self.log("Not enough AP to cast this skill!");
+                        self.world.resource_mut::<GameState>().unwrap().targeting = crate::components::TargetingMode::None;
+                        return;
+                    }
+
+                    self.execute_skill(sel_entity, caster_class, state_clone.targeting, cursor, damage_or_heal, is_aoe);
+
+                    let mut state_mut = self.world.resource_mut::<GameState>().unwrap();
+                    state_mut.targeting = crate::components::TargetingMode::None;
+                    state_mut.selected_entity = None;
+                    self.log("Selection cleared.");
+                    return;
+                }
 
                 if let Some(sel_entity) = selected_entity {
                     if let Some((target_entity, target_team, target_stats, target_class)) =
@@ -565,6 +1217,14 @@ impl Game {
                                         attacker_name, target_name, damage, final_hp
                                     ));
 
+                                    let target_cx = cursor.x as f32 * 8.0 + 4.0;
+                                    let target_cy = cursor.y as f32 * 4.0 + 2.0;
+                                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                                        target_cx, target_cy - 2.0, &format!("-{}", damage), Color(255, 50, 50), true
+                                    ));
+                                    self.vfx.particles.extend(verryte_terminal::vfx::emit_slash(target_cx, target_cy, 1.0));
+                                    self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(1.5, 0.25));
+
                                     if let Some(log) =
                                         self.world.resource_mut::<Events<GameEvent>>()
                                     {
@@ -576,31 +1236,14 @@ impl Game {
                                     }
 
                                     if defeated {
-                                        self.log(format!("{} was defeated!", target_name));
-                                        if let Some(log) =
-                                            self.world.resource_mut::<Events<GameEvent>>()
-                                        {
-                                            log.send(GameEvent::Defeated {
-                                                entity: target_entity,
-                                            });
-                                        }
-                                        self.world.despawn(target_entity);
-
-                                        let mut enemy_exists = false;
-                                        for (_e, team) in self.world.query::<Team>() {
-                                            if *team == Team::Enemy {
-                                                enemy_exists = true;
-                                                break;
-                                            }
-                                        }
-                                        if !enemy_exists {
-                                            self.world
-                                                .resource_mut::<GameState>()
-                                                .unwrap()
-                                                .outcome = Outcome::Victory;
-                                            self.log("Victory! All enemies defeated.");
-                                        }
+                                        let name_str = target_name.to_string();
+                                        self.handle_defeat(target_entity, &name_str, target_class, cursor);
+                                    } else {
+                                        self.check_parry(cursor);
                                     }
+                                    
+                                    self.build_concert_energy(20);
+
                                     self.world
                                         .resource_mut::<GameState>()
                                         .unwrap()
@@ -645,6 +1288,13 @@ impl Game {
                                             target_name, heal_val, final_hp
                                         ));
 
+                                        let target_cx = cursor.x as f32 * 8.0 + 4.0;
+                                        let target_cy = cursor.y as f32 * 4.0 + 2.0;
+                                        self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                                            target_cx, target_cy - 2.0, &format!("+{}", heal_val), Color(50, 255, 50), true
+                                        ));
+                                        self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(target_cx, target_cy, 15));
+
                                         if let Some(log) =
                                             self.world.resource_mut::<Events<GameEvent>>()
                                         {
@@ -654,6 +1304,9 @@ impl Game {
                                                 amount: heal_val,
                                             });
                                         }
+                                        
+                                        self.build_concert_energy(15);
+
                                         self.world
                                             .resource_mut::<GameState>()
                                             .unwrap()
@@ -709,6 +1362,11 @@ impl Game {
                                         char_name, cursor.x, cursor.y, dist
                                     ));
 
+                                    // Spawn movement particles
+                                    let tcx = cursor.x as f32 * 8.0 + 4.0;
+                                    let tcy = cursor.y as f32 * 4.0 + 2.0;
+                                    self.vfx.particles.extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 5));
+
                                     if let Some(log) =
                                         self.world.resource_mut::<Events<GameEvent>>()
                                     {
@@ -718,6 +1376,8 @@ impl Game {
                                             to: cursor,
                                         });
                                     }
+
+                                    self.try_absorb_echo(cursor);
 
                                     self.world
                                         .resource_mut::<GameState>()
@@ -747,11 +1407,15 @@ impl Game {
                             ));
                         }
                     }
+                    self.try_absorb_echo(cursor);
                 }
             }
             Action::Cancel => {
                 let mut state = self.world.resource_mut::<GameState>().unwrap();
-                if state.selected_entity.is_some() {
+                if state.targeting != crate::components::TargetingMode::None {
+                    state.targeting = crate::components::TargetingMode::None;
+                    self.log("Skill targeting canceled.");
+                } else if state.selected_entity.is_some() {
                     state.selected_entity = None;
                     self.log("Selection cleared.");
                 }
@@ -761,6 +1425,39 @@ impl Game {
             }
             Action::PrevCharacter => {
                 self.cycle_character(false);
+            }
+            Action::Skill1 => {
+                let state = self.world.resource::<GameState>().unwrap();
+                if state.selected_entity.is_some() {
+                    let mut state_mut = self.world.resource_mut::<GameState>().unwrap();
+                    state_mut.targeting = crate::components::TargetingMode::Skill1;
+                    self.log("Skill 1 targeted! Use cursor to select target and press Confirm.");
+                } else {
+                    self.log("Select a character first to cast a skill!");
+                }
+            }
+            Action::Skill2 => {
+                let state = self.world.resource::<GameState>().unwrap();
+                if state.selected_entity.is_some() {
+                    let mut state_mut = self.world.resource_mut::<GameState>().unwrap();
+                    state_mut.targeting = crate::components::TargetingMode::Skill2;
+                    self.log("Skill 2 targeted! Use cursor to select target and press Confirm.");
+                } else {
+                    self.log("Select a character first to cast a skill!");
+                }
+            }
+            Action::Skill3 => {
+                let energy = self.world.resource::<GameState>().unwrap().concert_energy;
+                if energy >= 100 {
+                    let active_entity = self.world.resource::<GameState>().unwrap().selected_entity;
+                    if let Some(active_ent) = active_entity {
+                        self.trigger_qte_swap(active_ent);
+                    } else {
+                        self.log("Select a character first to perform QTE Swap!");
+                    }
+                } else {
+                    self.log(format!("Concert Energy not full ({}/100)!", energy));
+                }
             }
             Action::EndTurn => {
                 let phase = self.world.resource::<GameState>().unwrap().phase;
@@ -773,6 +1470,11 @@ impl Game {
             }
             _ => {}
         }
+        self.camera.tick();
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        self.vfx.update(dt);
         self.camera.tick();
     }
 
@@ -812,21 +1514,80 @@ impl Game {
             }
         }
 
-        // Draw movement range overlay if a player character is selected
-        if let Some(sel_entity) = state.selected_entity {
-            let reachable = self.get_reachable_tiles(sel_entity);
-            for pos in reachable {
-                let rx = pos.x as u16 * tile_w;
-                let ry = pos.y as u16 * tile_h;
-                for dy in 0..tile_h {
-                    for dx in 0..tile_w {
-                        if let Some(cell) = grid.get_mut(rx + dx, ry + dy) {
-                            cell.bg = verryte_terminal::vfx::blend_color(
-                                cell.bg,
-                                Color(0, 100, 150),
-                                0.35,
-                            );
+        // Draw movement range overlay if a player character is selected and not in targeting mode
+        if state.targeting == crate::components::TargetingMode::None {
+            if let Some(sel_entity) = state.selected_entity {
+                let reachable = self.get_reachable_tiles(sel_entity);
+                for pos in reachable {
+                    let rx = pos.x as u16 * tile_w;
+                    let ry = pos.y as u16 * tile_h;
+                    for dy in 0..tile_h {
+                        for dx in 0..tile_w {
+                            if let Some(cell) = grid.get_mut(rx + dx, ry + dy) {
+                                cell.bg = verryte_terminal::vfx::blend_color(
+                                    cell.bg,
+                                    Color(0, 100, 150),
+                                    0.35,
+                                );
+                            }
                         }
+                    }
+                }
+            }
+        } else {
+            // Draw skill targeting range overlay
+            if let Some(sel_entity) = state.selected_entity {
+                if let (Some(caster_pos), Some(caster_class)) = (
+                    self.world.get::<Position>(sel_entity),
+                    self.world.get::<CharacterClass>(sel_entity),
+                ) {
+                    let range = match (*caster_class, state.targeting) {
+                        (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => 1,
+                        (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => 3,
+                        (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => 3,
+                        (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => 4,
+                        (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => 2,
+                        (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => 0,
+                        _ => 0,
+                    };
+                    for ty in 0..map.height {
+                        for tx in 0..map.width {
+                            let target = Position::new(tx as i16, ty as i16);
+                            let dist = (caster_pos.x - target.x).abs() + (caster_pos.y - target.y).abs();
+                            if dist <= range {
+                                let rx = target.x as u16 * tile_w;
+                                let ry = target.y as u16 * tile_h;
+                                for dy in 0..tile_h {
+                                    for dx in 0..tile_w {
+                                        if let Some(cell) = grid.get_mut(rx + dx, ry + dy) {
+                                            cell.bg = verryte_terminal::vfx::blend_color(
+                                                cell.bg,
+                                                Color(50, 150, 50), // Light green skill range
+                                                0.35,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw telegraphed tiles in dark red/magenta overlay
+        let telegraph_zone = self.world.resource::<crate::components::TelegraphZone>().unwrap();
+        for pos in &telegraph_zone.tiles {
+            let rx = pos.x as u16 * tile_w;
+            let ry = pos.y as u16 * tile_h;
+            for dy in 0..tile_h {
+                for dx in 0..tile_w {
+                    if let Some(cell) = grid.get_mut(rx + dx, ry + dy) {
+                        cell.bg = verryte_terminal::vfx::blend_color(
+                            cell.bg,
+                            Color(150, 0, 75), // Dark red / magenta
+                            0.4,
+                        );
                     }
                 }
             }
@@ -851,6 +1612,20 @@ impl Game {
 
                 grid.blit(&sprite_grid, rx as i32, ry as i32);
             }
+        }
+
+        // Render Echo items
+        for (_e, pos, _echo) in self.world.query2::<Position, crate::components::EchoItem>() {
+            let rx = pos.x as u16 * tile_w + tile_w / 2;
+            let ry = pos.y as u16 * tile_h + tile_h / 2;
+            grid.put(
+                rx,
+                ry,
+                Cell::new('Ω')
+                    .with_fg(Color(180, 50, 255))
+                    .with_bg(Color::BLACK)
+                    .with_attrs(verryte_terminal::CellAttrs::NONE.bold()),
+            );
         }
 
         // Render cursor
@@ -919,6 +1694,29 @@ impl Game {
             Color::BLACK,
         );
 
+        let ce_pct = (state.concert_energy as f32 / 100.0).clamp(0.0, 1.0);
+        let bar_len = 10;
+        let filled_len = (ce_pct * bar_len as f32).round() as usize;
+        let empty_len = bar_len - filled_len;
+        let bar_str = format!(
+            "[{}{}]",
+            "█".repeat(filled_len),
+            "░".repeat(empty_len)
+        );
+        let ce_display = format!("CONCERT: {}/100 {}", state.concert_energy, bar_str);
+        let ce_color = if state.concert_energy >= 100 {
+            Color(255, 215, 0) // Gold
+        } else {
+            Color(100, 200, 255) // Cyan-ish
+        };
+        grid.write_str(
+            90,
+            hud_y + 1,
+            &format!(" | {}", ce_display),
+            ce_color,
+            Color::BLACK,
+        );
+
         let hovered_tile = map.tile(state.cursor.x, state.cursor.y);
         let tile_type_str = match hovered_tile {
             Tile::Grass => "Grass",
@@ -972,6 +1770,12 @@ impl Game {
                 );
             }
         }
+
+        // Render VFX (particles, floating text, AoE rings)
+        let map_w = map.width * tile_w;
+        let map_h = map.height * tile_h;
+        self.vfx.render(&mut grid, map_w, map_h);
+        self.vfx.render_flash(&mut grid, map_w, map_h);
 
         grid
     }

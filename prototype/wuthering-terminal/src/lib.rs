@@ -154,4 +154,230 @@ mod tests {
         // Kael AP should be replenished to max_ap (3)
         assert_eq!(game.world.get::<Stats>(warrior).unwrap().ap, 3);
     }
+
+    #[test]
+    fn test_skills_and_vfx() {
+        let mut game = Game::new();
+
+        // Select Kael
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Position Kael next to the Boss at (18, 8). Let's move Kael directly to (17, 8)
+        let mut warrior_opt = None;
+        for (e, _pos, _team, class) in game.world.query3::<Position, Team, CharacterClass>() {
+            if *class == CharacterClass::Warrior {
+                warrior_opt = Some(e);
+            }
+        }
+        let warrior = warrior_opt.unwrap();
+        if let Some(pos) = game.world.get_mut::<Position>(warrior) {
+            *pos = Position::new(17, 8);
+        }
+
+        // Target Boss at (18, 8)
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(18, 8);
+        }
+
+        // Trigger Skill1
+        game.apply_action(Action::Skill1, ActionSource::Terminal);
+        
+        // Check state.targeting is Skill1
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.targeting, crate::components::TargetingMode::Skill1);
+        }
+
+        // Confirm to cast
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Verify Warrior AP is 1 (3 - 2)
+        let stats = game.world.get::<Stats>(warrior).unwrap();
+        assert_eq!(stats.ap, 1);
+
+        // Verify targeting is reset to None
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.targeting, crate::components::TargetingMode::None);
+        }
+
+        // Boss should have taken damage. Boss initial HP 500. Skill 1 Warrior value 45. Boss Def 20. Damage = 45 - 20 = 25.
+        // Boss HP should be 500 - 25 = 475.
+        let mut boss_opt = None;
+        for (e, _pos, _team, class) in game.world.query3::<Position, Team, CharacterClass>() {
+            if *class == CharacterClass::Boss {
+                boss_opt = Some(e);
+            }
+        }
+        let boss = boss_opt.unwrap();
+        let boss_stats = game.world.get::<Stats>(boss).unwrap();
+        assert_eq!(boss_stats.hp, 475);
+
+        // Verify VFX are spawned
+        assert!(!game.vfx.particles.is_empty(), "Particles should spawn on skill cast");
+        assert!(!game.vfx.shakes.is_empty(), "Screen shake should trigger on skill cast");
+    }
+
+    #[test]
+    fn test_qte_swap() {
+        let mut game = Game::new();
+
+        // 1. Select the Warrior (Kael) at (4, 4)
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Set Concert Energy to 100
+        game.build_concert_energy(100);
+
+        // Press Skill3 (QTE Swap)
+        game.apply_action(Action::Skill3, ActionSource::Terminal);
+
+        // Check Concert Energy is reset to 0
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.concert_energy, 0);
+            // Selected character should swap to next (e.g. Mage at (4, 8))
+            // Active ent before was Kael. Players sorted: Kael (4,4), Lyra (4,8), Mira (4,12).
+            // Next is Lyra (Mage)
+            let selected = state.selected_entity.unwrap();
+            let selected_class = game.world.get::<CharacterClass>(selected).unwrap();
+            assert_eq!(*selected_class, CharacterClass::Mage);
+
+            // Positions of Kael and Lyra should be swapped.
+            // Lyra was at (4,8), Kael was at (4,4).
+            // Lyra should now be at (4, 4)
+            // Kael should be at (4, 8)
+            let mut kael_opt = None;
+            for (e, _pos, _team, class) in game.world.query3::<Position, Team, CharacterClass>() {
+                if *class == CharacterClass::Warrior {
+                    kael_opt = Some(e);
+                }
+            }
+            let kael = kael_opt.unwrap();
+            let kael_pos = game.world.get::<Position>(kael).unwrap();
+            let lyra_pos = game.world.get::<Position>(selected).unwrap();
+
+            assert_eq!(*lyra_pos, Position::new(4, 4));
+            assert_eq!(*kael_pos, Position::new(4, 8));
+        }
+    }
+
+    #[test]
+    fn test_boss_telegraph_parry_and_echo() {
+        let mut game = Game::new();
+
+        let mut boss_opt = None;
+        let mut warrior_opt = None;
+        for (e, _pos, _team, class) in game.world.query3::<Position, Team, CharacterClass>() {
+            if *class == CharacterClass::Boss {
+                boss_opt = Some(e);
+            }
+            if *class == CharacterClass::Warrior {
+                warrior_opt = Some(e);
+            }
+        }
+        let boss = boss_opt.unwrap();
+        let warrior = warrior_opt.unwrap();
+
+        // Move Boss to (4, 5)
+        if let Some(pos) = game.world.get_mut::<Position>(boss) {
+            *pos = Position::new(4, 5);
+        }
+
+        // Set up boss to queue a telegraph zone directly
+        {
+            let mut telegraph = game.world.resource_mut::<crate::components::TelegraphZone>().unwrap();
+            telegraph.tiles = vec![Position::new(4, 4)];
+            telegraph.damage = 50;
+        }
+
+        // Warrior is at (4, 4), which is in the TelegraphZone.
+        // Select Warrior
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Attack the Boss at (4, 5). This should trigger check_parry since Warrior is at (4,4) which is telegraphed.
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Verify TelegraphZone is cleared (parried!)
+        {
+            let telegraph = game.world.resource::<crate::components::TelegraphZone>().unwrap();
+            assert!(telegraph.tiles.is_empty(), "Telegraph zone should be cleared on parry");
+        }
+
+        // Verify Boss AP is set to 0 (stunned!)
+        {
+            let boss_stats = game.world.get::<Stats>(boss).unwrap();
+            assert_eq!(boss_stats.ap, 0, "Boss should have 0 AP (stunned)");
+        }
+
+        // Now test Boss defeat and Echo drop. Set boss HP to 1.
+        if let Some(stats) = game.world.get_mut::<Stats>(boss) {
+            stats.hp = 1;
+        }
+
+        // Select Warrior again
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Attack Boss again
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Boss should be defeated and despawned.
+        let mut boss_exists = false;
+        for (_e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Boss {
+                boss_exists = true;
+            }
+        }
+        assert!(!boss_exists, "Boss should be despawned on defeat");
+
+        // Echo should be dropped at Boss's position (4, 5)
+        let mut echo_pos_opt = None;
+        for (_e, pos, _echo) in game.world.query2::<Position, crate::components::EchoItem>() {
+            echo_pos_opt = Some(*pos);
+        }
+        assert_eq!(echo_pos_opt, Some(Position::new(4, 5)));
+
+        // Select Warrior and move to (4, 5) to absorb Echo and win
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+        
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Verify outcome is Victory
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.outcome, Outcome::Victory, "Should win game on Echo absorption");
+        }
+    }
 }

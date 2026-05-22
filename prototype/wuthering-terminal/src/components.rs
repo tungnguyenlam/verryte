@@ -35,6 +35,13 @@ pub enum Outcome {
     Quit,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TargetingMode {
+    None,
+    Skill1,
+    Skill2,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GameState {
     pub turn: u32,
@@ -42,12 +49,25 @@ pub struct GameState {
     pub outcome: Outcome,
     pub cursor: Position,
     pub selected_entity: Option<verryte_core::Entity>,
+    pub concert_energy: u32,
+    pub targeting: TargetingMode,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TurnPhase {
     Player,
     Enemy,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TelegraphZone {
+    pub tiles: Vec<Position>,
+    pub damage: i32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EchoItem {
+    pub class: CharacterClass,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
