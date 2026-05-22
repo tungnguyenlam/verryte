@@ -1329,6 +1329,8 @@ pub struct TextInput {
     history: Vec<String>,
     history_index: Option<usize>,
     max_history: usize,
+    undo_stack: Vec<(String, usize)>,
+    redo_stack: Vec<(String, usize)>,
 }
 
 impl TextInput {
@@ -1342,6 +1344,8 @@ impl TextInput {
             history: Vec::new(),
             history_index: None,
             max_history: 50,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -1355,6 +1359,8 @@ impl TextInput {
             history: Vec::new(),
             history_index: None,
             max_history: 50,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -1374,6 +1380,7 @@ impl TextInput {
                 if self.text.chars().count() >= self.max_len {
                     return false;
                 }
+                self.record_state();
                 let byte_pos = self.char_to_byte(self.cursor);
                 self.text.insert(byte_pos, ch);
                 self.cursor += 1;
@@ -1404,15 +1411,31 @@ impl TextInput {
                         self.cursor += 1;
                         self.dirty = true;
                     }
-                    'u' => self.delete_to_start(),
-                    'k' => self.delete_to_end(),
-                    'w' => self.delete_word_left(),
+                    'u' if self.cursor > 0 => {
+                        self.record_state();
+                        self.delete_to_start();
+                    }
+                    'k' if self.cursor < self.text.chars().count() => {
+                        self.record_state();
+                        self.delete_to_end();
+                    }
+                    'w' if self.cursor > 0 => {
+                        self.record_state();
+                        self.delete_word_left();
+                    }
+                    'z' => {
+                        self.undo();
+                    }
+                    'y' | 'r' => {
+                        self.redo();
+                    }
                     _ => {}
                 }
                 false
             }
             Key::Backspace => {
                 if self.cursor > 0 {
+                    self.record_state();
                     let byte_pos = self.char_to_byte(self.cursor);
                     let prev = self.text[..byte_pos]
                         .char_indices()
@@ -1427,6 +1450,7 @@ impl TextInput {
             }
             Key::Delete => {
                 if self.cursor < self.text.chars().count() {
+                    self.record_state();
                     let byte_pos = self.char_to_byte(self.cursor);
                     let char_len = self.text[byte_pos..]
                         .chars()
@@ -1507,6 +1531,9 @@ impl TextInput {
                 false
             }
             Key::Esc => {
+                if !self.text.is_empty() {
+                    self.record_state();
+                }
                 self.history_index = None;
                 self.text.clear();
                 self.cursor = 0;
@@ -1537,11 +1564,14 @@ impl TextInput {
         let text = std::mem::take(&mut self.text);
         self.cursor = 0;
         self.dirty = false;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
         text
     }
 
     /// Set the text content directly (e.g., for pre-filling or programmatic edits).
     pub fn set_text(&mut self, text: String) {
+        self.record_state();
         self.text = text;
         self.cursor = self.text.chars().count().min(self.max_len);
         // Trim if over max.
@@ -1569,6 +1599,7 @@ impl TextInput {
         if to_insert.is_empty() {
             return;
         }
+        self.record_state();
         let byte_pos = self.char_to_byte(self.cursor);
         self.text.insert_str(byte_pos, &to_insert);
         self.cursor += to_insert.chars().count();
@@ -1609,6 +1640,9 @@ impl TextInput {
 
     /// Clear the buffer.
     pub fn clear(&mut self) {
+        if !self.text.is_empty() {
+            self.record_state();
+        }
         self.text.clear();
         self.cursor = 0;
         self.dirty = true;
@@ -1690,6 +1724,44 @@ impl TextInput {
             .nth(char_index)
             .map(|(i, _)| i)
             .unwrap_or(self.text.len())
+    }
+
+    /// Record the current text and cursor state to the undo stack.
+    /// This also clears the redo stack.
+    pub fn record_state(&mut self) {
+        let state = (self.text.clone(), self.cursor);
+        if self.undo_stack.last() != Some(&state) {
+            self.undo_stack.push(state);
+            self.redo_stack.clear();
+        }
+    }
+
+    /// Undo the last modification. Returns `true` if successful.
+    pub fn undo(&mut self) -> bool {
+        if let Some(prev) = self.undo_stack.pop() {
+            let current = (self.text.clone(), self.cursor);
+            self.redo_stack.push(current);
+            self.text = prev.0;
+            self.cursor = prev.1;
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Redo the last undone modification. Returns `true` if successful.
+    pub fn redo(&mut self) -> bool {
+        if let Some(next) = self.redo_stack.pop() {
+            let current = (self.text.clone(), self.cursor);
+            self.undo_stack.push(current);
+            self.text = next.0;
+            self.cursor = next.1;
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -2812,6 +2884,63 @@ mod tests {
         input.set_text("hello".to_owned());
         input.insert_str("!");
         assert_eq!(input.text(), "hello!");
+    }
+
+    #[test]
+    fn test_text_input_undo_redo() {
+        let mut input = TextInput::new();
+        input.handle_key(Key::Char('a'));
+        input.handle_key(Key::Char('b'));
+        input.handle_key(Key::Char('c'));
+        assert_eq!(input.text(), "abc");
+
+        // Undo last character insertion ('c')
+        assert!(input.undo());
+        assert_eq!(input.text(), "ab");
+
+        // Undo 'b'
+        assert!(input.undo());
+        assert_eq!(input.text(), "a");
+
+        // Undo 'a'
+        assert!(input.undo());
+        assert_eq!(input.text(), "");
+
+        // No more undo
+        assert!(!input.undo());
+
+        // Redo 'a'
+        assert!(input.redo());
+        assert_eq!(input.text(), "a");
+
+        // Redo 'b'
+        assert!(input.redo());
+        assert_eq!(input.text(), "ab");
+
+        // Redo 'c'
+        assert!(input.redo());
+        assert_eq!(input.text(), "abc");
+
+        // No more redo
+        assert!(!input.redo());
+
+        // Type 'd' -> should clear redo stack
+        input.handle_key(Key::Char('d'));
+        assert_eq!(input.text(), "abcd");
+        assert!(!input.redo());
+
+        // Test ctrl-z/ctrl-y keys via handle_key
+        input.handle_key(Key::Modified { char: 'z', ctrl: true, alt: false, shift: false });
+        assert_eq!(input.text(), "abc");
+
+        input.handle_key(Key::Modified { char: 'y', ctrl: true, alt: false, shift: false });
+        assert_eq!(input.text(), "abcd");
+        
+        // Test clear()/Esc undoable
+        input.clear();
+        assert_eq!(input.text(), "");
+        assert!(input.undo());
+        assert_eq!(input.text(), "abcd");
     }
 
     #[test]

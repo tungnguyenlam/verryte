@@ -419,7 +419,7 @@ mod tests {
     }
 
     fn is_debug_enabled(world: &World) -> bool {
-        world.resource::<DebugMode>().map_or(false, |mode| mode.0)
+        world.resource::<DebugMode>().is_some_and(|mode| mode.0)
     }
 
     #[test]
@@ -807,6 +807,6 @@ mod tests {
         let diags = world.resource::<Diagnostics>().unwrap();
         assert_eq!(diags.systems.get("bump").unwrap().call_count, 1);
         // double was not run
-        assert!(diags.systems.get("double").is_none());
+        assert!(!diags.systems.contains_key("double"));
     }
 }

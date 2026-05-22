@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
-use verryte_input::{ActionSource, InputEvent};
+use verryte_input::InputEvent;
 use verryte_terminal::Grid;
 use verryte_tty::{init, poll_event, render, render_diff};
-use wuthering_terminal::{Action, Game, Outcome};
+use wuthering_terminal::{Game, Outcome};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut game = Game::new();

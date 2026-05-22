@@ -10,7 +10,7 @@ pub mod systems;
 pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
-pub use snapshot::{Snapshot, StepReport};
+pub use snapshot::{FullSaveState, SavedEntity, Snapshot, StepReport};
 pub use verryte_map::Point as Position;
 
 #[cfg(test)]
@@ -39,12 +39,62 @@ mod tests {
     }
 
     #[test]
+    fn test_save_load_game_state() {
+        let mut game = Game::new();
+        // Select warrior at (4, 4)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+        
+        let selected_before = game.world.resource::<GameState>().unwrap().selected_entity;
+        assert!(selected_before.is_some(), "Kael should be selected before save");
+
+        let serialized = game.save_state().unwrap();
+
+        // Create a new game
+        let mut game2 = Game::new();
+        assert_ne!(
+            game2.world.resource::<GameState>().unwrap().selected_entity,
+            selected_before
+        );
+
+        // Load the saved state
+        game2.load_state(&serialized).unwrap();
+
+        // Verify state is restored
+        let selected_after = game2.world.resource::<GameState>().unwrap().selected_entity;
+        assert_eq!(selected_after, selected_before);
+        assert_eq!(
+            game2.world.resource::<GameState>().unwrap().cursor,
+            Position::new(4, 4)
+        );
+
+        // Check that all 4 entities are restored
+        assert_eq!(game2.world.entity_count(), 4);
+        
+        let mut player_count = 0;
+        let mut boss_count = 0;
+        for (_e, _p, team, class) in game2.world.query3::<Position, Team, CharacterClass>() {
+            if *team == Team::Player {
+                player_count += 1;
+            }
+            if *class == CharacterClass::Boss {
+                boss_count += 1;
+            }
+        }
+        assert_eq!(player_count, 3);
+        assert_eq!(boss_count, 1);
+    }
+
+    #[test]
     fn test_selection_and_movement() {
         let mut game = Game::new();
 
         // 1. Select the Warrior (Kael) at (4, 4)
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -54,7 +104,7 @@ mod tests {
 
         // 2. Move Kael to (4, 5)
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 5);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -99,14 +149,14 @@ mod tests {
 
         // Select Kael
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
 
         // Attack Boss at (4, 5)
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 5);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -125,12 +175,12 @@ mod tests {
 
         // Select and move Warrior to (4, 5) so AP drops to 2
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 5);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -162,7 +212,7 @@ mod tests {
 
         // Select Kael
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -181,7 +231,7 @@ mod tests {
 
         // Target Boss at (18, 8)
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(18, 8);
         }
 
@@ -236,7 +286,7 @@ mod tests {
 
         // 1. Select the Warrior (Kael) at (4, 4)
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -292,7 +342,7 @@ mod tests {
             }
         }
         let boss = boss_opt.unwrap();
-        let warrior = warrior_opt.unwrap();
+        let _warrior = warrior_opt.unwrap();
 
         // Move Boss to (4, 5)
         if let Some(pos) = game.world.get_mut::<Position>(boss) {
@@ -301,7 +351,7 @@ mod tests {
 
         // Set up boss to queue a telegraph zone directly
         {
-            let mut telegraph = game
+            let telegraph = game
                 .world
                 .resource_mut::<crate::components::TelegraphZone>()
                 .unwrap();
@@ -312,14 +362,14 @@ mod tests {
         // Warrior is at (4, 4), which is in the TelegraphZone.
         // Select Warrior
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
 
         // Attack the Boss at (4, 5). This should trigger check_parry since Warrior is at (4,4) which is telegraphed.
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 5);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -349,14 +399,14 @@ mod tests {
 
         // Select Warrior again
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
 
         // Attack Boss again
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 5);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
@@ -379,13 +429,13 @@ mod tests {
 
         // Select Warrior and move to (4, 5) to absorb Echo and win
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 4);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
 
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.cursor = Position::new(4, 5);
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);

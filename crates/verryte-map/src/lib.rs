@@ -2795,10 +2795,10 @@ mod tests {
         let mut iter = LineIter::new(Point::new(0, 0), Point::new(10, 10));
         assert_eq!(iter.next(), Some(Point::new(0, 0)));
         assert_eq!(iter.next(), Some(Point::new(1, 1)));
-        drop(iter);
     }
 
     #[test]
+    #[allow(deprecated)]
     fn visible_points_respect_radius_and_blockers() {
         let grid = TileGrid::from_vec(
             5,
@@ -3867,7 +3867,7 @@ mod tests {
         let mapped: TileGrid<bool> = grid.map_tiles(|_, &v| v > 5);
         assert_eq!(mapped.width(), 4);
         assert_eq!(mapped.height(), 3);
-        assert_eq!(*mapped.get(Point::new(0, 0)).unwrap(), true);
+        assert!(*mapped.get(Point::new(0, 0)).unwrap());
     }
 
     #[test]

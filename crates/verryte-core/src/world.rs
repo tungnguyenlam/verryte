@@ -125,6 +125,31 @@ impl World {
         }
     }
 
+    /// Force allocate an entity at a specific ID slot with a specific generation.
+    /// This is useful for save/load snapshot deserialization.
+    /// Any existing entity at this index will be despawned.
+    pub fn spawn_at(&mut self, entity: Entity) {
+        let idx = entity.index as usize;
+        let old_len = self.generations.len();
+        if idx >= old_len {
+            self.generations.resize(idx + 1, 0);
+            self.alive.resize(idx + 1, false);
+            for i in old_len..idx {
+                self.free.push(i as u32);
+            }
+        }
+
+        if self.alive[idx] {
+            for column in self.columns.values_mut() {
+                column.clear_index(idx);
+            }
+        }
+
+        self.generations[idx] = entity.generation;
+        self.alive[idx] = true;
+        self.free.retain(|&x| x != entity.index);
+    }
+
     pub fn is_alive(&self, entity: Entity) -> bool {
         let idx = entity.index as usize;
         idx < self.generations.len()
@@ -331,6 +356,110 @@ impl World {
         } else {
             None
         }
+    }
+
+    pub fn get2<A, B>(&self, entity: Entity) -> Option<(&A, &B)>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+    {
+        let a = self.get::<A>(entity)?;
+        let b = self.get::<B>(entity)?;
+        Some((a, b))
+    }
+
+    pub fn get3<A, B, C>(&self, entity: Entity) -> Option<(&A, &B, &C)>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+    {
+        let a = self.get::<A>(entity)?;
+        let b = self.get::<B>(entity)?;
+        let c = self.get::<C>(entity)?;
+        Some((a, b, c))
+    }
+
+    pub fn with_mut2<A, B, F, R>(&mut self, entity: Entity, f: F) -> Option<R>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        F: FnOnce(&mut A, &mut B) -> R,
+    {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        let type_a = TypeId::of::<A>();
+        let type_b = TypeId::of::<B>();
+        if type_a == type_b {
+            return None;
+        }
+
+        let mut col_a = self.columns.remove(&type_a)?;
+        let mut col_b = self.columns.remove(&type_b)?;
+
+        let mut res = None;
+        {
+            let typed_a = col_a.as_any_mut().downcast_mut::<TypedColumn<A>>();
+            let typed_b = col_b.as_any_mut().downcast_mut::<TypedColumn<B>>();
+            if let (Some(ta), Some(tb)) = (typed_a, typed_b) {
+                let slot_a = ta.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
+                let slot_b = tb.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
+                if let (Some(sa), Some(sb)) = (slot_a, slot_b) {
+                    if sa.0 == entity.generation && sb.0 == entity.generation {
+                        res = Some(f(&mut sa.1, &mut sb.1));
+                    }
+                }
+            }
+        }
+
+        self.columns.insert(type_a, col_a);
+        self.columns.insert(type_b, col_b);
+        res
+    }
+
+    pub fn with_mut3<A, B, C, F, R>(&mut self, entity: Entity, f: F) -> Option<R>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+        F: FnOnce(&mut A, &mut B, &mut C) -> R,
+    {
+        if !self.is_alive(entity) {
+            return None;
+        }
+        let type_a = TypeId::of::<A>();
+        let type_b = TypeId::of::<B>();
+        let type_c = TypeId::of::<C>();
+        if type_a == type_b || type_a == type_c || type_b == type_c {
+            return None;
+        }
+
+        let mut col_a = self.columns.remove(&type_a)?;
+        let mut col_b = self.columns.remove(&type_b)?;
+        let mut col_c = self.columns.remove(&type_c)?;
+
+        let mut res = None;
+        {
+            let typed_a = col_a.as_any_mut().downcast_mut::<TypedColumn<A>>();
+            let typed_b = col_b.as_any_mut().downcast_mut::<TypedColumn<B>>();
+            let typed_c = col_c.as_any_mut().downcast_mut::<TypedColumn<C>>();
+            if let (Some(ta), Some(tb), Some(tc)) = (typed_a, typed_b, typed_c) {
+                let slot_a = ta.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
+                let slot_b = tb.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
+                let slot_c = tc.slots.get_mut(entity.index as usize).and_then(|s| s.as_mut());
+                if let (Some(sa), Some(sb), Some(sc)) = (slot_a, slot_b, slot_c) {
+                    if sa.0 == entity.generation && sb.0 == entity.generation && sc.0 == entity.generation {
+                        res = Some(f(&mut sa.1, &mut sb.1, &mut sc.1));
+                    }
+                }
+            }
+        }
+
+        self.columns.insert(type_a, col_a);
+        self.columns.insert(type_b, col_b);
+        self.columns.insert(type_c, col_c);
+        res
     }
 
     pub fn has<T: 'static + Send + Sync>(&self, entity: Entity) -> bool {
@@ -1035,13 +1164,10 @@ mod tests {
     struct Tag(&'static str);
 
     #[derive(Debug, PartialEq, Clone)]
+    #[derive(Default)]
     struct Counter(u32);
 
-    impl Default for Counter {
-        fn default() -> Self {
-            Self(0)
-        }
-    }
+    
 
     #[test]
     fn spawn_insert_get_roundtrip() {
@@ -1809,5 +1935,44 @@ mod tests {
         assert_eq!(world.get::<Counter>(e1), Some(&Counter(100)));
         assert_eq!(world.get::<Counter>(e2), Some(&Counter(200)));
         assert_eq!(world.get::<Pos>(e2), Some(&Pos(5, 6)));
+    }
+
+    #[test]
+    fn world_tuple_retrieval_helpers() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Pos(10, 20));
+        world.insert(e, Tag("hello"));
+        world.insert(e, Counter(42));
+
+        // Test get2 and get3
+        let (pos, tag) = world.get2::<Pos, Tag>(e).unwrap();
+        assert_eq!(pos.0, 10);
+        assert_eq!(tag.0, "hello");
+
+        let (pos, tag, counter) = world.get3::<Pos, Tag, Counter>(e).unwrap();
+        assert_eq!(pos.0, 10);
+        assert_eq!(tag.0, "hello");
+        assert_eq!(counter.0, 42);
+
+        // Test with_mut2
+        let result = world.with_mut2::<Pos, Tag, _, i32>(e, |p, t| {
+            p.0 += 5;
+            t.0 = "world";
+            99
+        }).unwrap();
+        assert_eq!(result, 99);
+        assert_eq!(world.get::<Pos>(e).unwrap().0, 15);
+        assert_eq!(world.get::<Tag>(e).unwrap().0, "world");
+
+        // Test with_mut3
+        world.with_mut3::<Pos, Tag, Counter, _, ()>(e, |p, t, c| {
+            p.0 += 5;
+            t.0 = "test";
+            c.0 += 10;
+        }).unwrap();
+        assert_eq!(world.get::<Pos>(e).unwrap().0, 20);
+        assert_eq!(world.get::<Tag>(e).unwrap().0, "test");
+        assert_eq!(world.get::<Counter>(e).unwrap().0, 52);
     }
 }

@@ -31,6 +31,12 @@ pub struct Game {
     pub vfx: verryte_terminal::vfx::VfxSystem,
 }
 
+impl Default for Game {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Game {
     pub fn new() -> Self {
         let mut world = World::new();
@@ -271,7 +277,7 @@ impl Game {
         };
 
         {
-            let mut state = self.world.resource_mut::<GameState>().unwrap();
+            let state = self.world.resource_mut::<GameState>().unwrap();
             state.selected_entity = Some(next_entity);
             state.cursor = next_pos;
         }
@@ -290,7 +296,7 @@ impl Game {
     pub fn end_player_turn(&mut self) {
         // Execute any telegraphed attacks first!
         let telegraph_tiles = {
-            let mut telegraph_zone = self
+            let telegraph_zone = self
                 .world
                 .resource_mut::<crate::components::TelegraphZone>()
                 .unwrap();
@@ -364,7 +370,7 @@ impl Game {
         }
 
         {
-            let mut state = self.world.resource_mut::<GameState>().unwrap();
+            let state = self.world.resource_mut::<GameState>().unwrap();
             state.phase = TurnPhase::Enemy;
             state.selected_entity = None;
         }
@@ -382,7 +388,7 @@ impl Game {
         }
 
         {
-            let mut state = self.world.resource_mut::<GameState>().unwrap();
+            let state = self.world.resource_mut::<GameState>().unwrap();
             state.phase = TurnPhase::Player;
             state.turn += 1;
         }
@@ -467,7 +473,7 @@ impl Game {
                 if min_dist <= range {
                     // Boss is next to a player. Let's decide whether to telegraph or normal attack!
                     let rng_val = {
-                        let mut rng = self.world.resource_mut::<Rng>().unwrap();
+                        let rng = self.world.resource_mut::<Rng>().unwrap();
                         rng.next_u32(100)
                     };
 
@@ -490,7 +496,7 @@ impl Game {
                             }
                         }
                         {
-                            let mut telegraph_zone = self
+                            let telegraph_zone = self
                                 .world
                                 .resource_mut::<crate::components::TelegraphZone>()
                                 .unwrap();
@@ -715,29 +721,28 @@ impl Game {
                     Color(255, 255, 255),
                     0.4,
                 ));
-        } else {
-            let mut enemy_exists = false;
-            for (_e, team) in self.world.query::<Team>() {
-                if *team == Team::Enemy {
-                    enemy_exists = true;
-                    break;
-                }
-            }
-            let mut echo_exists = false;
-            for (_e, _echo) in self.world.query::<crate::components::EchoItem>() {
-                echo_exists = true;
-                break;
-            }
-            if !enemy_exists && !echo_exists {
-                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
-                self.log("Victory! All enemies defeated.");
-            }
+        }
+
+        let enemy_exists = self
+            .world
+            .query::<Team>()
+            .into_iter()
+            .any(|(_, team)| *team == Team::Enemy);
+        let echo_exists = self
+            .world
+            .query::<crate::components::EchoItem>()
+            .into_iter()
+            .next()
+            .is_some();
+        if !enemy_exists && !echo_exists {
+            self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+            self.log("Victory! All enemies defeated.");
         }
     }
 
     pub fn build_concert_energy(&mut self, amount: u32) {
         let mut energy = 0;
-        if let Some(mut state) = self.world.resource_mut::<GameState>() {
+        if let Some(state) = self.world.resource_mut::<GameState>() {
             state.concert_energy = std::cmp::min(100, state.concert_energy + amount);
             energy = state.concert_energy;
         }
@@ -784,7 +789,7 @@ impl Game {
 
         if player_in_telegraph {
             self.log("PARRY! Blight Sovereign's telegraphed attack was canceled!");
-            if let Some(mut telegraph_zone) = self
+            if let Some(telegraph_zone) = self
                 .world
                 .resource_mut::<crate::components::TelegraphZone>()
             {
@@ -800,7 +805,7 @@ impl Game {
                 }
             }
             if let Some(be) = boss_ent {
-                if let Some(mut stats) = self.world.get_mut::<Stats>(be) {
+                if let Some(stats) = self.world.get_mut::<Stats>(be) {
                     stats.ap = 0;
                     self.log("Blight Sovereign is STUNNED and loses its action points!");
                 }
@@ -1170,7 +1175,7 @@ impl Game {
                         .extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 10));
                 }
             } else {
-                if let Some((target_ent, target_team, target_stats, target_class)) =
+                if let Some((target_ent, target_team, _target_stats, target_class)) =
                     self.get_entity_at(target_pos)
                 {
                     if target_team == Team::Player {
@@ -1347,7 +1352,7 @@ impl Game {
                     let map = self.world.resource::<TacticalMap>().unwrap();
                     (map.width, map.height)
                 };
-                let mut state = self.world.resource_mut::<GameState>().unwrap();
+                let state = self.world.resource_mut::<GameState>().unwrap();
                 state.cursor = state.cursor.step(dir);
                 state.cursor.x = state.cursor.x.clamp(0, width as i16 - 1);
                 state.cursor.y = state.cursor.y.clamp(0, height as i16 - 1);
@@ -1419,7 +1424,7 @@ impl Game {
                         is_aoe,
                     );
 
-                    let mut state_mut = self.world.resource_mut::<GameState>().unwrap();
+                    let state_mut = self.world.resource_mut::<GameState>().unwrap();
                     state_mut.targeting = crate::components::TargetingMode::None;
                     state_mut.selected_entity = None;
                     self.log("Selection cleared.");
@@ -1697,7 +1702,7 @@ impl Game {
                 }
             }
             Action::Cancel => {
-                let mut state = self.world.resource_mut::<GameState>().unwrap();
+                let state = self.world.resource_mut::<GameState>().unwrap();
                 if state.targeting != crate::components::TargetingMode::None {
                     state.targeting = crate::components::TargetingMode::None;
                     self.log("Skill targeting canceled.");
@@ -1715,7 +1720,7 @@ impl Game {
             Action::Skill1 => {
                 let state = self.world.resource::<GameState>().unwrap();
                 if state.selected_entity.is_some() {
-                    let mut state_mut = self.world.resource_mut::<GameState>().unwrap();
+                    let state_mut = self.world.resource_mut::<GameState>().unwrap();
                     state_mut.targeting = crate::components::TargetingMode::Skill1;
                     self.log("Skill 1 targeted! Use cursor to select target and press Confirm.");
                 } else {
@@ -1725,7 +1730,7 @@ impl Game {
             Action::Skill2 => {
                 let state = self.world.resource::<GameState>().unwrap();
                 if state.selected_entity.is_some() {
-                    let mut state_mut = self.world.resource_mut::<GameState>().unwrap();
+                    let state_mut = self.world.resource_mut::<GameState>().unwrap();
                     state_mut.targeting = crate::components::TargetingMode::Skill2;
                     self.log("Skill 2 targeted! Use cursor to select target and press Confirm.");
                 } else {
@@ -1758,13 +1763,13 @@ impl Game {
                 };
                 if point.x >= 0 && point.x < width as i16 && point.y >= 0 && point.y < height as i16
                 {
-                    let mut state = self.world.resource_mut::<GameState>().unwrap();
+                    let state = self.world.resource_mut::<GameState>().unwrap();
                     state.cursor = point;
                     self.camera.look_at(point.x as f32, point.y as f32);
                 }
             }
             Action::ClearCursor => {
-                let mut state = self.world.resource_mut::<GameState>().unwrap();
+                let state = self.world.resource_mut::<GameState>().unwrap();
                 state.selected_entity = None;
                 self.log("Selection cleared.");
             }
@@ -1917,7 +1922,7 @@ impl Game {
                 let rx = (pos.x as i32 * tile_w as i32) + (tile_w as i32 - sw as i32) / 2;
                 let ry = (pos.y as i32 * tile_h as i32) + (tile_h as i32 - sh as i32) / 2;
 
-                grid.blit(&sprite_grid, rx as i32, ry as i32);
+                grid.blit(&sprite_grid, rx, ry);
             }
         }
 
@@ -2099,5 +2104,83 @@ impl Game {
             .unwrap()
             .drain()
             .collect()
+    }
+
+    pub fn save_state(&self) -> Result<String, serde_json::Error> {
+        use crate::snapshot::{FullSaveState, SavedEntity};
+
+        let mut entities = Vec::new();
+        for entity in self.world.entities() {
+            let position = self.world.get::<Position>(entity).copied();
+            let team = self.world.get::<Team>(entity).copied();
+            let class = self.world.get::<CharacterClass>(entity).copied();
+            let stats = self.world.get::<Stats>(entity).cloned();
+            let echo_item = self.world.get::<crate::components::EchoItem>(entity).copied();
+
+            entities.push(SavedEntity {
+                entity,
+                position,
+                team,
+                class,
+                stats,
+                echo_item,
+            });
+        }
+
+        let state = FullSaveState {
+            game_state: self.world.resource::<GameState>().unwrap().clone(),
+            telegraph_zone: self.world.resource::<crate::components::TelegraphZone>().unwrap().clone(),
+            message_log: self.world.resource::<MessageLog>().unwrap().clone(),
+            clock: self.world.resource::<GameClock>().unwrap().clone(),
+            rng: *self.world.resource::<Rng>().unwrap(),
+            map: self.world.resource::<TacticalMap>().unwrap().clone(),
+            camera: self.camera.clone(),
+            entities,
+        };
+
+        serde_json::to_string(&state)
+    }
+
+    pub fn load_state(&mut self, state_str: &str) -> Result<(), String> {
+        use crate::snapshot::FullSaveState;
+
+        let state: FullSaveState = serde_json::from_str(state_str)
+            .map_err(|e| format!("Failed to parse save state: {}", e))?;
+
+        // Despawn all current entities
+        self.world.despawn_all();
+
+        // Restore resources
+        *self.world.resource_mut::<GameState>().unwrap() = state.game_state;
+        *self.world.resource_mut::<crate::components::TelegraphZone>().unwrap() = state.telegraph_zone;
+        *self.world.resource_mut::<MessageLog>().unwrap() = state.message_log;
+        *self.world.resource_mut::<GameClock>().unwrap() = state.clock;
+        *self.world.resource_mut::<Rng>().unwrap() = state.rng;
+        *self.world.resource_mut::<TacticalMap>().unwrap() = state.map;
+
+        // Restore camera
+        self.camera = state.camera;
+
+        // Respawn entities and restore their components
+        for saved in state.entities {
+            self.world.spawn_at(saved.entity);
+            if let Some(pos) = saved.position {
+                self.world.insert(saved.entity, pos);
+            }
+            if let Some(team) = saved.team {
+                self.world.insert(saved.entity, team);
+            }
+            if let Some(class) = saved.class {
+                self.world.insert(saved.entity, class);
+            }
+            if let Some(stats) = saved.stats {
+                self.world.insert(saved.entity, stats);
+            }
+            if let Some(echo) = saved.echo_item {
+                self.world.insert(saved.entity, echo);
+            }
+        }
+
+        Ok(())
     }
 }

@@ -284,7 +284,7 @@ mod tests {
         let mut rng = Rng::seed(42);
         for _ in 0..1000 {
             let val = rng.roll(5, 15);
-            assert!(val >= 5 && val <= 15);
+            assert!((5..=15).contains(&val));
         }
     }
 
@@ -375,7 +375,7 @@ mod tests {
         let mut rng = Rng::seed(42);
         for _ in 0..100 {
             let val = rng.next_f64();
-            assert!(val >= 0.0 && val < 1.0);
+            assert!((0.0..1.0).contains(&val));
         }
     }
 
@@ -392,7 +392,7 @@ mod tests {
     fn rng_is_clone() {
         let mut rng1 = Rng::seed(42);
         let _ = rng1.next_u64();
-        let mut rng2 = rng1.clone();
+        let mut rng2 = rng1;
         assert_eq!(rng1.next_u64(), rng2.next_u64());
     }
 
@@ -484,7 +484,7 @@ mod tests {
         let mut rng = Rng::seed(42);
         for _ in 0..1000 {
             let val = rng.gaussian_int(50.0, 20.0, 0, 100);
-            assert!(val >= 0 && val <= 100);
+            assert!((0..=100).contains(&val));
         }
     }
 
@@ -513,7 +513,7 @@ mod tests {
         let picked: Option<i32> = rng.pick_range(1..=5);
         assert!(picked.is_some());
         let val = picked.unwrap();
-        assert!(val >= 1 && val <= 5);
+        assert!((1..=5).contains(&val));
     }
 
     #[test]

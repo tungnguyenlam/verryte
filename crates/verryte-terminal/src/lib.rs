@@ -397,6 +397,18 @@ impl std::fmt::Display for Alignment {
     }
 }
 
+/// Border style options for styled TUI borders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BorderStyle {
+    Ascii,
+    #[default]
+    Single,
+    Double,
+    Heavy,
+    Rounded,
+}
+
 /// Viewport camera that manages position and zoom levels.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -468,6 +480,14 @@ impl Camera {
             width: zoomed_w,
             height: zoomed_h,
         }
+    }
+
+    /// Clamp the camera's center and target position within the given boundaries.
+    pub fn clamp_to_bounds(&mut self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) {
+        self.center_x = self.center_x.clamp(min_x, max_x);
+        self.center_y = self.center_y.clamp(min_y, max_y);
+        self.target_x = self.target_x.clamp(min_x, max_x);
+        self.target_y = self.target_y.clamp(min_y, max_y);
     }
 }
 /// A fixed-size rectangular cell buffer.
@@ -1114,6 +1134,51 @@ impl Grid {
         for y in (top + 1)..bottom {
             self.put(left, y, Cell::new(Self::BORDER_V).with_fg(fg).with_bg(bg));
             self.put(right, y, Cell::new(Self::BORDER_V).with_fg(fg).with_bg(bg));
+        }
+    }
+
+    /// Draw a styled border around a rectangle.
+    ///
+    /// Uses custom box-drawing character maps according to the specified style.
+    /// Clips to grid bounds.
+    pub fn draw_border_styled(&mut self, rect: Rect, style: BorderStyle, fg: Color, bg: Color) {
+        if rect.is_empty() {
+            return;
+        }
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        if rect.x >= x_end || rect.y >= y_end {
+            return;
+        }
+        let top = rect.y;
+        let bottom = y_end - 1;
+        let left = rect.x;
+        let right = x_end - 1;
+
+        let (tl, tr, bl, br, h, v) = match style {
+            BorderStyle::Ascii => ('+', '+', '+', '+', '-', '|'),
+            BorderStyle::Single => ('\u{250C}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{2500}', '\u{2502}'),
+            BorderStyle::Double => ('\u{2554}', '\u{2557}', '\u{255A}', '\u{255D}', '\u{2550}', '\u{2551}'),
+            BorderStyle::Heavy => ('\u{250F}', '\u{2513}', '\u{2517}', '\u{251B}', '\u{2501}', '\u{2503}'),
+            BorderStyle::Rounded => ('\u{256D}', '\u{256E}', '\u{2570}', '\u{256F}', '\u{2500}', '\u{2502}'),
+        };
+
+        // Corners
+        self.put(left, top, Cell::new(tl).with_fg(fg).with_bg(bg));
+        self.put(right, top, Cell::new(tr).with_fg(fg).with_bg(bg));
+        self.put(left, bottom, Cell::new(bl).with_fg(fg).with_bg(bg));
+        self.put(right, bottom, Cell::new(br).with_fg(fg).with_bg(bg));
+
+        // Horizontal edges
+        for x in (left + 1)..right {
+            self.put(x, top, Cell::new(h).with_fg(fg).with_bg(bg));
+            self.put(x, bottom, Cell::new(h).with_fg(fg).with_bg(bg));
+        }
+
+        // Vertical edges
+        for y in (top + 1)..bottom {
+            self.put(left, y, Cell::new(v).with_fg(fg).with_bg(bg));
+            self.put(right, y, Cell::new(v).with_fg(fg).with_bg(bg));
         }
     }
 
@@ -2434,7 +2499,7 @@ pub fn image_to_grid(img: &image::DynamicImage) -> Grid {
     use image::GenericImageView;
     let (width, height) = img.dimensions();
     let grid_width = width as u16;
-    let grid_height = ((height + 1) / 2) as u16;
+    let grid_height = height.div_ceil(2) as u16;
     let mut grid = Grid::new(grid_width, grid_height);
 
     for y in 0..grid_height {
@@ -2482,13 +2547,13 @@ pub fn image_to_grid_with_chroma_key(
     use image::GenericImageView;
     let (width, height) = img.dimensions();
     let grid_width = width as u16;
-    let grid_height = ((height + 1) / 2) as u16;
+    let grid_height = height.div_ceil(2) as u16;
     let mut grid = Grid::new(grid_width, grid_height);
 
     let is_chroma = |c: Color| -> bool {
-        let dr = (c.0 as i16 - chroma_key.0 as i16).abs() as u8;
-        let dg = (c.1 as i16 - chroma_key.1 as i16).abs() as u8;
-        let db = (c.2 as i16 - chroma_key.2 as i16).abs() as u8;
+        let dr = (c.0 as i16 - chroma_key.0 as i16).unsigned_abs() as u8;
+        let dg = (c.1 as i16 - chroma_key.1 as i16).unsigned_abs() as u8;
+        let db = (c.2 as i16 - chroma_key.2 as i16).unsigned_abs() as u8;
         dr < tolerance && dg < tolerance && db < tolerance
     };
 
@@ -2605,6 +2670,24 @@ impl Default for VisualRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_camera_clamp_to_bounds() {
+        let mut camera = Camera::new(10.0, 10.0);
+        camera.clamp_to_bounds(0.0, 0.0, 5.0, 5.0);
+        assert_eq!(camera.center_x, 5.0);
+        assert_eq!(camera.center_y, 5.0);
+        assert_eq!(camera.target_x, 5.0);
+        assert_eq!(camera.target_y, 5.0);
+
+        let mut camera2 = Camera::new(-2.0, 12.0).with_smooth(0.5);
+        camera2.look_at(20.0, 20.0);
+        camera2.clamp_to_bounds(0.0, 0.0, 15.0, 15.0);
+        assert_eq!(camera2.center_x, 0.0);
+        assert_eq!(camera2.center_y, 12.0);
+        assert_eq!(camera2.target_x, 15.0);
+        assert_eq!(camera2.target_y, 15.0);
+    }
 
     #[test]
     fn test_image_to_grid_conversion() {
@@ -3047,6 +3130,46 @@ mod tests {
         // Border extends beyond grid; should not panic.
         grid.draw_border_rounded(Rect::new(0, 0, 10, 10), Color::WHITE, Color::BLACK);
         assert!(grid.to_plain_string().contains(Grid::BORDER_TL));
+    }
+
+    #[test]
+    fn draw_border_styled_uses_various_styles() {
+        let mut grid = Grid::new(6, 5);
+
+        // Test Ascii style
+        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Ascii, Color::WHITE, Color::BLACK);
+        let s = grid.to_plain_string();
+        let lines: Vec<&str> = s.lines().collect();
+        assert!(lines[1].contains('+'));
+        assert!(lines[1].contains('-'));
+        assert!(lines[2].contains('|'));
+
+        // Test Double style
+        grid.clear(Cell::EMPTY);
+        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Double, Color::WHITE, Color::BLACK);
+        let s = grid.to_plain_string();
+        let lines: Vec<&str> = s.lines().collect();
+        assert!(lines[1].contains('\u{2554}')); // ╔
+        assert!(lines[1].contains('\u{2550}')); // ═
+        assert!(lines[2].contains('\u{2551}')); // ║
+
+        // Test Heavy style
+        grid.clear(Cell::EMPTY);
+        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Heavy, Color::WHITE, Color::BLACK);
+        let s = grid.to_plain_string();
+        let lines: Vec<&str> = s.lines().collect();
+        assert!(lines[1].contains('\u{250F}')); // ┏
+        assert!(lines[1].contains('\u{2501}')); // ━
+        assert!(lines[2].contains('\u{2503}')); // ┃
+
+        // Test Rounded style
+        grid.clear(Cell::EMPTY);
+        grid.draw_border_styled(Rect::new(1, 1, 4, 3), BorderStyle::Rounded, Color::WHITE, Color::BLACK);
+        let s = grid.to_plain_string();
+        let lines: Vec<&str> = s.lines().collect();
+        assert!(lines[1].contains('\u{256D}')); // ╭
+        assert!(lines[1].contains('\u{2500}')); // ─
+        assert!(lines[2].contains('\u{2502}')); // │
     }
 
     #[test]
