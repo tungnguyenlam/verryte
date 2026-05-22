@@ -1846,3 +1846,49 @@ sprites render correctly with VFX overlays.
 **Gotchas.** If the boss was defeated in Phase 1, the original parry test failed because the boss died instead of transitioning. Setting the boss state to Phase 2 inside the test avoids the transition and permits testing the final defeat/Echo drop code path.
 
 **Follow-ups.** None. All improvements are fully verified by workspace-wide tests.
+
+## 2026-05-23 - Autonomous engine run: guards, range queries, autocomplete, HUD
+
+**Goal.** Complete the remaining items from the autonomous engine improvement
+plan: safe simultaneous mutable query guards, spatial hash distance queries,
+TextInput autocomplete cycling, and styled HUD integration.
+
+**Changes.**
+- `crates/verryte-core/src/world.rs:1294-1440` - Added `QueryMut2Guard` and
+  `QueryMut3Guard` structs with `for_each`, `get_mut`, and `Drop`-based column
+  restoration. This safely bypasses Rust's exclusive-borrow rule by temporarily
+  removing columns from `self.columns` during the guard's lifetime and restoring
+  them on `Drop`. Added `query_mut2_and_mut3_guards` test.
+- `crates/verryte-map/src/lib.rs:2523-2567` - Added `SpatialHash::query_chebyshev`
+  and `SpatialHash::query_euclidean` methods. Same bucket-scan pattern as the
+  existing `query()` but using the respective distance metrics.
+  Added `spatial_hash_chebyshev_and_euclidean_queries` test.
+- `crates/verryte-input/src/lib.rs:1324-1731` - Added autocomplete fields to
+  `TextInput` (`autocomplete_matches`, `autocomplete_index`,
+  `original_text_before_autocomplete`, `autocomplete_start_char`,
+  `autocomplete_end_char`). Added `cycle_autocomplete(&mut self, &[&str])` that
+  extracts the word before the cursor, filters dictionary matches by prefix, and
+  cycles through them on successive calls. Autocomplete state resets on any
+  non-Tab key, `set_text`, `insert_str`, `set_cursor`, `clear`, `take_text`.
+- `prototype/wuthering-terminal/src/game.rs:2120-2252` - Replaced the plain `═`
+  HUD separator with a `draw_border_styled(Rounded)` panel, dark background fill
+  `Color(10, 10, 15)`, and `draw_shadow` for visual depth.
+
+**Reasoning.** These are the remaining items from the 6-item autonomous engine
+improvement plan. The `QueryMut2Guard`/`QueryMut3Guard` approach was chosen over
+alternatives like raw pointer casts (violates `unsafe` ban) or always using
+closure-based `with_mut2`/`with_mut3` (awkward for systems that need to hold
+mutable refs across multiple operations). The guard pattern is ergonomic and
+safe: ownership transfer of `Box<TypedColumn<T>>` out of the HashMap ensures no
+aliasing, and `Drop` guarantees restoration even on panic.
+
+**Assumptions.** The `cycle_autocomplete` method assumes dictionary order is
+stable across calls. Tab key identity check (`key != Key::Tab`) in `handle_key`
+assumes Tab triggers autocomplete externally; the method itself doesn't wire into
+`handle_key` directly.
+
+**Gotchas.** The autocomplete test initially failed because `"inspect"` also
+matches the prefix `"in"` and appears before `"info"` in the dictionary. Tests
+were corrected to match actual dictionary iteration order.
+
+**Follow-ups.** None; all 6 items from the plan are complete.
