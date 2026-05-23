@@ -5034,7 +5034,8 @@ mod tests {
         // Line 0: "hello"
         // Line 1: "red" (red)
         // Line 2: "world"
-        grid.write_rich_wrapped(0, 0, "hello [fg:red]red[/fg] world", 8).unwrap();
+        grid.write_rich_wrapped(0, 0, "hello [fg:red]red[/fg] world", 8)
+            .unwrap();
 
         let c_hello = grid.get(0, 0).unwrap();
         assert_eq!(c_hello.glyph, 'h');
@@ -5048,7 +5049,6 @@ mod tests {
         assert_eq!(c_world.glyph, 'w');
         assert_eq!(c_world.fg, Color::WHITE);
     }
-
 
     #[test]
     fn test_color_blend() {

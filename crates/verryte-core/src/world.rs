@@ -2651,7 +2651,9 @@ mod tests {
         world.insert(e1, Extra(42));
 
         // Test query4_iter
-        let q = world.query4_iter::<Pos, Tag, Counter, Extra>().collect::<Vec<_>>();
+        let q = world
+            .query4_iter::<Pos, Tag, Counter, Extra>()
+            .collect::<Vec<_>>();
         assert_eq!(q.len(), 1);
         assert_eq!(q[0].1 .0, 1);
         assert_eq!(q[0].2 .0, "e1");

@@ -1914,3 +1914,26 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** Reassigning `final_hp` inside inner scopes triggered compiler warnings since the mutated value was never read before exiting scope; removed the redundant reassignments to keep the build clean.
 
 **Follow-ups.** None. All 5 improvements are fully verified and integrated.
+
+## 2026-05-23 - turn-based tactical RPG improvements: adaptive sprites, camera scrolling, path previews, combat criticals, and boss cinematic
+
+**Goal.** Implement 5 visual and mechanical improvements to the turn-based tactical RPG prototype: adaptive sprite caching, camera viewport scrolling, path preview VFX overlay, critical hits & blocks, and boss phase 2 transition cinematic visuals.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/game.rs` -
+  - Added coordinate conversion helpers `get_tile_dimensions` and `get_tile_center_pixels` to dynamically scale tiles based on current resolution.
+  - Refactored `load_sprites` to load, resize, and register animated sprites for all 6 tiers of `ResolutionTier::ALL` in the centralized `VisualRegistry`. Added path detection for test/binary runners.
+  - Rewrote `Game::render()` to draw the tactical board onto a virtual canvas, copy a cropped viewport centered around `self.camera`, keep the HUD panel stationary at the bottom, and draw a path overlay along the calculated shortest path to the cursor.
+  - Added `resolve_combat_hit` implementing a 20% critical hit chance (1.5x damage, bold red/yellow text, double screen shake) and 15% block chance (0.5x damage, bold gray text, single shake).
+  - Enhanced `check_boss_phase_transition` to trigger full-screen color flashes, three expanding red/green AoE rings around the boss, and fire/shatter particle systems.
+- `prototype/wuthering-terminal/src/lib.rs` -
+  - Added `test_critical_and_block_distribution` verifying combat hit resolutions.
+  - Added `test_adaptive_sprites_tier_existence` asserting that all 6 resolution tiers exist for each registered character and match expected sizes.
+
+**Reasoning.** Dynamic tile dimensions and camera-centered viewport cropping enable the game board to support scrolling and terminal resizing cleanly without hardcoded layout constants. Caching all resolution tiers at startup allows the game loop to select the optimal tier on window resize at zero runtime cost. The path preview overlay provides vital player feedback. Implementing critical hit/block logic adds satisfying combat randomness, while boss transition rings/flashes/particles deliver premium terminal-native cinematic visuals.
+
+**Assumptions.** We assumed the target crop rectangle for the viewport centers on the camera and clamps to the battlefield bounds. The camera viewport coordinates map directly to cell coordinates based on the current resolution's tile dimensions.
+
+**Gotchas.** When copy-pasting the cropped battlefield viewport onto the terminal grid, using `Grid::blit_region` originally skipped space character cells (` `) because they were treated as transparent. A direct nested loop copy was used instead to copy the background colors of grass and other empty tiles correctly.
+
+**Follow-ups.** None. All 5 prototype improvements are fully integrated, clean, and verified by workspace integration tests.

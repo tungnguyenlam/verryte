@@ -571,31 +571,52 @@ mod tests {
         // Set Boss HP to 500.
         game.world.get_mut::<Stats>(boss).unwrap().hp = 500;
         // Apply Ice to Boss
-        game.apply_elemental_status(boss, crate::components::ElementalStatus::Ice { duration: 3 });
+        game.apply_elemental_status(
+            boss,
+            crate::components::ElementalStatus::Ice { duration: 3 },
+        );
         assert_eq!(
-            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            game.world
+                .get::<crate::components::ElementalStatus>(boss)
+                .copied()
+                .unwrap(),
             crate::components::ElementalStatus::Ice { duration: 3 }
         );
         // Apply Lightning to Boss -> triggers Shatter reaction (30 bonus damage)
-        game.apply_elemental_status(boss, crate::components::ElementalStatus::Lightning { duration: 3 });
+        game.apply_elemental_status(
+            boss,
+            crate::components::ElementalStatus::Lightning { duration: 3 },
+        );
         // Target status should become None
         assert_eq!(
-            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            game.world
+                .get::<crate::components::ElementalStatus>(boss)
+                .copied()
+                .unwrap(),
             crate::components::ElementalStatus::None
         );
         // Boss HP should be 500 - 30 = 470
         assert_eq!(game.world.get::<Stats>(boss).unwrap().hp, 470);
 
         // 2. Test Overgrowth: Apply Lightning, then Nature.
-        game.apply_elemental_status(boss, crate::components::ElementalStatus::Lightning { duration: 3 });
-        game.apply_elemental_status(boss, crate::components::ElementalStatus::Nature { duration: 3 });
+        game.apply_elemental_status(
+            boss,
+            crate::components::ElementalStatus::Lightning { duration: 3 },
+        );
+        game.apply_elemental_status(
+            boss,
+            crate::components::ElementalStatus::Nature { duration: 3 },
+        );
         // Target should be rooted
         assert!(game.world.get::<crate::components::Rooted>(boss).is_some());
         // Boss HP should be 470 - 10 = 460
         assert_eq!(game.world.get::<Stats>(boss).unwrap().hp, 460);
         // Target status should become None
         assert_eq!(
-            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            game.world
+                .get::<crate::components::ElementalStatus>(boss)
+                .copied()
+                .unwrap(),
             crate::components::ElementalStatus::None
         );
 
@@ -606,14 +627,132 @@ mod tests {
         // Set Warrior HP to 50
         game.world.get_mut::<Stats>(warrior).unwrap().hp = 50;
 
-        game.apply_elemental_status(boss, crate::components::ElementalStatus::Nature { duration: 3 });
-        game.apply_elemental_status(boss, crate::components::ElementalStatus::Ice { duration: 3 });
+        game.apply_elemental_status(
+            boss,
+            crate::components::ElementalStatus::Nature { duration: 3 },
+        );
+        game.apply_elemental_status(
+            boss,
+            crate::components::ElementalStatus::Ice { duration: 3 },
+        );
         // Kael should be healed by 20. HP: 50 + 20 = 70.
         assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, 70);
         // Target status should become None
         assert_eq!(
-            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            game.world
+                .get::<crate::components::ElementalStatus>(boss)
+                .copied()
+                .unwrap(),
             crate::components::ElementalStatus::None
         );
+    }
+
+    #[test]
+    fn test_critical_and_block_distribution() {
+        let mut game = Game::new();
+        let mut warrior = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Warrior {
+                warrior = Some(e);
+                break;
+            }
+        }
+        let warrior = warrior.unwrap();
+
+        let mut crits = 0;
+        let mut blocks = 0;
+        let mut normals = 0;
+
+        for _ in 0..100 {
+            // Set warrior HP high enough so we don't defeat him
+            game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+            let (damage, _defeated) =
+                game.resolve_combat_hit(warrior, 100, "Attacker", "Warrior", Position::new(4, 4));
+            if damage == 150 {
+                crits += 1;
+            } else if damage == 50 {
+                blocks += 1;
+            } else if damage == 100 {
+                normals += 1;
+            } else {
+                panic!("Unexpected damage value: {}", damage);
+            }
+        }
+
+        assert!(crits > 0, "Should have at least one critical hit");
+        assert!(blocks > 0, "Should have at least one block");
+        assert!(normals > 0, "Should have at least one normal hit");
+    }
+
+    #[test]
+    fn test_adaptive_sprites_tier_existence() {
+        let game = Game::new();
+        let registry = game
+            .world
+            .resource::<verryte_terminal::VisualRegistry>()
+            .unwrap();
+
+        let sprite_keys = ["kael", "lyra", "mira", "blight-sovereign"];
+        for key in sprite_keys {
+            let asset = registry
+                .get(key)
+                .unwrap_or_else(|| panic!("Asset {} should be registered", key));
+            if let verryte_terminal::VisualAsset::Animated(sprite) = asset {
+                assert_eq!(sprite.name, key);
+                // Check all 6 tiers
+                for tier in verryte_terminal::ResolutionTier::ALL {
+                    let mut s = sprite.clone();
+                    s.set_tier(tier);
+                    let grid = s.current_frame();
+                    assert!(
+                        grid.width() > 0,
+                        "Width of sprite {} for tier {:?} should be > 0",
+                        key,
+                        tier
+                    );
+                    assert!(
+                        grid.height() > 0,
+                        "Height of sprite {} for tier {:?} should be > 0",
+                        key,
+                        tier
+                    );
+
+                    let (expected_cols, expected_rows) = tier.sprite_size();
+                    if key == "blight-sovereign" {
+                        let expected_w = (((expected_cols as f32 * 1.33) as u32).max(1)) as u16;
+                        let expected_h_pixels =
+                            (((expected_rows as f32 * 2.0 * 1.33) as u32).max(1)) as u16;
+                        let expected_h = expected_h_pixels.div_ceil(2);
+                        assert_eq!(
+                            grid.width(),
+                            expected_w,
+                            "Boss width mismatch for tier {:?}",
+                            tier
+                        );
+                        assert_eq!(
+                            grid.height(),
+                            expected_h,
+                            "Boss height mismatch for tier {:?}",
+                            tier
+                        );
+                    } else {
+                        assert_eq!(
+                            grid.width(),
+                            expected_cols,
+                            "Player width mismatch for tier {:?}",
+                            tier
+                        );
+                        assert_eq!(
+                            grid.height(),
+                            expected_rows,
+                            "Player height mismatch for tier {:?}",
+                            tier
+                        );
+                    }
+                }
+            } else {
+                panic!("Asset {} should be an Animated sprite", key);
+            }
+        }
     }
 }
