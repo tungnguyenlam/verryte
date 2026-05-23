@@ -546,4 +546,74 @@ mod tests {
             assert_eq!(stats.ap, 7);
         }
     }
+
+    #[test]
+    fn test_elemental_reactions() {
+        let mut game = Game::new();
+        let mut warrior = None;
+        let mut mage = None;
+        let mut healer = None;
+        let mut boss = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            match class {
+                CharacterClass::Warrior => warrior = Some(e),
+                CharacterClass::Mage => mage = Some(e),
+                CharacterClass::Healer => healer = Some(e),
+                CharacterClass::Boss => boss = Some(e),
+            }
+        }
+        let warrior = warrior.unwrap();
+        let _mage = mage.unwrap();
+        let _healer = healer.unwrap();
+        let boss = boss.unwrap();
+
+        // 1. Test Shatter: Warrior applies Ice (Kael), Mage applies Lightning (Lyra).
+        // Set Boss HP to 500.
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 500;
+        // Apply Ice to Boss
+        game.apply_elemental_status(boss, crate::components::ElementalStatus::Ice { duration: 3 });
+        assert_eq!(
+            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            crate::components::ElementalStatus::Ice { duration: 3 }
+        );
+        // Apply Lightning to Boss -> triggers Shatter reaction (30 bonus damage)
+        game.apply_elemental_status(boss, crate::components::ElementalStatus::Lightning { duration: 3 });
+        // Target status should become None
+        assert_eq!(
+            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            crate::components::ElementalStatus::None
+        );
+        // Boss HP should be 500 - 30 = 470
+        assert_eq!(game.world.get::<Stats>(boss).unwrap().hp, 470);
+
+        // 2. Test Overgrowth: Apply Lightning, then Nature.
+        game.apply_elemental_status(boss, crate::components::ElementalStatus::Lightning { duration: 3 });
+        game.apply_elemental_status(boss, crate::components::ElementalStatus::Nature { duration: 3 });
+        // Target should be rooted
+        assert!(game.world.get::<crate::components::Rooted>(boss).is_some());
+        // Boss HP should be 470 - 10 = 460
+        assert_eq!(game.world.get::<Stats>(boss).unwrap().hp, 460);
+        // Target status should become None
+        assert_eq!(
+            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            crate::components::ElementalStatus::None
+        );
+
+        // 3. Test Bloom: Apply Nature, then Ice.
+        // Move boss to (4, 5) which is adjacent to Kael (Warrior) at (4, 4)
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        // Set Warrior HP to 50
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 50;
+
+        game.apply_elemental_status(boss, crate::components::ElementalStatus::Nature { duration: 3 });
+        game.apply_elemental_status(boss, crate::components::ElementalStatus::Ice { duration: 3 });
+        // Kael should be healed by 20. HP: 50 + 20 = 70.
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, 70);
+        // Target status should become None
+        assert_eq!(
+            game.world.get::<crate::components::ElementalStatus>(boss).copied().unwrap(),
+            crate::components::ElementalStatus::None
+        );
+    }
 }

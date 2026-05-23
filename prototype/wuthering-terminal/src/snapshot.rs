@@ -2,8 +2,8 @@
 
 use crate::action::Action;
 use crate::components::{
-    CharacterClass, EchoItem, GameEvent, GameState, Outcome, Position, Stats, Team, TelegraphZone,
-    TurnPhase,
+    CharacterClass, EchoItem, ElementalStatus, GameEvent, GameState, Outcome, Position, Rooted,
+    Stats, Team, TelegraphZone, TurnPhase,
 };
 use verryte_input::ActionSource;
 
@@ -32,6 +32,8 @@ pub struct SavedEntity {
     pub class: Option<CharacterClass>,
     pub stats: Option<Stats>,
     pub echo_item: Option<EchoItem>,
+    pub elemental_status: Option<ElementalStatus>,
+    pub rooted: Option<Rooted>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

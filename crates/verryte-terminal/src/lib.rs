@@ -1186,6 +1186,265 @@ impl Grid {
         Ok(written_count)
     }
 
+    /// Parse a bracket-markup string and write it with word-wrapping that respects newlines
+    /// and fits within `width` terminal cells.
+    ///
+    /// Returns the number of cells/glyphs written or an error string if markup is malformed.
+    pub fn write_rich_wrapped(
+        &mut self,
+        x: u16,
+        y: u16,
+        markup: &str,
+        width: u16,
+    ) -> Result<u16, String> {
+        if width == 0 {
+            return Ok(0);
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        struct MarkupState {
+            bold: bool,
+            underline: bool,
+            dim: bool,
+            italic: bool,
+            reverse: bool,
+            fg: Color,
+            bg: Color,
+        }
+
+        #[derive(Clone, Debug)]
+        struct StyledChar {
+            ch: char,
+            fg: Color,
+            bg: Color,
+            attrs: CellAttrs,
+        }
+
+        let mut state_stack = vec![MarkupState {
+            bold: false,
+            underline: false,
+            dim: false,
+            italic: false,
+            reverse: false,
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+        }];
+
+        let parse_color = |s: &str| -> Result<Color, String> {
+            if s.starts_with('#') {
+                if s.len() != 7 {
+                    return Err(format!("Invalid hex color length: {}", s));
+                }
+                let r = u8::from_str_radix(&s[1..3], 16).map_err(|e| e.to_string())?;
+                let g = u8::from_str_radix(&s[3..5], 16).map_err(|e| e.to_string())?;
+                let b = u8::from_str_radix(&s[5..7], 16).map_err(|e| e.to_string())?;
+                Ok(Color(r, g, b))
+            } else {
+                match s.to_ascii_lowercase().as_str() {
+                    "black" => Ok(Color::BLACK),
+                    "white" => Ok(Color::WHITE),
+                    "red" => Ok(Color::RED),
+                    "green" => Ok(Color::GREEN),
+                    "blue" => Ok(Color::BLUE),
+                    "yellow" => Ok(Color::YELLOW),
+                    "cyan" => Ok(Color::CYAN),
+                    "magenta" => Ok(Color::MAGENTA),
+                    "grey" | "gray" => Ok(Color::GREY),
+                    "dark_grey" | "dark_gray" | "darkgrey" | "darkgray" => Ok(Color::DARK_GREY),
+                    _ => Err(format!("Unknown color name: {}", s)),
+                }
+            }
+        };
+
+        let mut chars = markup.chars().peekable();
+        let mut styled_chars = Vec::new();
+
+        while let Some(ch) = chars.next() {
+            if ch == '[' {
+                if chars.peek() == Some(&'[') {
+                    chars.next();
+                    let current = state_stack.last().unwrap();
+                    let mut attrs = CellAttrs::NONE;
+                    attrs.bold = current.bold;
+                    attrs.underline = current.underline;
+                    attrs.dim = current.dim;
+                    attrs.italic = current.italic;
+                    attrs.reverse = current.reverse;
+                    styled_chars.push(StyledChar {
+                        ch: '[',
+                        fg: current.fg,
+                        bg: current.bg,
+                        attrs,
+                    });
+                } else {
+                    let mut tag_content = String::new();
+                    let mut closed = false;
+                    while let Some(&next_ch) = chars.peek() {
+                        if next_ch == ']' {
+                            chars.next();
+                            closed = true;
+                            break;
+                        } else {
+                            tag_content.push(chars.next().unwrap());
+                        }
+                    }
+
+                    if !closed {
+                        return Err("Unclosed markup tag".to_string());
+                    }
+
+                    let current = state_stack.last().unwrap().clone();
+                    match tag_content.as_str() {
+                        "b" => {
+                            let mut next_state = current;
+                            next_state.bold = true;
+                            state_stack.push(next_state);
+                        }
+                        "u" => {
+                            let mut next_state = current;
+                            next_state.underline = true;
+                            state_stack.push(next_state);
+                        }
+                        "d" => {
+                            let mut next_state = current;
+                            next_state.dim = true;
+                            state_stack.push(next_state);
+                        }
+                        "i" => {
+                            let mut next_state = current;
+                            next_state.italic = true;
+                            state_stack.push(next_state);
+                        }
+                        "r" => {
+                            let mut next_state = current;
+                            next_state.reverse = true;
+                            state_stack.push(next_state);
+                        }
+                        "/b" | "/u" | "/d" | "/i" | "/r" | "/fg" | "/bg" => {
+                            if state_stack.len() > 1 {
+                                state_stack.pop();
+                            }
+                        }
+                        "/" => {
+                            while state_stack.len() > 1 {
+                                state_stack.pop();
+                            }
+                        }
+                        other => {
+                            if let Some(rest) = other.strip_prefix("fg:") {
+                                let color = parse_color(rest)?;
+                                let mut next_state = current;
+                                next_state.fg = color;
+                                state_stack.push(next_state);
+                            } else if let Some(rest) = other.strip_prefix("bg:") {
+                                let color = parse_color(rest)?;
+                                let mut next_state = current;
+                                next_state.bg = color;
+                                state_stack.push(next_state);
+                            } else {
+                                return Err(format!("Unknown markup tag: {}", other));
+                            }
+                        }
+                    }
+                }
+            } else {
+                let current = state_stack.last().unwrap();
+                let mut attrs = CellAttrs::NONE;
+                attrs.bold = current.bold;
+                attrs.underline = current.underline;
+                attrs.dim = current.dim;
+                attrs.italic = current.italic;
+                attrs.reverse = current.reverse;
+                styled_chars.push(StyledChar {
+                    ch,
+                    fg: current.fg,
+                    bg: current.bg,
+                    attrs,
+                });
+            }
+        }
+
+        let mut paragraphs = Vec::new();
+        let mut current_paragraph = Vec::new();
+        for sc in styled_chars {
+            if sc.ch == '\n' {
+                paragraphs.push(std::mem::take(&mut current_paragraph));
+            } else {
+                current_paragraph.push(sc);
+            }
+        }
+        paragraphs.push(current_paragraph);
+
+        let mut lines = Vec::new();
+        for mut remaining in paragraphs {
+            if remaining.is_empty() {
+                lines.push(Vec::new());
+                continue;
+            }
+            while !remaining.is_empty() {
+                if remaining.len() <= width as usize {
+                    lines.push(remaining);
+                    break;
+                }
+
+                let break_point = width as usize;
+                let last_space_idx = remaining[..break_point].iter().rposition(|sc| sc.ch == ' ');
+
+                if let Some(space_idx) = last_space_idx {
+                    let mut line_to_push = remaining[..space_idx].to_vec();
+                    while let Some(last) = line_to_push.last() {
+                        if last.ch == ' ' {
+                            line_to_push.pop();
+                        } else {
+                            break;
+                        }
+                    }
+                    lines.push(line_to_push);
+
+                    let mut next_start = space_idx + 1;
+                    while next_start < remaining.len() && remaining[next_start].ch == ' ' {
+                        next_start += 1;
+                    }
+                    remaining = remaining[next_start..].to_vec();
+                } else {
+                    lines.push(remaining[..break_point].to_vec());
+                    let mut next_start = break_point;
+                    while next_start < remaining.len() && remaining[next_start].ch == ' ' {
+                        next_start += 1;
+                    }
+                    remaining = remaining[next_start..].to_vec();
+                }
+            }
+        }
+
+        let mut written_count = 0;
+        for (i, line) in lines.iter().enumerate() {
+            let ly = y.saturating_add(i as u16);
+            if ly >= self.height() {
+                break;
+            }
+            for (j, sc) in line.iter().enumerate() {
+                let lx = x.saturating_add(j as u16);
+                if lx >= self.width() {
+                    break;
+                }
+                self.put(
+                    lx,
+                    ly,
+                    Cell {
+                        glyph: sc.ch,
+                        fg: sc.fg,
+                        bg: sc.bg,
+                        attrs: sc.attrs,
+                    },
+                );
+                written_count += 1;
+            }
+        }
+
+        Ok(written_count as u16)
+    }
+
     /// Write multiple lines starting at `(x, y)`, clipping to the grid height.
     ///
     /// Returns the number of lines written.
@@ -4765,6 +5024,31 @@ mod tests {
         assert!(grid.write_rich(0, 0, "[fg:invalid]").is_err());
         assert!(grid.write_rich(0, 0, "[invalid_tag]text").is_err());
     }
+
+    #[test]
+    fn test_grid_write_rich_wrapped() {
+        let mut grid = Grid::new(10, 5);
+        // "hello red world" wrapping at 8 columns
+        // "hello" is 5 chars. "red world" is 9 chars which is > 8.
+        // It wraps to:
+        // Line 0: "hello"
+        // Line 1: "red" (red)
+        // Line 2: "world"
+        grid.write_rich_wrapped(0, 0, "hello [fg:red]red[/fg] world", 8).unwrap();
+
+        let c_hello = grid.get(0, 0).unwrap();
+        assert_eq!(c_hello.glyph, 'h');
+        assert_eq!(c_hello.fg, Color::WHITE);
+
+        let c_red = grid.get(0, 1).unwrap();
+        assert_eq!(c_red.glyph, 'r');
+        assert_eq!(c_red.fg, Color::RED);
+
+        let c_world = grid.get(0, 2).unwrap();
+        assert_eq!(c_world.glyph, 'w');
+        assert_eq!(c_world.fg, Color::WHITE);
+    }
+
 
     #[test]
     fn test_color_blend() {

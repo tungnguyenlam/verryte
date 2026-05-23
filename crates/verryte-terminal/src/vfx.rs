@@ -239,6 +239,64 @@ pub fn emit_heal(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
     particles
 }
 
+/// Emit bloom particles rising and floating outward in green and gold.
+pub fn emit_bloom(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['❀', '✿', '❁', '✦', '·'];
+    let colors = [
+        Color(50, 220, 100),  // Green
+        Color(255, 215, 0),   // Gold
+        Color(150, 255, 150), // Light green
+        Color(255, 230, 100), // Light gold
+    ];
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let speed = 0.5 + (i as f32 * 0.17) % 1.5;
+        particles.push(Particle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: -0.5 - (i as f32 * 0.23) % 1.2,
+            glyph: glyphs[i % glyphs.len()],
+            fg: colors[i % colors.len()],
+            bg: Color::BLACK,
+            lifetime: 0.8 + (i as f32 * 0.13) % 0.6,
+            max_lifetime: 0.8 + (i as f32 * 0.13) % 0.6,
+            attrs: CellAttrs::NONE,
+        });
+    }
+    particles
+}
+
+/// Emit shatter particles flying outward in cold/crystalline colors.
+pub fn emit_shatter(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['✦', '◇', '❄', '·', '∘'];
+    let colors = [
+        Color(100, 200, 255), // Cyan
+        Color(240, 248, 255), // Alice Blue
+        Color(255, 255, 255), // White
+        Color(30, 144, 255),  // Dodger Blue
+    ];
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let speed = 2.0 + (i as f32 * 0.31) % 4.0;
+        particles.push(Particle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed * 0.5,
+            glyph: glyphs[i % glyphs.len()],
+            fg: colors[i % colors.len()],
+            bg: Color::BLACK,
+            lifetime: 0.5 + (i as f32 * 0.09) % 0.4,
+            max_lifetime: 0.5 + (i as f32 * 0.09) % 0.4,
+            attrs: CellAttrs::NONE.bold(),
+        });
+    }
+    particles
+}
+
 // ── Screen Shake ──────────────────────────────────────────────────────────────
 
 /// A screen shake effect with sinusoidal offset and decay.
@@ -723,5 +781,25 @@ mod tests {
         let mut grid = Grid::new(20, 10);
         vfx.render(&mut grid, 20, 10);
         vfx.render_flash(&mut grid, 20, 10);
+    }
+
+    #[test]
+    fn emit_bloom_produces_particles() {
+        let p = emit_bloom(5.0, 5.0, 10);
+        assert_eq!(p.len(), 10);
+        for particle in p {
+            assert!(particle.lifetime > 0.0);
+            assert!(particle.x >= 3.0 && particle.x <= 7.0);
+        }
+    }
+
+    #[test]
+    fn emit_shatter_produces_particles() {
+        let p = emit_shatter(5.0, 5.0, 15);
+        assert_eq!(p.len(), 15);
+        for particle in p {
+            assert!(particle.lifetime > 0.0);
+            assert!(particle.attrs.is_bold());
+        }
     }
 }

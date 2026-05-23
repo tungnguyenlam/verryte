@@ -635,6 +635,19 @@ impl World {
         }
     }
 
+    /// Query entities with four components, returning an iterator.
+    pub fn query4_iter<A, B, C, D>(&self) -> Query4<'_, A, B, C, D>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+        D: 'static + Send + Sync,
+    {
+        Query4 {
+            iter: self.query4::<A, B, C, D>().into_iter(),
+        }
+    }
+
     /// Collect every live entity that has both component types.
     pub fn query2<A, B>(&self) -> Vec<(Entity, &A, &B)>
     where
@@ -744,6 +757,89 @@ impl World {
                 value_a,
                 value_b,
                 value_c,
+            ));
+        }
+        out
+    }
+
+    /// Collect every live entity that has all four component types.
+    pub fn query4<A, B, C, D>(&self) -> Vec<(Entity, &A, &B, &C, &D)>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+        D: 'static + Send + Sync,
+    {
+        let mut out = Vec::new();
+        if TypeId::of::<A>() == TypeId::of::<B>()
+            || TypeId::of::<A>() == TypeId::of::<C>()
+            || TypeId::of::<A>() == TypeId::of::<D>()
+            || TypeId::of::<B>() == TypeId::of::<C>()
+            || TypeId::of::<B>() == TypeId::of::<D>()
+            || TypeId::of::<C>() == TypeId::of::<D>()
+        {
+            return out;
+        }
+
+        let Some(column_a) = self.columns.get(&TypeId::of::<A>()) else {
+            return out;
+        };
+        let Some(column_b) = self.columns.get(&TypeId::of::<B>()) else {
+            return out;
+        };
+        let Some(column_c) = self.columns.get(&TypeId::of::<C>()) else {
+            return out;
+        };
+        let Some(column_d) = self.columns.get(&TypeId::of::<D>()) else {
+            return out;
+        };
+        let Some(typed_a) = column_a.as_any().downcast_ref::<TypedColumn<A>>() else {
+            return out;
+        };
+        let Some(typed_b) = column_b.as_any().downcast_ref::<TypedColumn<B>>() else {
+            return out;
+        };
+        let Some(typed_c) = column_c.as_any().downcast_ref::<TypedColumn<C>>() else {
+            return out;
+        };
+        let Some(typed_d) = column_d.as_any().downcast_ref::<TypedColumn<D>>() else {
+            return out;
+        };
+
+        for (i, slot_a) in typed_a.slots.iter().enumerate() {
+            if i >= self.alive.len() || !self.alive[i] {
+                continue;
+            }
+            let Some((gen_a, value_a)) = slot_a else {
+                continue;
+            };
+            let Some((gen_b, value_b)) = typed_b.slots.get(i).and_then(|slot| slot.as_ref()) else {
+                continue;
+            };
+            if gen_a != gen_b {
+                continue;
+            }
+            let Some((gen_c, value_c)) = typed_c.slots.get(i).and_then(|slot| slot.as_ref()) else {
+                continue;
+            };
+            if gen_a != gen_c {
+                continue;
+            }
+            let Some((gen_d, value_d)) = typed_d.slots.get(i).and_then(|slot| slot.as_ref()) else {
+                continue;
+            };
+            if gen_a != gen_d {
+                continue;
+            }
+            out.push((
+                Entity {
+                    index: i as u32,
+                    generation: *gen_a,
+                },
+                value_a,
+                value_b,
+                value_c,
+                value_d,
             ));
         }
         out
@@ -935,6 +1031,98 @@ impl World {
             col_a: Some(typed_a),
             col_b: Some(typed_b),
             col_c: Some(typed_c),
+            indices,
+        })
+    }
+
+    /// Mutably query four component types simultaneously.
+    /// Returns a guard that owns the mutably borrowed columns, allowing safe iteration and lookup.
+    pub fn query_mut4<A, B, C, D>(&mut self) -> Option<QueryMut4Guard<'_, A, B, C, D>>
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+        D: 'static + Send + Sync,
+    {
+        let id_a = TypeId::of::<A>();
+        let id_b = TypeId::of::<B>();
+        let id_c = TypeId::of::<C>();
+        let id_d = TypeId::of::<D>();
+        if id_a == id_b
+            || id_a == id_c
+            || id_a == id_d
+            || id_b == id_c
+            || id_b == id_d
+            || id_c == id_d
+        {
+            return None;
+        }
+
+        let has_a = self.columns.contains_key(&id_a);
+        let has_b = self.columns.contains_key(&id_b);
+        let has_c = self.columns.contains_key(&id_c);
+        let has_d = self.columns.contains_key(&id_d);
+        if !has_a || !has_b || !has_c || !has_d {
+            return None;
+        }
+
+        let col_a = self.columns.get(&id_a).unwrap();
+        let col_b = self.columns.get(&id_b).unwrap();
+        let col_c = self.columns.get(&id_c).unwrap();
+        let col_d = self.columns.get(&id_d).unwrap();
+        let typed_a = col_a.as_any().downcast_ref::<TypedColumn<A>>().unwrap();
+        let typed_b = col_b.as_any().downcast_ref::<TypedColumn<B>>().unwrap();
+        let typed_c = col_c.as_any().downcast_ref::<TypedColumn<C>>().unwrap();
+        let typed_d = col_d.as_any().downcast_ref::<TypedColumn<D>>().unwrap();
+
+        let alive = &self.alive;
+        let len = typed_a
+            .slots
+            .len()
+            .min(typed_b.slots.len())
+            .min(typed_c.slots.len())
+            .min(typed_d.slots.len())
+            .min(alive.len());
+        let indices: Vec<usize> = (0..len)
+            .filter(|&i| {
+                if !alive[i] {
+                    return false;
+                }
+                typed_a.slots[i]
+                    .as_ref()
+                    .and_then(|(ga, _)| {
+                        typed_b.slots[i].as_ref().and_then(|(gb, _)| {
+                            typed_c.slots[i].as_ref().and_then(|(gc, _)| {
+                                typed_d.slots[i]
+                                    .as_ref()
+                                    .map(|(gd, _)| ga == gb && gb == gc && gc == gd)
+                            })
+                        })
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        let box_a = self.columns.remove(&id_a).unwrap();
+        let box_b = self.columns.remove(&id_b).unwrap();
+        let box_c = self.columns.remove(&id_c).unwrap();
+        let box_d = self.columns.remove(&id_d).unwrap();
+
+        let any_a = box_a.into_any();
+        let any_b = box_b.into_any();
+        let any_c = box_c.into_any();
+        let any_d = box_d.into_any();
+        let typed_a = any_a.downcast::<TypedColumn<A>>().unwrap();
+        let typed_b = any_b.downcast::<TypedColumn<B>>().unwrap();
+        let typed_c = any_c.downcast::<TypedColumn<C>>().unwrap();
+        let typed_d = any_d.downcast::<TypedColumn<D>>().unwrap();
+
+        Some(QueryMut4Guard {
+            world: self,
+            col_a: Some(typed_a),
+            col_b: Some(typed_b),
+            col_c: Some(typed_c),
+            col_d: Some(typed_d),
             indices,
         })
     }
@@ -1441,6 +1629,116 @@ where
         }
         if let Some(col_c) = self.col_c.take() {
             self.world.columns.insert(TypeId::of::<C>(), col_c);
+        }
+    }
+}
+
+/// An iterator over four-component query results.
+pub struct Query4<'a, A, B, C, D> {
+    iter: std::vec::IntoIter<(Entity, &'a A, &'a B, &'a C, &'a D)>,
+}
+
+impl<'a, A, B, C, D> Iterator for Query4<'a, A, B, C, D> {
+    type Item = (Entity, &'a A, &'a B, &'a C, &'a D);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<'a, A, B, C, D> ExactSizeIterator for Query4<'a, A, B, C, D> {}
+
+/// A guard that holds mutable borrows of four component columns, allowing safe concurrent iteration and mutation.
+pub struct QueryMut4Guard<'a, A, B, C, D>
+where
+    A: 'static + Send + Sync,
+    B: 'static + Send + Sync,
+    C: 'static + Send + Sync,
+    D: 'static + Send + Sync,
+{
+    world: &'a mut World,
+    col_a: Option<Box<TypedColumn<A>>>,
+    col_b: Option<Box<TypedColumn<B>>>,
+    col_c: Option<Box<TypedColumn<C>>>,
+    col_d: Option<Box<TypedColumn<D>>>,
+    indices: Vec<usize>,
+}
+
+impl<'a, A, B, C, D> QueryMut4Guard<'a, A, B, C, D>
+where
+    A: 'static + Send + Sync,
+    B: 'static + Send + Sync,
+    C: 'static + Send + Sync,
+    D: 'static + Send + Sync,
+{
+    pub fn for_each<F>(&mut self, mut f: F)
+    where
+        F: FnMut(Entity, &mut A, &mut B, &mut C, &mut D),
+    {
+        let col_a = self.col_a.as_mut().unwrap();
+        let col_b = self.col_b.as_mut().unwrap();
+        let col_c = self.col_c.as_mut().unwrap();
+        let col_d = self.col_d.as_mut().unwrap();
+        for &idx in &self.indices {
+            let gen = self.world.generations[idx];
+            let entity = Entity {
+                index: idx as u32,
+                generation: gen,
+            };
+            let a = &mut col_a.slots[idx].as_mut().unwrap().1;
+            let b = &mut col_b.slots[idx].as_mut().unwrap().1;
+            let c = &mut col_c.slots[idx].as_mut().unwrap().1;
+            let d = &mut col_d.slots[idx].as_mut().unwrap().1;
+            f(entity, a, b, c, d);
+        }
+    }
+
+    pub fn get_mut(&mut self, entity: Entity) -> Option<(&mut A, &mut B, &mut C, &mut D)> {
+        if !self.world.is_alive(entity) {
+            return None;
+        }
+        let idx = entity.index as usize;
+        let col_a = self.col_a.as_mut()?;
+        let col_b = self.col_b.as_mut()?;
+        let col_c = self.col_c.as_mut()?;
+        let col_d = self.col_d.as_mut()?;
+        let slot_a = col_a.slots.get_mut(idx)?.as_mut()?;
+        let slot_b = col_b.slots.get_mut(idx)?.as_mut()?;
+        let slot_c = col_c.slots.get_mut(idx)?.as_mut()?;
+        let slot_d = col_d.slots.get_mut(idx)?.as_mut()?;
+        if slot_a.0 == entity.generation
+            && slot_b.0 == entity.generation
+            && slot_c.0 == entity.generation
+            && slot_d.0 == entity.generation
+        {
+            Some((&mut slot_a.1, &mut slot_b.1, &mut slot_c.1, &mut slot_d.1))
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, A, B, C, D> Drop for QueryMut4Guard<'a, A, B, C, D>
+where
+    A: 'static + Send + Sync,
+    B: 'static + Send + Sync,
+    C: 'static + Send + Sync,
+    D: 'static + Send + Sync,
+{
+    fn drop(&mut self) {
+        if let Some(col_a) = self.col_a.take() {
+            self.world.columns.insert(TypeId::of::<A>(), col_a);
+        }
+        if let Some(col_b) = self.col_b.take() {
+            self.world.columns.insert(TypeId::of::<B>(), col_b);
+        }
+        if let Some(col_c) = self.col_c.take() {
+            self.world.columns.insert(TypeId::of::<C>(), col_c);
+        }
+        if let Some(col_d) = self.col_d.take() {
+            self.world.columns.insert(TypeId::of::<D>(), col_d);
         }
     }
 }
@@ -2339,5 +2637,50 @@ mod tests {
         assert_eq!(world.get::<Pos>(e1).unwrap().0, 1116);
         assert_eq!(world.get::<Tag>(e1).unwrap().0, "e1_final");
         assert_eq!(world.get::<Counter>(e1).unwrap().0, 100);
+    }
+
+    #[test]
+    fn query4_and_query_mut4_guards() {
+        #[derive(Debug, PartialEq, Eq)]
+        struct Extra(i32);
+        let mut world = World::new();
+        let e1 = world.spawn();
+        world.insert(e1, Pos(1, 2));
+        world.insert(e1, Tag("e1"));
+        world.insert(e1, Counter(10));
+        world.insert(e1, Extra(42));
+
+        // Test query4_iter
+        let q = world.query4_iter::<Pos, Tag, Counter, Extra>().collect::<Vec<_>>();
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].1 .0, 1);
+        assert_eq!(q[0].2 .0, "e1");
+        assert_eq!(q[0].3 .0, 10);
+        assert_eq!(q[0].4 .0, 42);
+
+        // Test QueryMut4Guard
+        {
+            let mut guard = world.query_mut4::<Pos, Tag, Counter, Extra>().unwrap();
+            guard.for_each(|entity, pos, tag, counter, extra| {
+                assert_eq!(entity, e1);
+                pos.0 += 100;
+                tag.0 = "e1_mutated";
+                counter.0 += 5;
+                extra.0 += 8;
+            });
+
+            let (p, t, c, ex) = guard.get_mut(e1).unwrap();
+            assert_eq!(p.0, 101);
+            assert_eq!(t.0, "e1_mutated");
+            assert_eq!(c.0, 15);
+            assert_eq!(ex.0, 50);
+            p.0 += 10;
+        }
+
+        // Verify values are updated and columns are restored
+        assert_eq!(world.get::<Pos>(e1).unwrap().0, 111);
+        assert_eq!(world.get::<Tag>(e1).unwrap().0, "e1_mutated");
+        assert_eq!(world.get::<Counter>(e1).unwrap().0, 15);
+        assert_eq!(world.get::<Extra>(e1).unwrap().0, 50);
     }
 }

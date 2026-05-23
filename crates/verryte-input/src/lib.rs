@@ -1447,6 +1447,14 @@ impl TextInput {
                     'y' | 'r' => {
                         self.redo();
                     }
+                    '←' => {
+                        self.cursor = self.word_start_left();
+                        self.dirty = true;
+                    }
+                    '→' => {
+                        self.cursor = self.word_start_right();
+                        self.dirty = true;
+                    }
                     _ => {}
                 }
                 false
@@ -1792,6 +1800,19 @@ impl TextInput {
         }
         while idx > 0 && !chars[idx - 1].is_whitespace() {
             idx -= 1;
+        }
+        idx
+    }
+
+    fn word_start_right(&self) -> usize {
+        let chars: Vec<char> = self.text.chars().collect();
+        let len = chars.len();
+        let mut idx = self.cursor;
+        while idx < len && !chars[idx].is_whitespace() {
+            idx += 1;
+        }
+        while idx < len && chars[idx].is_whitespace() {
+            idx += 1;
         }
         idx
     }
@@ -3069,6 +3090,49 @@ mod tests {
         // Now if we hit tab/autocomplete again with "inspectr", no match.
         input.cycle_autocomplete(&dict);
         assert_eq!(input.text(), "run inspectr");
+    }
+
+    #[test]
+    fn test_text_input_word_jumps() {
+        let mut input = TextInput::new();
+        input.set_text("hello brave new world".to_owned());
+        assert_eq!(input.cursor(), 21); // at the end
+
+        // Ctrl-Left to jump to "world" start
+        input.handle_key(Key::Modified {
+            char: '←',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.cursor(), 16); // start of "world"
+
+        // Ctrl-Left to jump to "new" start
+        input.handle_key(Key::Modified {
+            char: '←',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.cursor(), 12); // start of "new"
+
+        // Ctrl-Right to jump to start of next word "world"
+        input.handle_key(Key::Modified {
+            char: '→',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.cursor(), 16); // start of "world"
+
+        // Ctrl-Right to end (no next word)
+        input.handle_key(Key::Modified {
+            char: '→',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.cursor(), 21);
     }
 
     #[test]

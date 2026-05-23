@@ -73,6 +73,19 @@ pub struct TelegraphZone {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ElementalStatus {
+    None,
+    Ice { duration: u32 },
+    Lightning { duration: u32 },
+    Nature { duration: u32 },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Rooted {
+    pub duration: u32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EchoItem {
     pub class: CharacterClass,
 }
@@ -100,4 +113,14 @@ pub enum GameEvent {
     PhaseChanged(TurnPhase),
     TurnEnded,
     ApReplenished,
+    ElementalApplied {
+        entity: verryte_core::Entity,
+        status: ElementalStatus,
+    },
+    ReactionTriggered {
+        entity: verryte_core::Entity,
+        reaction: String,
+        damage: i32,
+        healing: i32,
+    },
 }

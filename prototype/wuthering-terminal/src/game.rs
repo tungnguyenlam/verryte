@@ -159,6 +159,7 @@ impl Game {
             .with(team)
             .with(class)
             .with(stats)
+            .with(crate::components::ElementalStatus::None)
             .build()
     }
 
@@ -396,6 +397,28 @@ impl Game {
         let turn_num = self.world.resource::<GameState>().unwrap().turn;
         self.log(format!("Player Phase starts! Turn {}", turn_num));
 
+        // Decrement elemental statuses
+        let mut status_entities = Vec::new();
+        for (e, _status) in self.world.query::<crate::components::ElementalStatus>() {
+            status_entities.push(e);
+        }
+        for e in status_entities {
+            if let Some(status) = self.world.get_mut::<crate::components::ElementalStatus>(e) {
+                *status = match *status {
+                    crate::components::ElementalStatus::Ice { duration } if duration > 1 => {
+                        crate::components::ElementalStatus::Ice { duration: duration - 1 }
+                    }
+                    crate::components::ElementalStatus::Lightning { duration } if duration > 1 => {
+                        crate::components::ElementalStatus::Lightning { duration: duration - 1 }
+                    }
+                    crate::components::ElementalStatus::Nature { duration } if duration > 1 => {
+                        crate::components::ElementalStatus::Nature { duration: duration - 1 }
+                    }
+                    _ => crate::components::ElementalStatus::None,
+                };
+            }
+        }
+
         // Replenish AP
         let mut players = Vec::new();
         for (e, team) in self.world.query::<Team>() {
@@ -404,8 +427,30 @@ impl Game {
             }
         }
         for e in players {
-            if let Some(stats) = self.world.get_mut::<Stats>(e) {
-                stats.ap = stats.max_ap;
+            let mut is_rooted = false;
+            let mut root_remains = false;
+            if let Some(rooted) = self.world.get_mut::<crate::components::Rooted>(e) {
+                if rooted.duration > 0 {
+                    rooted.duration -= 1;
+                    is_rooted = true;
+                    if rooted.duration > 0 {
+                        root_remains = true;
+                    }
+                }
+            }
+            if is_rooted {
+                if !root_remains {
+                    self.world.remove::<crate::components::Rooted>(e);
+                }
+                if let Some(stats) = self.world.get_mut::<Stats>(e) {
+                    stats.ap = 0;
+                }
+                let class = *self.world.get::<CharacterClass>(e).unwrap();
+                self.log(format!("{} is rooted and cannot act this turn!", Self::get_class_name(class)));
+            } else {
+                if let Some(stats) = self.world.get_mut::<Stats>(e) {
+                    stats.ap = stats.max_ap;
+                }
             }
         }
 
@@ -425,8 +470,30 @@ impl Game {
 
         // Replenish enemy AP on start of enemy turn
         for e in &enemies {
-            if let Some(stats) = self.world.get_mut::<Stats>(*e) {
-                stats.ap = stats.max_ap;
+            let mut is_rooted = false;
+            let mut root_remains = false;
+            if let Some(rooted) = self.world.get_mut::<crate::components::Rooted>(*e) {
+                if rooted.duration > 0 {
+                    rooted.duration -= 1;
+                    is_rooted = true;
+                    if rooted.duration > 0 {
+                        root_remains = true;
+                    }
+                }
+            }
+            if is_rooted {
+                if !root_remains {
+                    self.world.remove::<crate::components::Rooted>(*e);
+                }
+                if let Some(stats) = self.world.get_mut::<Stats>(*e) {
+                    stats.ap = 0;
+                }
+                let class = *self.world.get::<CharacterClass>(*e).unwrap();
+                self.log(format!("{} is rooted and cannot act this turn!", Self::get_class_name(class)));
+            } else {
+                if let Some(stats) = self.world.get_mut::<Stats>(*e) {
+                    stats.ap = stats.max_ap;
+                }
             }
         }
 
@@ -1354,7 +1421,22 @@ impl Game {
                             true,
                         ));
 
-                    if final_hp <= 0 {
+                    let mut defeated = final_hp <= 0;
+                    if !defeated {
+                        let skill_element = match (class, skill) {
+                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => crate::components::ElementalStatus::None, // Dragon Fire
+                            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => crate::components::ElementalStatus::Ice { duration: 3 }, // Glacial Tempest
+                            _ => crate::components::ElementalStatus::None,
+                        };
+                        if skill_element != crate::components::ElementalStatus::None {
+                            self.apply_elemental_status(te, skill_element);
+                        }
+                        if let Some(t_stats) = self.world.get::<Stats>(te) {
+                            defeated = t_stats.hp <= 0;
+                        }
+                    }
+
+                    if defeated {
                         let name_str = target_name.to_string();
                         self.handle_defeat(te, &name_str, target_class, target_pos);
                     } else {
@@ -1389,7 +1471,23 @@ impl Game {
                                 true,
                             ));
 
-                        if final_hp <= 0 {
+                        let mut defeated = final_hp <= 0;
+                        if !defeated {
+                            let skill_element = match (class, skill) {
+                                (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => crate::components::ElementalStatus::Ice { duration: 3 },
+                                (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => crate::components::ElementalStatus::Lightning { duration: 3 },
+                                (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => crate::components::ElementalStatus::Nature { duration: 3 },
+                                _ => crate::components::ElementalStatus::None,
+                            };
+                            if skill_element != crate::components::ElementalStatus::None {
+                                self.apply_elemental_status(target_ent, skill_element);
+                            }
+                            if let Some(t_stats) = self.world.get::<Stats>(target_ent) {
+                                defeated = t_stats.hp <= 0;
+                            }
+                        }
+
+                        if defeated {
                             let name_str = target_name.to_string();
                             self.handle_defeat(target_ent, &name_str, target_class, target_pos);
                         } else {
@@ -1477,6 +1575,222 @@ impl Game {
                         Color(255, 0, 0),
                         0.5,
                     ));
+            }
+        }
+    }
+
+    pub fn apply_elemental_status(
+        &mut self,
+        target: Entity,
+        new_status: crate::components::ElementalStatus,
+    ) {
+        if !self.world.is_alive(target) {
+            return;
+        }
+
+        let old_status = self
+            .world
+            .get::<crate::components::ElementalStatus>(target)
+            .copied()
+            .unwrap_or(crate::components::ElementalStatus::None);
+
+        let target_pos = self
+            .world
+            .get::<Position>(target)
+            .copied()
+            .unwrap_or(Position::new(0, 0));
+
+        let t_cx = target_pos.x as f32 * 8.0 + 4.0;
+        let t_cy = target_pos.y as f32 * 4.0 + 2.0;
+
+        let target_class = self
+            .world
+            .get::<CharacterClass>(target)
+            .copied()
+            .unwrap_or(CharacterClass::Warrior);
+
+        let target_name = Self::get_class_name(target_class);
+
+        match (old_status, new_status) {
+            // Reaction: Ice + Lightning -> Shatter (or Lightning + Ice -> Shatter)
+            (
+                crate::components::ElementalStatus::Ice { .. },
+                crate::components::ElementalStatus::Lightning { .. },
+            )
+            | (
+                crate::components::ElementalStatus::Lightning { .. },
+                crate::components::ElementalStatus::Ice { .. },
+            ) => {
+                self.log(format!("Elemental Reaction: SHATTER on {}!", target_name));
+                let bonus_damage = 30;
+                let mut defeated = false;
+                if let Some(stats) = self.world.get_mut::<Stats>(target) {
+                    stats.hp -= bonus_damage;
+                    if stats.hp <= 0 {
+                        defeated = true;
+                    }
+                }
+
+                // Shatter VFX
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_shatter(t_cx, t_cy, 25));
+                self.vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.5));
+                self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                    t_cx,
+                    t_cy - 1.0,
+                    "SHATTER! -30",
+                    Color(100, 200, 255),
+                    true,
+                ));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ReactionTriggered {
+                        entity: target,
+                        reaction: "Shatter".to_owned(),
+                        damage: bonus_damage,
+                        healing: 0,
+                    });
+                }
+
+                if let Some(status) = self.world.get_mut::<crate::components::ElementalStatus>(target) {
+                    *status = crate::components::ElementalStatus::None;
+                }
+
+                if defeated {
+                    let name_str = target_name.to_string();
+                    self.handle_defeat(target, &name_str, target_class, target_pos);
+                }
+            }
+
+            // Reaction: Lightning + Nature -> Overgrowth (or Nature + Lightning -> Overgrowth)
+            (
+                crate::components::ElementalStatus::Lightning { .. },
+                crate::components::ElementalStatus::Nature { .. },
+            )
+            | (
+                crate::components::ElementalStatus::Nature { .. },
+                crate::components::ElementalStatus::Lightning { .. },
+            ) => {
+                self.log(format!("Elemental Reaction: OVERGROWTH on {}!", target_name));
+                let bonus_damage = 10;
+                let mut defeated = false;
+                if let Some(stats) = self.world.get_mut::<Stats>(target) {
+                    stats.hp -= bonus_damage;
+                    if stats.hp <= 0 {
+                        defeated = true;
+                    }
+                }
+
+                // Root target
+                self.world.insert(target, crate::components::Rooted { duration: 1 });
+
+                // Overgrowth VFX (Bloom + floating text)
+                self.vfx.particles.extend(verryte_terminal::vfx::emit_bloom(t_cx, t_cy, 15));
+                self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                    t_cx,
+                    t_cy - 1.0,
+                    "OVERGROWTH! -10 [ROOTED]",
+                    Color(50, 220, 100),
+                    true,
+                ));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ReactionTriggered {
+                        entity: target,
+                        reaction: "Overgrowth".to_owned(),
+                        damage: bonus_damage,
+                        healing: 0,
+                    });
+                }
+
+                if let Some(status) = self.world.get_mut::<crate::components::ElementalStatus>(target) {
+                    *status = crate::components::ElementalStatus::None;
+                }
+
+                if defeated {
+                    let name_str = target_name.to_string();
+                    self.handle_defeat(target, &name_str, target_class, target_pos);
+                }
+            }
+
+            // Reaction: Nature + Ice -> Bloom (or Ice + Nature -> Bloom)
+            (
+                crate::components::ElementalStatus::Nature { .. },
+                crate::components::ElementalStatus::Ice { .. },
+            )
+            | (
+                crate::components::ElementalStatus::Ice { .. },
+                crate::components::ElementalStatus::Nature { .. },
+            ) => {
+                self.log(format!("Elemental Reaction: BLOOM on {}!", target_name));
+                let healing_amount = 20;
+
+                let mut allies = Vec::new();
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team == Team::Player {
+                        let dist = (p.x - target_pos.x).abs() + (p.y - target_pos.y).abs();
+                        if dist <= 1 {
+                            allies.push(e);
+                        }
+                    }
+                }
+
+                for ally in allies {
+                    let a_class = *self.world.get::<CharacterClass>(ally).unwrap();
+                    let a_pos = *self.world.get::<Position>(ally).unwrap();
+                    let a_cx = a_pos.x as f32 * 8.0 + 4.0;
+                    let a_cy = a_pos.y as f32 * 4.0 + 2.0;
+
+                    let mut final_hp = 0;
+                    if let Some(stats) = self.world.get_mut::<Stats>(ally) {
+                        stats.hp = std::cmp::min(stats.max_hp, stats.hp + healing_amount);
+                        final_hp = stats.hp;
+                    }
+                    self.log(format!("Bloom healed {} for {} HP! (HP: {})", Self::get_class_name(a_class), healing_amount, final_hp));
+
+                    self.vfx.floating_texts.push(verryte_terminal::vfx::FloatingText::new(
+                        a_cx,
+                        a_cy - 2.0,
+                        &format!("+{} (Bloom)", healing_amount),
+                        Color(50, 255, 50),
+                        true,
+                    ));
+                    self.vfx.particles.extend(verryte_terminal::vfx::emit_bloom(a_cx, a_cy, 10));
+                }
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ReactionTriggered {
+                        entity: target,
+                        reaction: "Bloom".to_owned(),
+                        damage: 0,
+                        healing: healing_amount,
+                    });
+                }
+
+                if let Some(status) = self.world.get_mut::<crate::components::ElementalStatus>(target) {
+                    *status = crate::components::ElementalStatus::None;
+                }
+            }
+
+            (_, new) => {
+                if let Some(status) = self.world.get_mut::<crate::components::ElementalStatus>(target) {
+                    *status = new;
+                }
+
+                let badge = match new {
+                    crate::components::ElementalStatus::Ice { .. } => "Ice",
+                    crate::components::ElementalStatus::Lightning { .. } => "Lightning",
+                    crate::components::ElementalStatus::Nature { .. } => "Nature",
+                    _ => "None",
+                };
+
+                self.log(format!("Applied {} element to {}.", badge, target_name));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ElementalApplied {
+                        entity: target,
+                        status: new,
+                    });
+                }
             }
         }
     }
@@ -1673,6 +1987,23 @@ impl Game {
                                             target: target_entity,
                                             damage,
                                         });
+                                    }
+
+                                    if !defeated {
+                                        let attacker_element = match sel_class {
+                                            CharacterClass::Warrior => crate::components::ElementalStatus::Ice { duration: 3 },
+                                            CharacterClass::Mage => crate::components::ElementalStatus::Lightning { duration: 3 },
+                                            CharacterClass::Healer => crate::components::ElementalStatus::Nature { duration: 3 },
+                                            _ => crate::components::ElementalStatus::None,
+                                        };
+                                        if attacker_element != crate::components::ElementalStatus::None {
+                                            self.apply_elemental_status(target_entity, attacker_element);
+                                        }
+                                        if let Some(t_stats) = self.world.get::<Stats>(target_entity) {
+                                            if t_stats.hp <= 0 {
+                                                defeated = true;
+                                            }
+                                        }
                                     }
 
                                     if defeated {
@@ -2156,9 +2487,18 @@ impl Game {
                 self.world.get::<Stats>(sel_entity),
             ) {
                 let name = Self::get_class_name(*class);
+                let elemental = self.world.get::<crate::components::ElementalStatus>(sel_entity).copied().unwrap_or(crate::components::ElementalStatus::None);
+                let status_badge = match elemental {
+                    crate::components::ElementalStatus::Ice { duration } => format!(" [ICE:{}]", duration),
+                    crate::components::ElementalStatus::Lightning { duration } => format!(" [LIGHTNING:{}]", duration),
+                    crate::components::ElementalStatus::Nature { duration } => format!(" [NATURE:{}]", duration),
+                    _ => "".to_string(),
+                };
+                let is_rooted = self.world.get::<crate::components::Rooted>(sel_entity).is_some();
+                let root_badge = if is_rooted { " [ROOTED]" } else { "" };
                 selection_str = format!(
-                    "Selected: {} (HP: {}/{}, AP: {}/{})",
-                    name, stats.hp, stats.max_hp, stats.ap, stats.max_ap
+                    "Selected: {} (HP: {}/{}, AP: {}/{}){}{}",
+                    name, stats.hp, stats.max_hp, stats.ap, stats.max_ap, status_badge, root_badge
                 );
             }
         }
@@ -2214,7 +2554,7 @@ impl Game {
             Tile::Water => "Water",
         };
 
-        let hovered_str = if let Some((_, target_team, target_stats, target_class)) =
+        let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
             self.get_entity_at(state.cursor)
         {
             let name = Self::get_class_name(target_class);
@@ -2222,15 +2562,26 @@ impl Game {
                 Team::Player => "Player",
                 Team::Enemy => "Enemy",
             };
+            let elemental = self.world.get::<crate::components::ElementalStatus>(target_entity).copied().unwrap_or(crate::components::ElementalStatus::None);
+            let status_badge = match elemental {
+                crate::components::ElementalStatus::Ice { duration } => format!(" [ICE:{}]", duration),
+                crate::components::ElementalStatus::Lightning { duration } => format!(" [LIGHTNING:{}]", duration),
+                crate::components::ElementalStatus::Nature { duration } => format!(" [NATURE:{}]", duration),
+                _ => "".to_string(),
+            };
+            let is_rooted = self.world.get::<crate::components::Rooted>(target_entity).is_some();
+            let root_badge = if is_rooted { " [ROOTED]" } else { "" };
             format!(
-                "Tile: {} | Entity: {} (HP: {}/{}, AP: {}/{}, Team: {})",
+                "Tile: {} | Entity: {} (HP: {}/{}, AP: {}/{}, Team: {}){}{}",
                 tile_type_str,
                 name,
                 target_stats.hp,
                 target_stats.max_hp,
                 target_stats.ap,
                 target_stats.max_ap,
-                team_str
+                team_str,
+                status_badge,
+                root_badge
             )
         } else {
             format!("Tile: {} | Entity: None", tile_type_str)
@@ -2301,6 +2652,14 @@ impl Game {
                 .world
                 .get::<crate::components::EchoItem>(entity)
                 .copied();
+            let elemental_status = self
+                .world
+                .get::<crate::components::ElementalStatus>(entity)
+                .copied();
+            let rooted = self
+                .world
+                .get::<crate::components::Rooted>(entity)
+                .copied();
 
             entities.push(SavedEntity {
                 entity,
@@ -2309,6 +2668,8 @@ impl Game {
                 class,
                 stats,
                 echo_item,
+                elemental_status,
+                rooted,
             });
         }
 
@@ -2370,6 +2731,12 @@ impl Game {
             }
             if let Some(echo) = saved.echo_item {
                 self.world.insert(saved.entity, echo);
+            }
+            if let Some(el) = saved.elemental_status {
+                self.world.insert(saved.entity, el);
+            }
+            if let Some(rooted) = saved.rooted {
+                self.world.insert(saved.entity, rooted);
             }
         }
 
