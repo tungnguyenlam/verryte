@@ -1892,3 +1892,25 @@ matches the prefix `"in"` and appears before `"info"` in the dictionary. Tests
 were corrected to match actual dictionary iteration order.
 
 **Follow-ups.** None; all 6 items from the plan are complete.
+
+## 2026-05-23 - ECS 4-Queries, Rich Text Wrapping, Bloom/Shatter VFX, Ctrl-Arrow Navigation, and Elemental Status/Reactions
+
+**Goal.** Implement 5 meaningful autonomous improvements to the Verryte terminal engine and the `wuthering-terminal` prototype.
+
+**Changes.**
+- `crates/verryte-core/src/world.rs` - added `query4`, `query4_iter`, `query_mut4` methods and `QueryMut4Guard` for 4-component queries with unit tests.
+- `crates/verryte-terminal/src/lib.rs` - added `Grid::write_rich_wrapped` for wrapping styled bracket-escaped rich text at word/newline boundaries.
+- `crates/verryte-terminal/src/vfx.rs` - added `emit_bloom` and `emit_shatter` particle system emitters with tests.
+- `crates/verryte-input/src/lib.rs` - bound Ctrl-Left and Ctrl-Right to jump cursor word-by-word in `TextInput`.
+- `prototype/wuthering-terminal/src/components.rs` - added `ElementalStatus` and `Rooted` components and reaction events.
+- `prototype/wuthering-terminal/src/game.rs` - implemented status application, reactions (Shatter, Overgrowth, Bloom), HUD display, and save/load serialization for the new components.
+- `prototype/wuthering-terminal/src/snapshot.rs` - added `elemental_status` and `rooted` to `SavedEntity`.
+- `prototype/wuthering-terminal/src/lib.rs` - added integration test `test_elemental_reactions` covering all reaction effects.
+
+**Reasoning.** This completes the requested vertical improvements across the engine and prototype. Implementing ECS 4-queries scales the entity management, while word wrapping and custom VFX particles provide robust styling tools. Ctrl-arrow navigation improves CLI editing ergonomics. In `wuthering-terminal`, the elemental reactions (Shatter, Overgrowth, Bloom) add deep tactical mechanics that integrate directly into the existing combat, QTE, HUD, and serialization paths.
+
+**Assumptions.** We assumed elemental statuses should decay correctly and that rooting affects movement/AP at turn boundaries. The reactions reset the target status back to None.
+
+**Gotchas.** Reassigning `final_hp` inside inner scopes triggered compiler warnings since the mutated value was never read before exiting scope; removed the redundant reassignments to keep the build clean.
+
+**Follow-ups.** None. All 5 improvements are fully verified and integrated.
