@@ -226,6 +226,17 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
             Color::RED,
         );
     }
+    if let Some(replay) = world.resource::<crate::components::ReplayState>() {
+        if replay.active {
+            grid.write_str(
+                term_w.saturating_sub(26),
+                hud_y + 1,
+                " REPLAY ",
+                Color::BLACK,
+                Color::CYAN,
+            );
+        }
+    }
 
     if let Some(log) = world.resource::<MessageLog>() {
         let view = verryte_terminal::MessageLogView::new(verryte_terminal::Rect::new(

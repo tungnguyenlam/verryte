@@ -27,6 +27,9 @@ pub enum Action {
     AutoBattle,
     StepToSafety,
     ToggleRecording,
+    ToggleReplay,
+    ToggleReplayAuto,
+    StepReplay,
 }
 
 impl Action {
@@ -86,6 +89,9 @@ pub fn default_bindings() -> Bindings<Action> {
 
     // Recording
     b.bind(Key::F(10), Action::ToggleRecording);
+    b.bind(Key::F(11), Action::ToggleReplay);
+    b.bind(Key::F(12), Action::StepReplay);
+    b.bind(Key::Char('p'), Action::ToggleReplayAuto);
 
     // AI
     b.bind(Key::Char('b'), Action::AutoBattle);

@@ -8,9 +8,32 @@ use crate::map::{TacticalMap, Tile};
 use verryte_core::{Entity, Events, MessageLog, Rng, World};
 use verryte_terminal::{vfx::VfxSystem, Color};
 
+pub fn visibility_system(world: &mut World) {
+    let player_positions: Vec<Position> = world
+        .query2::<Position, Team>()
+        .iter()
+        .filter(|(_, _, team)| **team == Team::Player)
+        .map(|(_, pos, _)| **pos)
+        .collect();
+
+    let map_tiles = world.resource::<TacticalMap>().unwrap().tiles.clone();
+    let visibility = world.resource_mut::<verryte_map::VisibilityMap>().unwrap();
+
+    visibility.clear_visible();
+
+    for pos in player_positions {
+        visibility.compute_fov(pos, 8, |p| {
+            map_tiles.get(p).map(|t| matches!(t, Tile::Wall)).unwrap_or(true)
+        });
+    }
+}
+
 pub fn enemy_ai_system(world: &mut World) {
-    let phase = world.resource::<GameState>().unwrap().phase;
-    if phase != TurnPhase::Enemy {
+    let (phase, outcome) = {
+        let state = world.resource::<GameState>().unwrap();
+        (state.phase, state.outcome)
+    };
+    if phase != TurnPhase::Enemy || outcome != Outcome::Playing {
         return;
     }
 
@@ -21,48 +44,9 @@ pub fn enemy_ai_system(world: &mut World) {
         }
     }
 
-    // Replenish enemy AP on start of enemy turn
-    for e in &enemies {
-        let mut is_rooted = false;
-        let mut root_remains = false;
-        if let Some(rooted) = world.get_mut::<Rooted>(*e) {
-            if rooted.duration > 0 {
-                rooted.duration -= 1;
-                is_rooted = true;
-                if rooted.duration > 0 {
-                    root_remains = true;
-                }
-            }
-        }
-        if is_rooted {
-            if !root_remains {
-                world.remove::<Rooted>(*e);
-            }
-            if let Some(stats) = world.get_mut::<Stats>(*e) {
-                stats.ap = 0;
-            }
-            let class = *world.get::<CharacterClass>(*e).unwrap();
-            log(
-                world,
-                format!(
-                    "{} is rooted and cannot act this turn!",
-                    Game::get_class_name(class)
-                ),
-            );
-        } else {
-            if let Some(stats) = world.get_mut::<Stats>(*e) {
-                stats.ap = stats.max_ap;
-            }
-        }
-    }
-
+    let mut all_done = true;
     for enemy_entity in enemies {
         loop {
-            let outcome = world.resource::<GameState>().unwrap().outcome;
-            if outcome != Outcome::Playing {
-                break;
-            }
-
             let (enemy_pos, enemy_stats, enemy_class) = {
                 let pos = world.get::<Position>(enemy_entity);
                 let stats = world.get::<Stats>(enemy_entity);
@@ -77,6 +61,7 @@ pub fn enemy_ai_system(world: &mut World) {
             if enemy_stats.ap <= 0 {
                 break;
             }
+            all_done = false;
 
             let mut nearest_player: Option<(Entity, Position, Stats, CharacterClass)> = None;
             let mut min_dist = i16::MAX;
@@ -99,7 +84,7 @@ pub fn enemy_ai_system(world: &mut World) {
             else {
                 world.resource_mut::<GameState>().unwrap().outcome = Outcome::Defeat;
                 log(world, "Defeat! All player characters defeated.");
-                break;
+                return;
             };
 
             let range = 2; // Boss attack range
@@ -206,8 +191,6 @@ pub fn enemy_ai_system(world: &mut World) {
                     let enemy_name = Game::get_class_name(enemy_class);
                     let player_name = Game::get_class_name(player_class);
 
-                    // We need a way to call resolve_combat_hit which is in Game.
-                    // For now, I'll replicate it or move it to a system helper.
                     let (damage, defeated) = resolve_combat_hit(
                         world,
                         player_entity,
@@ -246,7 +229,6 @@ pub fn enemy_ai_system(world: &mut World) {
                             ),
                         );
                         if enemy_defeated {
-                            // handle_defeat is complex, I'll just log for now or let the next check catch it
                             log(world, format!("{} was defeated by Thorns!", enemy_name));
                             world.despawn(enemy_entity);
                             break;
@@ -275,7 +257,7 @@ pub fn enemy_ai_system(world: &mut World) {
                         if !player_exists {
                             world.resource_mut::<GameState>().unwrap().outcome = Outcome::Defeat;
                             log(world, "Defeat! All player characters defeated.");
-                            break;
+                            return;
                         }
                     }
                 }
@@ -340,79 +322,120 @@ pub fn enemy_ai_system(world: &mut World) {
         }
     }
 
-    // End enemy turn and switch to player turn
-    let outcome = world.resource::<GameState>().unwrap().outcome;
-    if outcome != Outcome::Playing {
+    if all_done {
+        world.resource_mut::<crate::components::TurnTransition>().unwrap().request_end = true;
+    }
+}
+
+pub fn turn_management_system(world: &mut World) {
+    let request_end = {
+        let trans = world.resource_mut::<crate::components::TurnTransition>().unwrap();
+        let req = trans.request_end;
+        trans.request_end = false;
+        req
+    };
+
+    if !request_end {
         return;
     }
 
-    {
-        let state = world.resource_mut::<GameState>().unwrap();
-        state.phase = TurnPhase::Player;
-        state.turn += 1;
-    }
-    let turn_num = world.resource::<GameState>().unwrap().turn;
-    log(world, format!("Player Phase starts! Turn {}", turn_num));
+    let current_phase = world.resource::<GameState>().unwrap().phase;
+    match current_phase {
+        TurnPhase::Player => {
+            // Player -> Enemy
+            {
+                let state = world.resource_mut::<GameState>().unwrap();
+                state.phase = TurnPhase::Enemy;
+                state.selected_entity = None;
+            }
+            log(world, "Enemy Phase starts!");
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::PhaseChanged(TurnPhase::Enemy));
+                events.send(GameEvent::TurnEnded);
+            }
 
-    // Decrement elemental statuses
-    let mut status_entities = Vec::new();
-    for (e, _status) in world.query::<ElementalStatus>() {
-        status_entities.push(e);
-    }
-    for e in status_entities {
-        if let Some(status) = world.get_mut::<ElementalStatus>(e) {
-            *status = match *status {
-                ElementalStatus::Ice { duration } if duration > 1 => ElementalStatus::Ice {
-                    duration: duration - 1,
-                },
-                ElementalStatus::Lightning { duration } if duration > 1 => {
-                    ElementalStatus::Lightning {
-                        duration: duration - 1,
+            // Replenish Enemy AP
+            let mut enemies = Vec::new();
+            for (e, team) in world.query::<Team>() {
+                if *team == Team::Enemy {
+                    enemies.push(e);
+                }
+            }
+            for e in enemies {
+                let mut is_rooted = false;
+                let mut root_remains = false;
+                if let Some(rooted) = world.get_mut::<Rooted>(e) {
+                    if rooted.duration > 0 {
+                        rooted.duration -= 1;
+                        is_rooted = true;
+                        if rooted.duration > 0 {
+                            root_remains = true;
+                        }
                     }
                 }
-                ElementalStatus::Nature { duration } if duration > 1 => ElementalStatus::Nature {
-                    duration: duration - 1,
-                },
-                _ => ElementalStatus::None,
-            };
-        }
-    }
-
-    // Replenish Player AP
-    let mut players = Vec::new();
-    for (e, team) in world.query::<Team>() {
-        if *team == Team::Player {
-            players.push(e);
-        }
-    }
-    for e in players {
-        let mut is_rooted = false;
-        let mut root_remains = false;
-        if let Some(rooted) = world.get_mut::<Rooted>(e) {
-            if rooted.duration > 0 {
-                rooted.duration -= 1;
-                is_rooted = true;
-                if rooted.duration > 0 {
-                    root_remains = true;
+                if is_rooted {
+                    if !root_remains {
+                        world.remove::<Rooted>(e);
+                    }
+                    if let Some(stats) = world.get_mut::<Stats>(e) {
+                        stats.ap = 0;
+                    }
+                    let class = *world.get::<CharacterClass>(e).unwrap();
+                    log(
+                        world,
+                        format!(
+                            "{} is rooted and cannot act this turn!",
+                            Game::get_class_name(class)
+                        ),
+                    );
+                } else {
+                    if let Some(stats) = world.get_mut::<Stats>(e) {
+                        stats.ap = stats.max_ap;
+                    }
                 }
             }
         }
-        if is_rooted {
-            if !root_remains {
-                world.remove::<Rooted>(e);
+        TurnPhase::Enemy => {
+            // Enemy -> Player
+            {
+                let state = world.resource_mut::<GameState>().unwrap();
+                state.phase = TurnPhase::Player;
+                state.turn += 1;
             }
-            if let Some(stats) = world.get_mut::<Stats>(e) {
-                stats.ap = 0;
+            let turn_num = world.resource::<GameState>().unwrap().turn;
+            log(world, format!("Player Phase starts! Turn {}", turn_num));
+
+            // Decrement elemental statuses
+            let mut status_entities = Vec::new();
+            for (e, _status) in world.query::<ElementalStatus>() {
+                status_entities.push(e);
             }
-            let class = *world.get::<CharacterClass>(e).unwrap();
-            log(
-                world,
-                format!(
-                    "{} is rooted and cannot act this turn!",
-                    Game::get_class_name(class)
-                ),
-            );
-        } else {
+            for e in status_entities {
+                if let Some(status) = world.get_mut::<ElementalStatus>(e) {
+                    *status = match *status {
+                        ElementalStatus::Ice { duration } if duration > 1 => ElementalStatus::Ice {
+                            duration: duration - 1,
+                        },
+                        ElementalStatus::Lightning { duration } if duration > 1 => {
+                            ElementalStatus::Lightning {
+                                duration: duration - 1,
+                            }
+                        }
+                        ElementalStatus::Nature { duration } if duration > 1 => ElementalStatus::Nature {
+                            duration: duration - 1,
+                        },
+                        _ => ElementalStatus::None,
+                    };
+                }
+            }
+
+            // Replenish Player AP
+            let mut players = Vec::new();
+            for (e, team) in world.query::<Team>() {
+                if *team == Team::Player {
+                    players.push(e);
+                }
+            }
             let has_swift = world
                 .resource::<crate::components::EquippedEchoes>()
                 .is_some_and(|echoes| {
@@ -420,19 +443,50 @@ pub fn enemy_ai_system(world: &mut World) {
                         .abilities
                         .contains(&crate::components::EchoAbility::Swift)
                 });
-            if let Some(stats) = world.get_mut::<Stats>(e) {
-                let mut bonus = 0;
-                if has_swift {
-                    bonus = 1;
+
+            for e in players {
+                let mut is_rooted = false;
+                let mut root_remains = false;
+                if let Some(rooted) = world.get_mut::<Rooted>(e) {
+                    if rooted.duration > 0 {
+                        rooted.duration -= 1;
+                        is_rooted = true;
+                        if rooted.duration > 0 {
+                            root_remains = true;
+                        }
+                    }
                 }
-                stats.ap = stats.max_ap + bonus;
+                if is_rooted {
+                    if !root_remains {
+                        world.remove::<Rooted>(e);
+                    }
+                    if let Some(stats) = world.get_mut::<Stats>(e) {
+                        stats.ap = 0;
+                    }
+                    let class = *world.get::<CharacterClass>(e).unwrap();
+                    log(
+                        world,
+                        format!(
+                            "{} is rooted and cannot act this turn!",
+                            Game::get_class_name(class)
+                        ),
+                    );
+                } else {
+                    if let Some(stats) = world.get_mut::<Stats>(e) {
+                        let mut bonus = 0;
+                        if has_swift {
+                            bonus = 1;
+                        }
+                        stats.ap = stats.max_ap + bonus;
+                    }
+                }
+            }
+
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::ApReplenished);
+                events.send(GameEvent::PhaseChanged(TurnPhase::Player));
             }
         }
-    }
-
-    if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
-        events.send(GameEvent::ApReplenished);
-        events.send(GameEvent::PhaseChanged(TurnPhase::Player));
     }
 }
 
@@ -587,6 +641,10 @@ pub fn award_xp(world: &mut World, amount: u32) {
                 stats.atk += 2;
                 stats.def += 1;
                 level_ups.push((class, stats.level));
+
+                if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+                    events.send(verryte_core::AudioEvent::play("level_up"));
+                }
             }
         }
     }
@@ -679,6 +737,14 @@ pub fn resolve_combat_hit(
     };
 
     {
+        if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+            if is_crit {
+                events.send(verryte_core::AudioEvent::play("crit"));
+            } else {
+                events.send(verryte_core::AudioEvent::play("hit"));
+            }
+        }
+
         let vfx = world.resource_mut::<VfxSystem>().unwrap();
         vfx.floating_texts
             .push(verryte_terminal::vfx::FloatingText::new(
@@ -762,6 +828,9 @@ pub fn handle_defeat(
     }
 
     log(world, format!("{} was defeated!", name));
+    if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+        events.send(verryte_core::AudioEvent::play("defeat"));
+    }
     if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
         events.send(GameEvent::Defeated { entity });
     }

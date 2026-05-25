@@ -59,6 +59,7 @@ impl Game {
             is_recording: false,
         });
         world.insert_resource(crate::components::TelegraphZone::default());
+        world.insert_resource(verryte_map::VisibilityMap::new(width, height));
         world.insert_resource(GameClock::new());
         world.insert_resource(Rng::seed(1));
         world.insert_resource(Events::<GameEvent>::with_capacity(16));
@@ -67,14 +68,21 @@ impl Game {
         world.insert_resource(verryte_terminal::vfx::VfxSystem::new());
         world.insert_resource(verryte_terminal::DialogueState::new("Narrative", ""));
         world.insert_resource(crate::components::EquippedEchoes::default());
+        world.insert_resource(crate::components::TurnTransition::default());
+        world.insert_resource(crate::components::ReplayState::default());
 
         let mut registry = VisualRegistry::new();
         Self::load_sprites(&mut registry);
         world.insert_resource(registry);
 
+        let mut schedule = Schedule::new();
+        schedule.add_named("visibility", crate::systems::visibility_system);
+        schedule.add_named("turn_management", crate::systems::turn_management_system);
+        schedule.add_named("enemy_ai", crate::systems::enemy_ai_system);
+
         let mut game = Self {
             world,
-            schedule: Schedule::new(),
+            schedule,
             router: InputRouter::new(default_bindings()),
             camera: Camera::new(5.0, 5.0).with_smooth(0.15),
         };
@@ -571,184 +579,7 @@ impl Game {
         }
     }
 
-    pub fn end_player_turn(&mut self) {
-        // Execute any telegraphed attacks first!
-        let telegraph_tiles = {
-            let telegraph_zone = self
-                .world
-                .resource_mut::<crate::components::TelegraphZone>()
-                .unwrap();
-            let tiles = telegraph_zone.tiles.clone();
-            telegraph_zone.tiles.clear();
-            tiles
-        };
-
-        if !telegraph_tiles.is_empty() {
-            self.log("Blight Sovereign releases Dark Annihilation!");
-
-            // VFX feedback!
-            self.vfx_mut()
-                .flashes
-                .push(verryte_terminal::vfx::Flash::full_screen(
-                    Color(120, 0, 180),
-                    0.3,
-                ));
-            self.vfx_mut()
-                .shakes
-                .push(verryte_terminal::vfx::ScreenShake::new(4.5, 0.6));
-
-            let mut hit_count = 0;
-            // Check all player characters standing in telegraph tiles
-            let mut players = Vec::new();
-            for (e, p, team) in self.world.query2::<Position, Team>() {
-                if *team == Team::Player && telegraph_tiles.contains(p) {
-                    players.push(e);
-                }
-            }
-
-            for pe in players {
-                let target_class = *self.world.get::<CharacterClass>(pe).unwrap();
-                let target_pos = *self.world.get::<Position>(pe).unwrap();
-                let target_name = Self::get_class_name(target_class);
-                let mut final_hp = 0;
-                if let Some(stats) = self.world.get_mut::<Stats>(pe) {
-                    stats.hp -= 50; // Fixed high damage
-                    final_hp = stats.hp;
-                }
-                self.log(format!(
-                    "Dark Annihilation hit {} for 50 damage! (HP: {})",
-                    target_name, final_hp
-                ));
-                hit_count += 1;
-
-                let (cx, cy) = self.get_tile_center_pixels(target_pos);
-                self.vfx_mut()
-                    .floating_texts
-                    .push(verryte_terminal::vfx::FloatingText::new(
-                        cx,
-                        cy - 2.0,
-                        "-50",
-                        Color(255, 20, 20),
-                        true,
-                    ));
-                self.vfx_mut()
-                    .particles
-                    .extend(verryte_terminal::vfx::emit_fire(cx, cy, 15));
-
-                if final_hp <= 0 {
-                    let name_str = target_name.to_string();
-                    self.handle_defeat(pe, &name_str, target_class, target_pos);
-                }
-            }
-
-            if hit_count == 0 {
-                self.log("Dark Annihilation missed everyone!");
-            }
-        }
-
-        {
-            let state = self.world.resource_mut::<GameState>().unwrap();
-            state.phase = TurnPhase::Enemy;
-            state.selected_entity = None;
-        }
-        self.log("Enemy Phase starts!");
-        if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
-            log.send(GameEvent::PhaseChanged(TurnPhase::Enemy));
-            log.send(GameEvent::TurnEnded);
-        }
-
-        self.run_enemy_ai();
-
-        let outcome = self.world.resource::<GameState>().unwrap().outcome;
-        if outcome != Outcome::Playing {
-            return;
-        }
-
-        {
-            let state = self.world.resource_mut::<GameState>().unwrap();
-            state.phase = TurnPhase::Player;
-            state.turn += 1;
-        }
-        let turn_num = self.world.resource::<GameState>().unwrap().turn;
-        self.log(format!("Player Phase starts! Turn {}", turn_num));
-
-        // Decrement elemental statuses
-        let mut status_entities = Vec::new();
-        for (e, _status) in self.world.query::<crate::components::ElementalStatus>() {
-            status_entities.push(e);
-        }
-        for e in status_entities {
-            if let Some(status) = self.world.get_mut::<crate::components::ElementalStatus>(e) {
-                *status = match *status {
-                    crate::components::ElementalStatus::Ice { duration } if duration > 1 => {
-                        crate::components::ElementalStatus::Ice {
-                            duration: duration - 1,
-                        }
-                    }
-                    crate::components::ElementalStatus::Lightning { duration } if duration > 1 => {
-                        crate::components::ElementalStatus::Lightning {
-                            duration: duration - 1,
-                        }
-                    }
-                    crate::components::ElementalStatus::Nature { duration } if duration > 1 => {
-                        crate::components::ElementalStatus::Nature {
-                            duration: duration - 1,
-                        }
-                    }
-                    _ => crate::components::ElementalStatus::None,
-                };
-            }
-        }
-
-        // Replenish AP
-        let mut players = Vec::new();
-        for (e, team) in self.world.query::<Team>() {
-            if *team == Team::Player {
-                players.push(e);
-            }
-        }
-        let abilities = self.world.resource::<crate::components::EquippedEchoes>().unwrap().clone();
-        for e in players {
-            let mut is_rooted = false;
-            let mut root_remains = false;
-            if let Some(rooted) = self.world.get_mut::<crate::components::Rooted>(e) {
-                if rooted.duration > 0 {
-                    rooted.duration -= 1;
-                    is_rooted = true;
-                    if rooted.duration > 0 {
-                        root_remains = true;
-                    }
-                }
-            }
-            if is_rooted {
-                if !root_remains {
-                    self.world.remove::<crate::components::Rooted>(e);
-                }
-                if let Some(stats) = self.world.get_mut::<Stats>(e) {
-                    stats.ap = 0;
-                }
-                let class = *self.world.get::<CharacterClass>(e).unwrap();
-                self.log(format!(
-                    "{} is rooted and cannot act this turn!",
-                    Self::get_class_name(class)
-                ));
-            } else {
-                if let Some(stats) = self.world.get_mut::<Stats>(e) {
-                    let mut max_ap = stats.max_ap;
-                    if abilities.abilities.contains(&crate::components::EchoAbility::Swift) {
-                        max_ap += 1;
-                    }
-                    stats.ap = max_ap;
-                }
-            }
-        }
-
-        if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
-            log.send(GameEvent::ApReplenished);
-            log.send(GameEvent::PhaseChanged(TurnPhase::Player));
-        }
-    }
-
+    // (end_player_turn removed)
     pub fn run_enemy_ai(&mut self) {
         let mut enemies = Vec::new();
         for (e, team) in self.world.query::<Team>() {
@@ -2677,7 +2508,7 @@ impl Game {
             Action::EndTurn => {
                 let phase = self.world.resource::<GameState>().unwrap().phase;
                 if phase == TurnPhase::Player {
-                    self.end_player_turn();
+                    self.world.resource_mut::<crate::components::TurnTransition>().unwrap().request_end = true;
                 }
             }
             Action::Inspect(point) => {
@@ -2792,6 +2623,89 @@ impl Game {
                     self.log("Action recording STARTED.");
                 }
             }
+            Action::ToggleReplay => {
+                let (active, msg) = {
+                    let mut replay = self.world.resource_mut::<crate::components::ReplayState>().unwrap();
+                    if replay.active {
+                        replay.active = false;
+                        (false, "Replay mode DISABLED.".to_string())
+                    } else {
+                        // Try to load last_recording.json
+                        let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists() {
+                            "prototype/wuthering-terminal/saves"
+                        } else {
+                            "saves"
+                        };
+                        let path = format!("{}/last_recording.json", base_path);
+                        if let Ok(history) = verryte_input::InputRouter::<Action>::load_history_from_file(&path) {
+                            replay.trace = verryte_input::ActionTrace::from_steps(history);
+                            replay.active = true;
+                            replay.next_index = 0;
+                            replay.auto = false;
+                            (true, format!("Replay mode ENABLED. Trace loaded ({} actions).", replay.trace.steps().len()))
+                        } else {
+                            (false, "No last_recording.json found to replay!".to_string())
+                        }
+                    }
+                };
+                self.log(msg);
+                if active {
+                    self.log("Press F12 to step through replay.");
+                }
+            }
+            Action::StepReplay => {
+                let next_step = {
+                    let mut replay = self.world.resource_mut::<crate::components::ReplayState>().unwrap();
+                    if replay.active {
+                        if let Some(step) = replay.trace.steps().get(replay.next_index) {
+                            let action = step.action;
+                            let source = step.source;
+                            let index = replay.next_index;
+                            replay.next_index += 1;
+                            Some((index, action, source))
+                        } else {
+                            replay.active = false;
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                match next_step {
+                    Some((index, action, source)) => {
+                        self.log(format!("Replaying action {}: {:?}", index, action));
+                        self.apply_action(action, source);
+                    }
+                    None => {
+                        let active = self.world.resource::<crate::components::ReplayState>().unwrap().active;
+                        if active {
+                             self.log("End of replay trace reached.");
+                             self.world.resource_mut::<crate::components::ReplayState>().unwrap().active = false;
+                        } else {
+                             self.log("Enable Replay mode first (F11)!");
+                        }
+                    }
+                }
+            }
+            Action::ToggleReplayAuto => {
+                let msg = {
+                    let mut replay = self.world.resource_mut::<crate::components::ReplayState>().unwrap();
+                    if replay.active {
+                        replay.auto = !replay.auto;
+                        if replay.auto {
+                            Some("Replay AUTO-PLAY enabled.")
+                        } else {
+                            Some("Replay AUTO-PLAY disabled.")
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(m) = msg {
+                    self.log(m);
+                }
+            }
             _ => {}
         }
         self.camera.tick();
@@ -2801,11 +2715,27 @@ impl Game {
         if let Some(clock) = self.world.resource_mut::<GameClock>() {
             clock.tick();
         }
-        self.vfx_mut().update(dt);
+        if let Some(vfx) = self.world.resource_mut::<verryte_terminal::vfx::VfxSystem>() {
+            vfx.update(dt);
+        }
+        if let Some(registry) = self.world.resource_mut::<verryte_terminal::VisualRegistry>() {
+            registry.tick();
+        }
         if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
             dialogue.update(dt, 30.0);
         }
         self.camera.tick();
+
+        // Replay auto-step
+        let mut replay_step = false;
+        if let Some(mut replay) = self.world.resource_mut::<crate::components::ReplayState>() {
+            if replay.active && replay.auto {
+                replay_step = true;
+            }
+        }
+        if replay_step {
+            self.apply_action(Action::StepReplay, ActionSource::Agent);
+        }
 
         // Auto-battle logic
         let (auto, phase, outcome) = {
@@ -2981,6 +2911,7 @@ impl Game {
         let map = self.world.resource::<TacticalMap>().unwrap();
         let state = self.world.resource::<GameState>().unwrap();
         let registry = self.world.resource::<VisualRegistry>().unwrap();
+        let visibility = self.world.resource::<verryte_map::VisibilityMap>().unwrap();
 
         // Determine resolution tier and tile dimensions dynamically
         let (term_w, term_h) = verryte_tty::terminal_size();
@@ -2999,17 +2930,27 @@ impl Game {
         );
         viewport.camera = self.camera.clone();
 
-        // 1. Render Tiles (culled)
+        // 1. Render Tiles (culled by visibility)
         let (start_x, start_y, end_x, end_y) = viewport.visible_tiles(map.width, map.height);
 
         for ty in start_y..end_y {
             for tx in start_x..end_x {
+                let pos = Position::new(tx as i16, ty as i16);
+                let vis = visibility.get(pos);
+                if matches!(vis, verryte_map::Visibility::Hidden) {
+                    continue;
+                }
+
                 let tile = map.tile(tx, ty);
-                let color = match tile {
+                let mut color = match tile {
                     Tile::Grass => Color(30, 80, 30),
                     Tile::Wall => Color(60, 60, 60),
                     Tile::Water => Color(30, 30, 100),
                 };
+
+                if matches!(vis, verryte_map::Visibility::Explored) {
+                    color = verryte_terminal::vfx::blend_color(color, Color::BLACK, 0.6);
+                }
 
                 let (sx, sy) = viewport.world_to_screen(tx as f32, ty as f32);
 
@@ -3021,10 +2962,14 @@ impl Game {
 
                         if viewport.rect.contains(tx_abs as u16, ty_abs as u16) {
                             let glyph = if dx == 0 || dy == 0 { '·' } else { ' ' };
+                            let mut fg = Color(40, 40, 40);
+                            if matches!(vis, verryte_map::Visibility::Explored) {
+                                fg = verryte_terminal::vfx::blend_color(fg, Color::BLACK, 0.6);
+                            }
                             screen.put(
                                 tx_abs as u16,
                                 ty_abs as u16,
-                                Cell::new(glyph).with_fg(Color(40, 40, 40)).with_bg(color),
+                                Cell::new(glyph).with_fg(fg).with_bg(color),
                             );
                         }
                     }
@@ -3150,7 +3095,13 @@ impl Game {
         }
 
         // 5. Render Entities
-        for (entity, pos, _team, class) in self.world.query3::<Position, Team, CharacterClass>() {
+        for (entity, pos, team, class) in self.world.query3::<Position, Team, CharacterClass>() {
+            // Check visibility
+            let vis = visibility.get(*pos);
+            if *team != Team::Player && !matches!(vis, verryte_map::Visibility::Visible) {
+                continue;
+            }
+
             let key = match class {
                 CharacterClass::Warrior => "kael",
                 CharacterClass::Mage => "lyra",
@@ -3191,6 +3142,10 @@ impl Game {
 
         // Render Echo items
         for (_e, pos, _echo) in self.world.query2::<Position, crate::components::EchoItem>() {
+            let vis = visibility.get(*pos);
+            if matches!(vis, verryte_map::Visibility::Hidden) {
+                continue;
+            }
             let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
             let tx = sx + tile_w as i32 / 2;
             let ty = sy + tile_h as i32 / 2;

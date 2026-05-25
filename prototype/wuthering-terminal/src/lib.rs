@@ -201,6 +201,9 @@ mod tests {
 
         // End Turn (swaps to Enemy, AI runs, then returns to Player)
         game.apply_action(Action::EndTurn, ActionSource::Terminal);
+        game.update(0.1); // Transition Player -> Enemy, Run AI
+        game.update(0.1); // Signal end of Enemy turn
+        game.update(0.1); // Transition Enemy -> Player
 
         let state = game.world.resource::<GameState>().unwrap();
         assert_eq!(state.turn, 2);

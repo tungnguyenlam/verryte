@@ -156,6 +156,14 @@ impl VisualRegistry {
         self.assets.get(name)
     }
 
+    pub fn tick(&mut self) {
+        for asset in self.assets.values_mut() {
+            if let VisualAsset::Animated(sprite) = asset {
+                sprite.tick();
+            }
+        }
+    }
+
     pub fn register_image(&mut self, name: &str, img: &image::DynamicImage) {
         let grid = image_to_grid(img);
         self.register(name, VisualAsset::BlockSprite(grid));

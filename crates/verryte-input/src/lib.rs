@@ -394,6 +394,10 @@ impl<A> ActionTrace<A> {
         self.steps.iter()
     }
 
+    pub fn steps(&self) -> &[QueuedAction<A>] {
+        &self.steps
+    }
+
     pub fn extend(&mut self, other: ActionTrace<A>) {
         self.steps.extend(other.steps);
     }
@@ -1333,6 +1337,19 @@ impl<A: Clone> InputRouter<A> {
         let json = serde_json::to_string_pretty(&self.history)?;
         std::fs::write(path, json)?;
         Ok(())
+    }
+
+    /// Load action history from a JSON file.
+    #[cfg(feature = "serde")]
+    pub fn load_history_from_file<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<Vec<QueuedAction<A>>, Box<dyn std::error::Error>>
+    where
+        A: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let content = std::fs::read_to_string(path)?;
+        let history = serde_json::from_str(&content)?;
+        Ok(history)
     }
 
     pub fn peek(&self) -> Option<&QueuedAction<A>> {

@@ -1,4 +1,5 @@
 use verryte_map::Point;
+use crate::action::Action;
 
 pub type Position = Point;
 
@@ -163,6 +164,19 @@ pub struct Item {
     pub name: String,
     pub effect: ItemEffect,
     pub consumed: bool,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TurnTransition {
+    pub request_end: bool,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct ReplayState {
+    pub active: bool,
+    pub auto: bool,
+    pub trace: verryte_input::ActionTrace<Action>,
+    pub next_index: usize,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
