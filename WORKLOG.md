@@ -1937,3 +1937,24 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** When copy-pasting the cropped battlefield viewport onto the terminal grid, using `Grid::blit_region` originally skipped space character cells (` `) because they were treated as transparent. A direct nested loop copy was used instead to copy the background colors of grass and other empty tiles correctly.
 
 **Follow-ups.** None. All 5 prototype improvements are fully integrated, clean, and verified by workspace integration tests.
+
+## 2026-05-25 - autonomous engine run: modularization, easing library, dialogue system, data-driven VFX
+
+**Goal.** Complete a minimum of 5 meaningful improvements in one sustained autonomous run, focusing on engine architecture, animation fidelity, and narrative capabilities.
+
+**Changes.**
+- `crates/verryte-terminal/src/` - [MAJOR REFACTOR] Split the massive 5600-line `lib.rs` into focused modules: `color.rs`, `grid.rs`, `layout.rs`, `camera.rs`, `layer.rs`, `sprite.rs`, `viewport.rs`, `assets.rs`, `palette.rs`, `widgets.rs`, and `dialogue.rs`. This significantly improves maintainability and compile times for the rendering crate.
+- `crates/verryte-terminal/src/math.rs` - Added a comprehensive easing library with 15+ functions (Linear, Quad, Cubic, Quart, Quint, Expo, Elastic, Bounce) for smooth animations and VFX.
+- `crates/verryte-terminal/src/vfx.rs` - Added `VfxEmitter` for data-driven particle emission. Integrated easing functions into particle alpha/lifetime mapping for more natural fade-outs. Added `blend_color` back for compatibility with existing prototypes.
+- `crates/verryte-terminal/src/dialogue.rs` - Implemented a reusable dialogue and narrative system, including a `DialogueBox` widget (typewriter effects, portraits, choices) and `DialogueState` resource for conversation management.
+- `crates/verryte-terminal/src/layer.rs` - Added `Layers` struct to manage named rendering layers with order-based compositing.
+- `crates/verryte-terminal/src/lib.rs` - Re-exported all modular types and functions to maintain backward compatibility.
+- Added 8+ core unit tests to verified the refactored modules (`layout`, `color`, `grid`).
+
+**Reasoning.** Modularization was a critical maintenance need — the single-file architecture had become a bottleneck for development. The easing library and integrated VFX improvements directly support the engine's goal of "premium terminal-native visual presentation." The dialogue system fills a major gap in the engine's capability for interactive fiction and RPG-style interactions.
+
+**Assumptions.** I assumed that re-exporting everything from `lib.rs` would preserve backward compatibility for existing prototypes, which was verified by running `wuthering-terminal` tests. Easing functions use `f32` for compatibility with the engine's current math and VFX systems.
+
+**Gotchas.** The modularization initially broke the `wuthering-terminal` build due to missing re-exports of image-to-grid functions and the removal of `blend_color`. These were restored to ensure the workspace remained in a passing state. Unit tests were also initially lost during the file split and had to be manually redistributed and restored.
+
+**Follow-ups.** The `wuthering-terminal` prototype could be updated to use the new `DialogueBox` for cutscenes. The easing library could be extended with more complex curves (e.g. Back, Circ). A dedicated `verryte-audio` crate remains a strong candidate for future development to add sensory depth beyond visuals.

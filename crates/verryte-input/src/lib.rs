@@ -273,6 +273,84 @@ impl<A> QueuedAction<A> {
     }
 }
 
+/// A permanent record of an action that was applied to the game.
+///
+/// Unlike [`QueuedAction`], which is for pending work, [`ActionRecord`]
+/// stores the action alongside its source, a timestamp, and optional
+/// metadata (like turn number or phase) for replay and analysis.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "A: serde::Serialize + serde::de::DeserializeOwned")
+)]
+pub struct ActionRecord<A> {
+    pub action: A,
+    pub source: ActionSource,
+    pub timestamp: f32,
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+impl<A> ActionRecord<A> {
+    pub fn new(action: A, source: ActionSource, timestamp: f32) -> Self {
+        Self {
+            action,
+            source,
+            timestamp,
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn with_metadata(mut self, key: &str, value: &str) -> Self {
+        self.metadata.insert(key.to_string(), value.to_string());
+        self
+    }
+}
+
+/// A linear history of all actions applied during a game session.
+///
+/// This provides the data foundation for replays, undo/redo (if actions are
+/// reversible), and agent performance analysis.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "A: serde::Serialize + serde::de::DeserializeOwned")
+)]
+pub struct ActionHistory<A> {
+    pub records: Vec<ActionRecord<A>>,
+}
+
+impl<A> Default for ActionHistory<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A> ActionHistory<A> {
+    pub fn new() -> Self {
+        Self {
+            records: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, record: ActionRecord<A>) {
+        self.records.push(record);
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.records.clear();
+    }
+}
+
 /// A replayable sequence of sourced actions.
 ///
 /// Traces keep control-plane provenance attached to actions while still
@@ -862,6 +940,7 @@ pub struct InputRouter<A: Clone> {
     total_queued: usize,
     context_stack: Vec<Bindings<A>>,
     history: Vec<QueuedAction<A>>,
+    recording_path: Option<std::path::PathBuf>,
 }
 
 impl<A: Clone> InputRouter<A> {
@@ -872,7 +951,26 @@ impl<A: Clone> InputRouter<A> {
             total_queued: 0,
             context_stack: Vec::new(),
             history: Vec::new(),
+            recording_path: None,
         }
+    }
+
+    /// Start recording all actions to a file on disk.
+    ///
+    /// If a recording is already active, it is stopped first. The file is
+    /// overwritten. Actions are written as they are popped from the queue.
+    pub fn start_recording<P: Into<std::path::PathBuf>>(&mut self, path: P) {
+        self.recording_path = Some(path.into());
+    }
+
+    /// Stop the current recording.
+    pub fn stop_recording(&mut self) {
+        self.recording_path = None;
+    }
+
+    /// Returns `true` if a recording is currently active.
+    pub fn is_recording(&self) -> bool {
+        self.recording_path.is_some()
     }
 
     pub fn bindings(&self) -> &Bindings<A> {
@@ -1221,6 +1319,20 @@ impl<A: Clone> InputRouter<A> {
     /// fully drained and unbound.
     pub fn is_empty(&self) -> bool {
         self.bindings.is_empty() && self.pending.is_empty()
+    }
+
+    /// Save the current action history to a file as JSON.
+    #[cfg(feature = "serde")]
+    pub fn save_history_to_file<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        A: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let json = serde_json::to_string_pretty(&self.history)?;
+        std::fs::write(path, json)?;
+        Ok(())
     }
 
     pub fn peek(&self) -> Option<&QueuedAction<A>> {
@@ -1867,6 +1979,52 @@ impl TextInput {
 impl Default for TextInput {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Automates replaying an [`ActionTrace`] into an [`InputRouter`].
+pub struct ReplayRunner<A: Clone> {
+    trace: ActionTrace<A>,
+    index: usize,
+}
+
+impl<A: Clone> ReplayRunner<A> {
+    pub fn new(trace: ActionTrace<A>) -> Self {
+        Self { trace, index: 0 }
+    }
+
+    /// Advance the replay by one step, injecting the action into the router.
+    ///
+    /// Returns `true` if an action was injected, `false` if the end of the trace was reached.
+    pub fn step(&mut self, router: &mut InputRouter<A>) -> bool {
+        if let Some(step) = self.trace.steps.get(self.index) {
+            router.inject_from(step.action.clone(), step.source);
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Inject all remaining actions into the router immediately.
+    pub fn fast_forward(&mut self, router: &mut InputRouter<A>) {
+        while self.step(router) {}
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.index >= self.trace.steps.len()
+    }
+
+    pub fn current_step(&self) -> usize {
+        self.index
+    }
+
+    pub fn total_steps(&self) -> usize {
+        self.trace.steps.len()
+    }
+
+    pub fn reset(&mut self) {
+        self.index = 0;
     }
 }
 
@@ -3476,5 +3634,60 @@ mod tests {
             Some(DummyAction::MoveUp)
         );
         assert_eq!(cmd_roundtrip.translate_glyph('f'), Some(DummyAction::Fire));
+    }
+}
+
+/// A buffer that can throttle actions based on per-action cooldowns.
+#[derive(Clone, Debug)]
+pub struct ActionBuffer<A: Clone + Eq + std::hash::Hash> {
+    cooldowns: HashMap<A, f32>,
+    timers: HashMap<A, f32>,
+}
+
+impl<A: Clone + Eq + std::hash::Hash> ActionBuffer<A> {
+    pub fn new() -> Self {
+        Self {
+            cooldowns: HashMap::new(),
+            timers: HashMap::new(),
+        }
+    }
+
+    pub fn set_cooldown(&mut self, action: A, duration: f32) {
+        self.cooldowns.insert(action, duration);
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        for timer in self.timers.values_mut() {
+            *timer = (*timer - dt).max(0.0);
+        }
+    }
+
+    pub fn can_perform(&self, action: &A) -> bool {
+        self.timers.get(action).is_none_or(|&t| t <= 0.0)
+    }
+
+    pub fn perform(&mut self, action: A) -> bool {
+        if self.can_perform(&action) {
+            if let Some(&duration) = self.cooldowns.get(&action) {
+                self.timers.insert(action, duration);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn remaining_cooldown(&self, action: &A) -> f32 {
+        self.timers.get(action).cloned().unwrap_or(0.0)
+    }
+
+    pub fn clear_cooldowns(&mut self) {
+        self.timers.clear();
+    }
+}
+
+impl<A: Clone + Eq + std::hash::Hash> Default for ActionBuffer<A> {
+    fn default() -> Self {
+        Self::new()
     }
 }

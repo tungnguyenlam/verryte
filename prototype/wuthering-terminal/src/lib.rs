@@ -6,6 +6,7 @@ pub mod game;
 pub mod map;
 pub mod snapshot;
 pub mod systems;
+pub mod ui;
 
 pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
@@ -22,7 +23,7 @@ mod tests {
     #[test]
     fn test_game_init() {
         let game = Game::new();
-        assert_eq!(game.world.entity_count(), 4); // 3 player chars + 1 boss
+        assert_eq!(game.world.entity_count(), 6); // 3 player chars + 1 boss + 2 shadow stalkers
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -74,8 +75,8 @@ mod tests {
             Position::new(4, 4)
         );
 
-        // Check that all 4 entities are restored
-        assert_eq!(game2.world.entity_count(), 4);
+        // Check that all entities are restored
+        assert_eq!(game2.world.entity_count(), 6);
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -274,11 +275,11 @@ mod tests {
 
         // Verify VFX are spawned
         assert!(
-            !game.vfx.particles.is_empty(),
+            !game.vfx().particles.is_empty(),
             "Particles should spawn on skill cast"
         );
         assert!(
-            !game.vfx.shakes.is_empty(),
+            !game.vfx().shakes.is_empty(),
             "Screen shake should trigger on skill cast"
         );
     }
@@ -560,6 +561,7 @@ mod tests {
                 CharacterClass::Mage => mage = Some(e),
                 CharacterClass::Healer => healer = Some(e),
                 CharacterClass::Boss => boss = Some(e),
+                CharacterClass::ShadowStalker => {}
             }
         }
         let warrior = warrior.unwrap();
@@ -666,8 +668,14 @@ mod tests {
         for _ in 0..100 {
             // Set warrior HP high enough so we don't defeat him
             game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
-            let (damage, _defeated) =
-                game.resolve_combat_hit(warrior, 100, "Attacker", "Warrior", Position::new(4, 4));
+            let (damage, _defeated) = crate::systems::resolve_combat_hit(
+                &mut game.world,
+                warrior,
+                100,
+                "Attacker",
+                "Warrior",
+                Position::new(4, 4),
+            );
             if damage == 150 {
                 crits += 1;
             } else if damage == 50 {

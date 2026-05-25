@@ -2602,7 +2602,7 @@ mod tests {
                 }
             });
 
-            let (p1, t1) = guard.get_mut(e1).unwrap();
+            let (p1, _t1) = guard.get_mut(e1).unwrap();
             assert_eq!(p1.0, 11);
             p1.0 += 100;
         }

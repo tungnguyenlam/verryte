@@ -88,8 +88,92 @@ impl From<(i16, i16)> for Point {
 }
 
 impl From<Point> for (i16, i16) {
-    fn from(p: Point) -> Self {
+    fn from(p: Point) -> (i16, i16) {
         (p.x, p.y)
+    }
+}
+
+/// A point in a 3D grid or layered tile map.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Point3 {
+    pub x: i16,
+    pub y: i16,
+    pub z: i16,
+}
+
+impl Point3 {
+    pub const ZERO: Point3 = Point3 { x: 0, y: 0, z: 0 };
+
+    pub fn new(x: i16, y: i16, z: i16) -> Self {
+        Self { x, y, z }
+    }
+
+    pub fn offset(self, dx: i16, dy: i16, dz: i16) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+            z: self.z + dz,
+        }
+    }
+
+    pub fn to_2d(self) -> Point {
+        Point::new(self.x, self.y)
+    }
+
+    pub fn from_2d(p: Point, z: i16) -> Self {
+        Self::new(p.x, p.y, z)
+    }
+
+    pub fn manhattan_distance(self, other: Point3) -> u16 {
+        self.x.abs_diff(other.x) + self.y.abs_diff(other.y) + self.z.abs_diff(other.z)
+    }
+}
+
+impl std::fmt::Display for Point3 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{},{}", self.x, self.y, self.z)
+    }
+}
+
+impl From<(i16, i16, i16)> for Point3 {
+    fn from((x, y, z): (i16, i16, i16)) -> Self {
+        Point3 { x, y, z }
+    }
+}
+
+/// A simple rectangle in 2D space.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Rect {
+    pub x: i16,
+    pub y: i16,
+    pub width: u16,
+    pub height: u16,
+}
+
+impl Rect {
+    pub fn new(x: i16, y: i16, width: u16, height: u16) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub fn center(&self) -> Point {
+        Point::new(
+            self.x + (self.width / 2) as i16,
+            self.y + (self.height / 2) as i16,
+        )
+    }
+
+    pub fn intersects(&self, other: &Rect) -> bool {
+        self.x < other.x + other.width as i16
+            && self.x + self.width as i16 > other.x
+            && self.y < other.y + other.height as i16
+            && self.y + self.height as i16 > other.y
     }
 }
 
@@ -1998,6 +2082,153 @@ impl<T> TileGrid<T> {
         }
 
         self.count_matching(|_, t| *t == floor)
+    }
+
+    /// Generate a series of rooms using Binary Space Partitioning (BSP).
+    ///
+    /// Recursively splits the grid into smaller rectangles until `max_depth` or
+    /// `min_size` is reached. Then places a room inside each leaf partition.
+    /// Returns the centers of all generated rooms.
+    pub fn bsp_rooms(
+        &mut self,
+        floor: T,
+        min_room_size: u16,
+        max_depth: usize,
+        seed: u64,
+    ) -> Vec<Point>
+    where
+        T: Clone + PartialEq,
+    {
+        let w = self.width();
+        let h = self.height();
+        let mut partitions = vec![Rect::new(0, 0, w, h)];
+        let mut leaves = Vec::new();
+
+        let mut state = seed | 1;
+        let mut rng = || -> u64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        for _ in 0..max_depth {
+            let mut next_gen = Vec::new();
+            let mut split_any = false;
+
+            for p in partitions {
+                if p.width > min_room_size * 2 + 2 && p.height > min_room_size * 2 + 2 {
+                    // Split
+                    let split_horizontal = (rng() % 2) == 0;
+                    if split_horizontal {
+                        let split_y = (rng() % (p.height as u64 - min_room_size as u64 * 2)) as u16
+                            + min_room_size
+                            + 1;
+                        next_gen.push(Rect::new(p.x, p.y, p.width, split_y));
+                        next_gen.push(Rect::new(
+                            p.x,
+                            p.y + split_y as i16,
+                            p.width,
+                            p.height - split_y,
+                        ));
+                    } else {
+                        let split_x = (rng() % (p.width as u64 - min_room_size as u64 * 2)) as u16
+                            + min_room_size
+                            + 1;
+                        next_gen.push(Rect::new(p.x, p.y, split_x, p.height));
+                        next_gen.push(Rect::new(
+                            p.x + split_x as i16,
+                            p.y,
+                            p.width - split_x,
+                            p.height,
+                        ));
+                    }
+                    split_any = true;
+                } else {
+                    leaves.push(p);
+                }
+            }
+
+            partitions = next_gen;
+            if !split_any {
+                break;
+            }
+        }
+        leaves.extend(partitions);
+
+        let mut centers = Vec::new();
+        for p in leaves {
+            if p.width < min_room_size + 2 || p.height < min_room_size + 2 {
+                continue;
+            }
+
+            // Room size inside partition
+            let rw = (rng() % (p.width as u64 - min_room_size as u64)) as u16 + min_room_size;
+            let rh = (rng() % (p.height as u64 - min_room_size as u64)) as u16 + min_room_size;
+
+            // Centered in partition
+            let rx = p.x + ((p.width - rw) / 2) as i16;
+            let ry = p.y + ((p.height - rh) / 2) as i16;
+
+            for dy in 0..rh {
+                for dx in 0..rw {
+                    self.set(Point::new(rx + dx as i16, ry + dy as i16), floor.clone());
+                }
+            }
+            centers.push(Point::new(rx + (rw / 2) as i16, ry + (rh / 2) as i16));
+        }
+
+        // Connect centers with simple L-corridors
+        for i in 0..centers.len().saturating_sub(1) {
+            let start = centers[i];
+            let end = centers[i + 1];
+
+            // Horizontal then vertical
+            let mut curr = start;
+            while curr.x != end.x {
+                self.set(curr, floor.clone());
+                curr.x += if end.x > curr.x { 1 } else { -1 };
+            }
+            while curr.y != end.y {
+                self.set(curr, floor.clone());
+                curr.y += if end.y > curr.y { 1 } else { -1 };
+            }
+        }
+
+        centers
+    }
+
+    /// Generate a Dijkstra map starting from the given goals.
+    ///
+    /// The resulting map contains the distance from each reachable tile to the
+    /// nearest goal. Useful for AI pathfinding, scent trails, or influence maps.
+    pub fn dijkstra_map<F>(&self, goals: &[Point], mut is_walkable: F) -> HashMap<Point, u32>
+    where
+        F: FnMut(Point, &T) -> bool,
+    {
+        let mut d_map = HashMap::new();
+        let mut queue = VecDeque::new();
+
+        for &goal in goals {
+            d_map.insert(goal, 0);
+            queue.push_back(goal);
+        }
+
+        let w = self.width() as i16;
+        let h = self.height() as i16;
+
+        while let Some(p) = queue.pop_front() {
+            let dist = *d_map.get(&p).unwrap();
+            for neighbor in p.neighbors4() {
+                if neighbor.x >= 0 && neighbor.y >= 0 && neighbor.x < w && neighbor.y < h {
+                    if !d_map.contains_key(&neighbor) && is_walkable(neighbor, self.get(neighbor).unwrap()) {
+                        d_map.insert(neighbor, dist + 1);
+                        queue.push_back(neighbor);
+                    }
+                }
+            }
+        }
+        d_map
     }
 
     /// Count how many tiles match the predicate.
@@ -4333,5 +4564,62 @@ impl DijkstraMap {
         }
 
         best_point
+    }
+}
+
+/// A 3D grid of tiles, represented as multiple 2D layers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "T: serde::Serialize + serde::de::DeserializeOwned")
+)]
+pub struct TileGrid3<T> {
+    layers: Vec<TileGrid<T>>,
+}
+
+impl<T: Clone> TileGrid3<T> {
+    pub fn new(width: u16, height: u16, depth: u16, fill: T) -> Self {
+        let mut layers = Vec::with_capacity(depth as usize);
+        for _ in 0..depth {
+            layers.push(TileGrid::new(width, height, fill.clone()));
+        }
+        Self { layers }
+    }
+
+    pub fn width(&self) -> u16 {
+        self.layers.first().map(|l| l.width()).unwrap_or(0)
+    }
+
+    pub fn height(&self) -> u16 {
+        self.layers.first().map(|l| l.height()).unwrap_or(0)
+    }
+
+    pub fn depth(&self) -> u16 {
+        self.layers.len() as u16
+    }
+
+    pub fn get(&self, p: Point3) -> Option<&T> {
+        self.layers.get(p.z as usize)?.get(p.to_2d())
+    }
+
+    pub fn get_mut(&mut self, p: Point3) -> Option<&mut T> {
+        self.layers.get_mut(p.z as usize)?.get_mut(p.to_2d())
+    }
+
+    pub fn set(&mut self, p: Point3, tile: T) -> bool {
+        if let Some(layer) = self.layers.get_mut(p.z as usize) {
+            layer.set(p.to_2d(), tile)
+        } else {
+            false
+        }
+    }
+
+    pub fn layer(&self, z: i16) -> Option<&TileGrid<T>> {
+        self.layers.get(z as usize)
+    }
+
+    pub fn layer_mut(&mut self, z: i16) -> Option<&mut TileGrid<T>> {
+        self.layers.get_mut(z as usize)
     }
 }

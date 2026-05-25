@@ -19,6 +19,14 @@ pub enum Action {
     Skill3,
     Quit,
     EndTurn,
+    ToggleInventory,
+    UseItem(usize),
+    Save,
+    Load,
+    TogglePerf,
+    AutoBattle,
+    StepToSafety,
+    ToggleRecording,
 }
 
 impl Action {
@@ -61,11 +69,29 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('Q'), Action::Quit);
     b.bind(Key::Char('e'), Action::EndTurn);
     b.bind(Key::Char('E'), Action::EndTurn);
+    b.bind(Key::Char('i'), Action::ToggleInventory);
+    b.bind(Key::Char('I'), Action::ToggleInventory);
 
     // Skills
     b.bind(Key::Char('1'), Action::Skill1);
     b.bind(Key::Char('2'), Action::Skill2);
     b.bind(Key::Char('3'), Action::Skill3);
+
+    // Save/Load
+    b.bind(Key::F(5), Action::Save);
+    b.bind(Key::F(9), Action::Load);
+
+    // Perf
+    b.bind(Key::F(3), Action::TogglePerf);
+
+    // Recording
+    b.bind(Key::F(10), Action::ToggleRecording);
+
+    // AI
+    b.bind(Key::Char('b'), Action::AutoBattle);
+    b.bind(Key::Char('B'), Action::AutoBattle);
+    b.bind(Key::Char('r'), Action::StepToSafety);
+    b.bind(Key::Char('R'), Action::StepToSafety);
 
     b
 }
@@ -86,6 +112,8 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("skill3", Action::Skill3);
     c.bind_name("quit", Action::Quit);
     c.bind_name("end", Action::EndTurn);
+    c.bind_name("autobattle", Action::AutoBattle);
+    c.bind_name("safety", Action::StepToSafety);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('s', Action::MoveSouth);
@@ -101,7 +129,10 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('3', Action::Skill3);
     c.bind_glyph('q', Action::Quit);
     c.bind_glyph('e', Action::EndTurn);
+    c.bind_glyph('i', Action::ToggleInventory);
     c.bind_glyph(',', Action::ClearCursor);
+    c.bind_glyph('b', Action::AutoBattle);
+    c.bind_glyph('r', Action::StepToSafety);
 
     c
 }

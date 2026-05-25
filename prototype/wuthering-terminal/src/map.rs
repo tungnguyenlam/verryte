@@ -23,6 +23,30 @@ impl TacticalMap {
         }
     }
 
+    pub fn from_ascii(ascii: &str) -> Self {
+        let lines: Vec<&str> = ascii.trim().lines().map(|l| l.trim()).collect();
+        let height = lines.len() as u16;
+        let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) as u16;
+
+        let mut tiles = TileGrid::new(width, height, Tile::Grass);
+        for (y, line) in lines.iter().enumerate() {
+            for (x, ch) in line.chars().enumerate() {
+                let tile = match ch {
+                    '#' => Tile::Wall,
+                    '~' => Tile::Water,
+                    _ => Tile::Grass,
+                };
+                tiles.set(Point::new(x as i16, y as i16), tile);
+            }
+        }
+
+        Self {
+            width,
+            height,
+            tiles,
+        }
+    }
+
     pub fn tile(&self, x: i16, y: i16) -> Tile {
         self.tiles
             .get(Point::new(x, y))

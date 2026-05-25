@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (gw, gh) = (grid.width(), grid.height());
 
         // Center the grid in the terminal, applying shake offset
-        let (shake_x, shake_y) = game.vfx.shake_offset();
+        let (shake_x, shake_y) = game.vfx().shake_offset();
         let x_off = (((w.saturating_sub(gw) / 2) as i32 + shake_x as i32).max(0) as u16).min(w);
         let y_off = (((h.saturating_sub(gh) / 2) as i32 + shake_y as i32).max(0) as u16).min(h);
 

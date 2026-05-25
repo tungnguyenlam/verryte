@@ -33,3 +33,32 @@ pub use rng::Rng;
 pub use schedule::{NamedSystem, Schedule, System};
 pub use tag::Tag;
 pub use world::{Query, Query2, Query3, World};
+
+/// A request to play a specific sound by name.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AudioEvent {
+    pub name: String,
+    pub volume: Option<f32>,
+    pub pan: Option<f32>,
+    pub looped: bool,
+}
+
+impl AudioEvent {
+    pub fn play(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            volume: None,
+            pan: None,
+            looped: false,
+        }
+    }
+
+    pub fn loop_music(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            volume: None,
+            pan: None,
+            looped: true,
+        }
+    }
+}

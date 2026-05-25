@@ -45,5 +45,6 @@ pub struct FullSaveState {
     pub rng: verryte_core::Rng,
     pub map: crate::map::TacticalMap,
     pub camera: verryte_terminal::Camera,
+    pub action_history: verryte_input::ActionHistory<Action>,
     pub entities: Vec<SavedEntity>,
 }
