@@ -2005,3 +2005,26 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** Structural instantiations of `FloatingText` inside `prototype/vfx-demo/src/main.rs` broke when we added the new `start_y` and `easing` fields. We refactored `vfx-demo` to use the constructor method `FloatingText::new` instead, resolving compile errors without compromising visual demo behavior.
 
 **Follow-ups.** None. All workspace checks and tests are clean.
+
+## 2026-05-28 - ECS snapshotting, fixed time step loop, key repeat configuration, camera zoom/shake, and Dijkstra map path reconstruction
+
+**Goal.** Integrate, test, and commit a comprehensive batch of improvements across the Verryte workspace, including ECS serialization, fixed-update scheduling, input repeating, built-in camera zoom/shake, Dijkstra path reconstruction, and spawner refactoring.
+
+**Changes.**
+- `crates/verryte-core/src/snapshot.rs` - [NEW] Implemented `WorldRegistry` and `WorldSnapshot` for component/resource serialization to JSON.
+- `crates/verryte-core/src/clock.rs` - Added `FixedTime` to accumulate and consume tick deltas.
+- `crates/verryte-core/src/schedule.rs` - Added `run_fixed_stage` to run stages on fixed delta time steps.
+- `crates/verryte-input/src/lib.rs` - Added `KeyEventKind` and `RepeatConfig`, and implemented tick-based input repeating in `InputRouter::tick()`.
+- `crates/verryte-tty/src/lib.rs` - Mapped crossterm key event kinds (press, repeat, release) to `KeyEventKind`.
+- `crates/verryte-terminal/src/camera.rs` - Added zoom (`set_zoom`, `zoom_to`), RNG-based camera screenshaking (`shake`), and viewport bounds clamping using zoomed dimensions.
+- `crates/verryte-map/src/lib.rs` - Added `DijkstraMap::path_to` for tracing shortest path points back to targets.
+- `prototype/wuthering-terminal/` - Refactored entity spawning to `spawn.rs`, added asset compiler `bake_assets.rs`, added `Stunned` component and `Stun`/`Lifesteal` EchoAbilities, added progress bar HUD Concert rendering in `ui.rs`, and extended actions for character swap, item usage, and inventory toggle.
+- Added unit tests for Dijkstra path reconstruction, camera zoom/shake, key repeat config ticking, and save/load state.
+
+**Reasoning.** Integrating these features elevates the engine to support real-time elements (fixed update physics/vfx stage runs, camera shakes and zooming, input repeating) while preserving agent usability via full ECS save state snapshotting and path serialization.
+
+**Assumptions.** We assume that ignoring the native frontend repeating key event kind and managing repeats inside our own tick timers provides consistent behavior across all systems and OSes.
+
+**Gotchas.** Clamping viewport coordinates must account for current camera zoom levels; otherwise, the camera would allow panning off-screen under higher zoom ratios. This was corrected by using zoomed dimensions when calculating boundary margins.
+
+**Follow-ups.** None. All unit and doc tests are passing cleanly.
