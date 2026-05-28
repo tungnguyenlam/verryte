@@ -8,18 +8,19 @@ use crate::{Cell, CellAttrs, Color, Grid, Rect};
 // ── Trajectory ────────────────────────────────────────────────────────────────
 
 /// The movement trajectory pattern for a particle.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Trajectory {
+    #[default]
     Straight,
-    Spiral { speed: f32, radius: f32 },
-    Wave { frequency: f32, amplitude: f32 },
-}
-
-impl Default for Trajectory {
-    fn default() -> Self {
-        Self::Straight
-    }
+    Spiral {
+        speed: f32,
+        radius: f32,
+    },
+    Wave {
+        frequency: f32,
+        amplitude: f32,
+    },
 }
 
 // ── Particle ──────────────────────────────────────────────────────────────────

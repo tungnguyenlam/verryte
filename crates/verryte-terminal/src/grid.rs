@@ -394,6 +394,7 @@ impl Grid {
 
     /// Blur the foreground and background colors of cells within the given `rect`
     /// using a box blur of the specified `radius`.
+    #[allow(clippy::manual_checked_ops)]
     pub fn apply_blur(&mut self, rect: Rect, radius: usize) {
         if radius == 0 {
             return;
@@ -958,7 +959,7 @@ impl Grid {
         let mut y = radius as i32;
         let mut d = 1 - radius as i32;
 
-        let mut plot_if_between = |grid: &mut Grid, px: i32, py: i32| {
+        let plot_if_between = |grid: &mut Grid, px: i32, py: i32| {
             if px >= 0 && py >= 0 && (px as u16) < grid.width && (py as u16) < grid.height {
                 let dx = px - cx;
                 let dy = py - cy;

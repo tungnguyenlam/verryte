@@ -2138,3 +2138,51 @@ contain anything (including itself) since its bounds are zero-width.
 **Gotchas.** None.
 
 **Follow-ups.** None.
+
+## 2026-05-29 - clippy cleanup, diagnostics tests, from_fn constructor, map Rect primitives
+
+**Goal.** Complete 5 meaningful improvements: eliminate all clippy warnings
+across the workspace, add tests for an untested module, add a procedural grid
+constructor, and add missing map-crate Rect methods.
+
+**Changes.**
+- `crates/verryte-map/src/lib.rs:1329-1349` - removed 8 unnecessary `as i16`
+  casts in `astar8` (Point fields are already i16) and replaced `.abs() as u32`
+  with `.unsigned_abs() as u32` to satisfy clippy's `unnecessary_cast` and
+  `cast_abs_to_unsigned` lints.
+- `crates/verryte-map/src/lib.rs:4719` - removed unnecessary `mut` from `seed`
+  variable in test_maze_generation.
+- `crates/verryte-terminal/src/grid.rs:437` - added `#[allow(clippy::manual_checked_ops)]`
+  to `apply_blur` since the division is already guarded by `count > 0`.
+- `crates/verryte-terminal/src/grid.rs:961` - removed unnecessary `mut` from
+  `plot_if_between` closure in `draw_arc`.
+- `crates/verryte-terminal/src/vfx.rs:11-17` - replaced manual `Default` impl
+  for `Trajectory` with `#[derive(Default)]` and `#[default]` on `Straight`.
+- `crates/verryte-core/src/diagnostics.rs` - added 4 unit tests covering
+  `Diagnostics::new`, single-system recording, multi-call max tracking, and
+  independent system tracking.
+- `crates/verryte-map/src/lib.rs:609` - added `TileGrid::from_fn(width, height, f)`
+  for procedural grid generation from a closure. Complements `from_vec` and
+  `from_ascii`. Tests at :4501 and :4515.
+- `crates/verryte-map/src/lib.rs:172` - added `Rect::area()` and `Rect::is_empty()`
+  to the map crate's Rect, matching the terminal crate's API. Test at :4122.
+
+**Reasoning.** Clippy warnings were the highest-value improvement: 14 warnings
+across two crates masked real code quality issues. The `astar8` casts were
+redundant (Point fields are already i16), the `abs() as u32` was flagged for
+potential overflow on i16::MIN (now uses `unsigned_abs`), and the manual
+checked division was already guarded. Diagnostics had zero test coverage despite
+being used in schedule profiling. `from_fn` fills a genuine gap for procedural
+map generation. The map-crate Rect was missing `area` and `is_empty` that the
+terminal-crate Rect already had.
+
+**Assumptions.** `unsigned_abs()` is the correct fix for the abs-to-unsigned cast
+since it handles i16::MIN without panicking (returns u16::MAX). The
+`#[allow(clippy::manual_checked_ops)]` is appropriate because the division is
+already guarded by a bounds check.
+
+**Gotchas.** The `#[default]` attribute on an enum variant causes rustfmt to
+reformat the variant's fields onto separate lines, which triggered a formatting
+diff.
+
+**Follow-ups.** All 14 clippy warnings are now resolved. The workspace is clean.

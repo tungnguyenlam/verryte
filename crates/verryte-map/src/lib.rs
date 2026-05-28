@@ -175,6 +175,14 @@ impl Rect {
             && self.y < other.y + other.height as i16
             && self.y + self.height as i16 > other.y
     }
+
+    pub fn area(&self) -> usize {
+        (self.width as usize) * (self.height as usize)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
 }
 
 /// Integer points on a straight line, including both endpoints.
@@ -599,6 +607,33 @@ impl<T> TileGrid<T> {
             let line_len = line.chars().count() as u16;
             for x in line_len..width {
                 tiles.push(f(' ', x, y as u16));
+            }
+        }
+        Self {
+            size: Size::new(width, height),
+            tiles,
+        }
+    }
+
+    /// Construct a grid by calling a closure for each (x, y) position.
+    ///
+    /// The closure receives the coordinates and returns the tile value.
+    /// Useful for procedural generation, noise functions, or test fixtures.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let grid: TileGrid<i32> = TileGrid::from_fn(4, 3, |x, y| (x + y) as i32);
+    /// assert_eq!(grid.get(Point::new(1, 2)), Some(&3));
+    /// ```
+    pub fn from_fn<F>(width: u16, height: u16, mut f: F) -> Self
+    where
+        F: FnMut(u16, u16) -> T,
+    {
+        let mut tiles = Vec::with_capacity((width as usize) * (height as usize));
+        for y in 0..height {
+            for x in 0..width {
+                tiles.push(f(x, y));
             }
         }
         Self {
@@ -1331,8 +1366,8 @@ impl<T> TileGrid<T> {
             goal,
             passable,
             |p1, p2, _| {
-                let dx = (p1.x as i16 - p2.x as i16).abs();
-                let dy = (p1.y as i16 - p2.y as i16).abs();
+                let dx = (p1.x - p2.x).abs();
+                let dy = (p1.y - p2.y).abs();
                 if dx > 0 && dy > 0 {
                     14 // Diagonal cost
                 } else {
@@ -1340,8 +1375,8 @@ impl<T> TileGrid<T> {
                 }
             },
             |p1, p2| {
-                let dx = (p1.x as i16 - p2.x as i16).abs() as u32;
-                let dy = (p1.y as i16 - p2.y as i16).abs() as u32;
+                let dx = (p1.x - p2.x).unsigned_abs() as u32;
+                let dy = (p1.y - p2.y).unsigned_abs() as u32;
                 let min = dx.min(dy);
                 let max = dx.max(dy);
                 min * 14 + (max - min) * 10
@@ -4085,6 +4120,20 @@ mod tests {
     }
 
     #[test]
+    fn rect_area_and_is_empty() {
+        let r = Rect::new(1, 2, 3, 4);
+        assert_eq!(r.area(), 12);
+        assert!(!r.is_empty());
+
+        let empty = Rect::new(0, 0, 0, 5);
+        assert_eq!(empty.area(), 0);
+        assert!(empty.is_empty());
+
+        let empty2 = Rect::new(0, 0, 5, 0);
+        assert!(empty2.is_empty());
+    }
+
+    #[test]
     fn field_of_view_includes_origin() {
         let grid = TileGrid::from_vec(5, 5, vec!['.'; 25]).unwrap();
         let fov = grid.field_of_view(Point::new(2, 2), 10, |t| *t == '#');
@@ -4472,6 +4521,22 @@ mod tests {
     }
 
     #[test]
+    fn from_fn_creates_grid_from_closure() {
+        let grid: TileGrid<i32> = TileGrid::from_fn(3, 2, |x, y| (x + y) as i32);
+        assert_eq!(grid.width(), 3);
+        assert_eq!(grid.height(), 2);
+        assert_eq!(*grid.get(Point::new(0, 0)).unwrap(), 0);
+        assert_eq!(*grid.get(Point::new(2, 0)).unwrap(), 2);
+        assert_eq!(*grid.get(Point::new(1, 1)).unwrap(), 2);
+    }
+
+    #[test]
+    fn from_fn_zero_dimensions_produces_empty_grid() {
+        let grid: TileGrid<bool> = TileGrid::from_fn(0, 0, |_, _| true);
+        assert!(grid.is_empty());
+    }
+
+    #[test]
     fn map_tiles_transforms_to_different_type() {
         let grid = TileGrid::from_ascii("#.@", |ch, _x, _y| ch);
         let mapped: TileGrid<u8> = grid.map_tiles(|_, &ch| match ch {
@@ -4716,7 +4781,7 @@ mod tests {
     #[test]
     fn test_maze_generation() {
         let mut grid = TileGrid::new(11, 11, '#');
-        let mut seed = 42u64;
+        let seed = 42u64;
         grid.generate_maze('#', '.', seed);
 
         // Bounds should still contain walls
