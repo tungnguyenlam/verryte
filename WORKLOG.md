@@ -1958,3 +1958,26 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** The modularization initially broke the `wuthering-terminal` build due to missing re-exports of image-to-grid functions and the removal of `blend_color`. These were restored to ensure the workspace remained in a passing state. Unit tests were also initially lost during the file split and had to be manually redistributed and restored.
 
 **Follow-ups.** The `wuthering-terminal` prototype could be updated to use the new `DialogueBox` for cutscenes. The easing library could be extended with more complex curves (e.g. Back, Circ). A dedicated `verryte-audio` crate remains a strong candidate for future development to add sensory depth beyond visuals.
+
+## 2026-05-28 - Dialogue choices, themes, spatial audio, and eased screen flashes
+
+**Goal.** Enhance the terminal engine and RPG prototype with dialogue option navigation and themes, spatial/panned audio playing, and custom eased screen flashes.
+
+**Changes.**
+- `crates/verryte-core/src/lib.rs:50` - Added builder methods `with_volume` and `with_pan` to `AudioEvent`.
+- `crates/verryte-audio/src/lib.rs:84` - Implemented `play_sfx_panned` and `play_sfx_spatial` using `rodio::SpatialSink`. Updated `audio_system` at `:122` to consume volume and pan options.
+- `crates/verryte-terminal/src/dialogue.rs:5` - Added `DialogueTheme` presets and `with_theme()` builder. Added `chosen` field in `DialogueState` at `:170`.
+- `crates/verryte-terminal/src/vfx.rs:371` - Added `EasingMode` enum and eased constructors/alpha decay for screen `Flash` overlays.
+- `crates/verryte-terminal/src/lib.rs:24` - Re-exported dialogue themes and easing modes.
+- `prototype/wuthering-terminal/src/game.rs:148` - Added `trigger_intro_dialogue()` at game start and updated dialogue inputs/consequences in `apply_action_internal` at `:2007`. Used `with_theme()` in dialogue renderer at `:3360`.
+- `prototype/wuthering-terminal/src/main.rs:8` - Trigger intro dialogue when initializing interactive game loop.
+- `prototype/wuthering-terminal/src/systems.rs:802` - Sent panned hit/crit sounds. Replaced linear flashes with eased flashes using `ExpoOut` and `QuadOut`.
+- `prototype/wuthering-terminal/src/lib.rs:832` - Added `test_dialogue_choices_and_consequences` and `test_panned_audio_event_and_eased_flashes` unit tests.
+
+**Reasoning.** We implemented spatial panning directly in `verryte-audio` and `verryte-terminal` so any game prototype can easily consume panned sounds and eased visual flashes without duplicating math or audio sinks. Dialogue choices and एलिमेंट themes allow rich interactive storytelling, validated by Kael's Vanguard Focus selection at start.
+
+**Assumptions.** We assumed pan coordinates should map linearly across the battlefield's X coordinate (-1.0 to 1.0) and that dialogue typing can be skipped in tests via `skip_typing()`.
+
+**Gotchas.** Active dialogue blocks other actions in the router, so starting with active dialogue by default broke existing unit tests. We resolved this by isolating the intro dialogue trigger to interactive TTY startup while keeping unit tests green by default.
+
+**Follow-ups.** Dialogue portraits could be dynamically rendered using character sprites.

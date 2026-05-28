@@ -371,12 +371,24 @@ impl ScreenShake {
 
 // ── Flash Overlay ─────────────────────────────────────────────────────────────
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum EasingMode {
+    Linear,
+    QuadIn,
+    QuadOut,
+    CubicIn,
+    CubicOut,
+    ExpoOut,
+}
+
 /// A color flash overlay that can be full-screen or region-limited.
 pub struct Flash {
     pub color: Color,
     pub duration: f32,
     pub elapsed: f32,
     pub region: Option<Rect>,
+    pub easing: EasingMode,
 }
 
 impl Flash {
@@ -386,6 +398,7 @@ impl Flash {
             duration,
             elapsed: 0.0,
             region: None,
+            easing: EasingMode::Linear,
         }
     }
 
@@ -395,6 +408,27 @@ impl Flash {
             duration,
             elapsed: 0.0,
             region: Some(region),
+            easing: EasingMode::Linear,
+        }
+    }
+
+    pub fn full_screen_eased(color: Color, duration: f32, easing: EasingMode) -> Self {
+        Self {
+            color,
+            duration,
+            elapsed: 0.0,
+            region: None,
+            easing,
+        }
+    }
+
+    pub fn region_eased(color: Color, duration: f32, region: Rect, easing: EasingMode) -> Self {
+        Self {
+            color,
+            duration,
+            elapsed: 0.0,
+            region: Some(region),
+            easing,
         }
     }
 
@@ -403,7 +437,16 @@ impl Flash {
     }
 
     pub fn alpha(&self) -> f32 {
-        (1.0 - (self.elapsed / self.duration)).clamp(0.0, 1.0)
+        let t = (self.elapsed / self.duration).clamp(0.0, 1.0);
+        let progress = match self.easing {
+            EasingMode::Linear => 1.0 - crate::math::easing::linear(t),
+            EasingMode::QuadIn => 1.0 - crate::math::easing::quad_in(t),
+            EasingMode::QuadOut => 1.0 - crate::math::easing::quad_out(t),
+            EasingMode::CubicIn => 1.0 - crate::math::easing::cubic_in(t),
+            EasingMode::CubicOut => 1.0 - crate::math::easing::cubic_out(t),
+            EasingMode::ExpoOut => 1.0 - crate::math::easing::expo_out(t),
+        };
+        progress.clamp(0.0, 1.0)
     }
 }
 
@@ -469,6 +512,44 @@ impl AoeRing {
     }
 }
 
+// ── Spatial Highlight ─────────────────────────────────────────────────────────
+
+/// A set of points to highlight on the map (e.g., a path or AoE preview).
+pub struct SpatialHighlight {
+    pub points: Vec<(i32, i32)>,
+    pub color: Color,
+    pub glyph: Option<char>,
+    pub bg_alpha: f32,
+    pub lifetime: f32,
+    pub max_lifetime: f32,
+}
+
+impl SpatialHighlight {
+    pub fn new(points: Vec<(i32, i32)>, color: Color, lifetime: f32) -> Self {
+        Self {
+            points,
+            color,
+            glyph: None,
+            bg_alpha: 0.3,
+            lifetime,
+            max_lifetime: lifetime,
+        }
+    }
+
+    pub fn with_glyph(mut self, glyph: char) -> Self {
+        self.glyph = Some(glyph);
+        self
+    }
+
+    pub fn alive(&self) -> bool {
+        self.lifetime > 0.0
+    }
+
+    pub fn alpha_ratio(&self) -> f32 {
+        (self.lifetime / self.max_lifetime).clamp(0.0, 1.0)
+    }
+}
+
 // ── VFX System ────────────────────────────────────────────────────────────────
 
 /// Manages all active visual effects and renders them into a [`Grid`].
@@ -478,6 +559,7 @@ pub struct VfxSystem {
     pub flashes: Vec<Flash>,
     pub floating_texts: Vec<FloatingText>,
     pub aoe_rings: Vec<AoeRing>,
+    pub highlights: Vec<SpatialHighlight>,
 }
 
 impl VfxSystem {
@@ -488,6 +570,7 @@ impl VfxSystem {
             flashes: Vec::new(),
             floating_texts: Vec::new(),
             aoe_rings: Vec::new(),
+            highlights: Vec::new(),
         }
     }
 
@@ -521,6 +604,11 @@ impl VfxSystem {
             r.lifetime -= dt;
         }
         self.aoe_rings.retain(|r| r.alive());
+
+        for h in &mut self.highlights {
+            h.lifetime -= dt;
+        }
+        self.highlights.retain(|h| h.alive());
     }
 
     pub fn shake_offset(&self) -> (i16, i16) {
@@ -535,6 +623,20 @@ impl VfxSystem {
     }
 
     pub fn render(&self, grid: &mut Grid, w: u16, h: u16) {
+        for hl in &self.highlights {
+            let alpha = hl.alpha_ratio();
+            for &(px, py) in &hl.points {
+                if px >= 0 && py >= 0 && (px as u16) < w && (py as u16) < h {
+                    if let Some(cell) = grid.get_mut(px as u16, py as u16) {
+                        cell.bg = cell.bg.blend_alpha(hl.color, hl.bg_alpha * alpha);
+                        if let Some(glyph) = hl.glyph {
+                            cell.glyph = glyph;
+                            cell.fg = hl.color.blend_alpha(cell.fg, 1.0 - alpha);
+                        }
+                    }
+                }
+            }
+        }
         for ring in &self.aoe_rings {
             if ring.alive() {
                 let alpha = ring.alpha_ratio();
@@ -598,6 +700,24 @@ impl VfxSystem {
     }
 
     pub fn render_world(&self, grid: &mut Grid, viewport: &crate::TileViewport) {
+        for hl in &self.highlights {
+            let alpha = hl.alpha_ratio();
+            for &(px, py) in &hl.points {
+                let (sx, sy) = viewport.world_to_screen(px as f32, py as f32);
+                let tx = (viewport.rect.x as i32 + sx) as u16;
+                let ty = (viewport.rect.y as i32 + sy) as u16;
+                if viewport.rect.contains(tx, ty) {
+                    if let Some(cell) = grid.get_mut(tx, ty) {
+                        cell.bg = cell.bg.blend_alpha(hl.color, hl.bg_alpha * alpha);
+                        if let Some(glyph) = hl.glyph {
+                            cell.glyph = glyph;
+                            cell.fg = hl.color.blend_alpha(cell.fg, 1.0 - alpha);
+                        }
+                    }
+                }
+            }
+        }
+
         for ring in &self.aoe_rings {
             if ring.alive() {
                 let (sx, sy) = viewport.world_to_screen(ring.cx as f32, ring.cy as f32);

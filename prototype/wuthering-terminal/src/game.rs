@@ -3,10 +3,11 @@ use crate::components::{
     CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team, TurnPhase,
 };
 use crate::map::{TacticalMap, Tile};
+use crate::spawn::Spawner;
 use std::collections::HashSet;
 use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, Schedule, World};
 use verryte_input::{ActionSource, InputRouter};
-use verryte_terminal::{Camera, Cell, Color, Grid, VisualAsset, VisualRegistry};
+use verryte_terminal::{Camera, Cell, Color, Grid, VisualRegistry};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MapError {
@@ -72,7 +73,7 @@ impl Game {
         world.insert_resource(crate::components::ReplayState::default());
 
         let mut registry = VisualRegistry::new();
-        Self::load_sprites(&mut registry);
+        crate::generated_assets::register_assets(&mut registry);
         world.insert_resource(registry);
 
         let mut schedule = Schedule::new();
@@ -87,20 +88,61 @@ impl Game {
             camera: Camera::new(5.0, 5.0).with_smooth(0.15),
         };
 
-        game.spawn_character(Position::new(4, 4), Team::Player, CharacterClass::Warrior);
-        game.spawn_character(Position::new(4, 8), Team::Player, CharacterClass::Mage);
-        game.spawn_character(Position::new(4, 12), Team::Player, CharacterClass::Healer);
-        game.spawn_character(Position::new(18, 8), Team::Enemy, CharacterClass::Boss);
-        game.spawn_character(
+        game.world
+            .spawn_character(Position::new(4, 4), Team::Player, CharacterClass::Warrior);
+        game.world
+            .spawn_character(Position::new(4, 8), Team::Player, CharacterClass::Mage);
+        game.world
+            .spawn_character(Position::new(4, 12), Team::Player, CharacterClass::Healer);
+        game.world
+            .spawn_character(Position::new(18, 8), Team::Enemy, CharacterClass::Boss);
+        game.world.spawn_character(
             Position::new(14, 4),
             Team::Enemy,
             CharacterClass::ShadowStalker,
         );
-        game.spawn_character(
+        game.world.spawn_character(
             Position::new(14, 12),
             Team::Enemy,
             CharacterClass::ShadowStalker,
         );
+
+        let potion = game
+            .world
+            .spawn_item("Healing Potion", crate::components::ItemEffect::Heal(30));
+        let elixir = game.world.spawn_item(
+            "Energy Elixir",
+            crate::components::ItemEffect::ReplenishAp(2),
+        );
+        let remedy = game
+            .world
+            .spawn_item("Cleanse Remedy", crate::components::ItemEffect::Cleanse);
+
+        if let Some(kael) = game
+            .world
+            .query3::<Position, Team, CharacterClass>()
+            .iter()
+            .find(|(_, _, team, class)| {
+                **team == Team::Player && **class == CharacterClass::Warrior
+            })
+            .map(|(e, _, _, _)| *e)
+        {
+            if let Some(inv) = game.world.get_mut::<crate::components::Inventory>(kael) {
+                inv.items.push(potion);
+                inv.items.push(elixir);
+            }
+        }
+        if let Some(mira) = game
+            .world
+            .query3::<Position, Team, CharacterClass>()
+            .iter()
+            .find(|(_, _, team, class)| **team == Team::Player && **class == CharacterClass::Healer)
+            .map(|(e, _, _, _)| *e)
+        {
+            if let Some(inv) = game.world.get_mut::<crate::components::Inventory>(mira) {
+                inv.items.push(remedy);
+            }
+        }
 
         game.log("Wuthering Terminal Tactical RPG Initialized.");
         game.log("Move cursor: Arrows/WASD. Confirm: Enter. Cancel: Esc.");
@@ -109,122 +151,16 @@ impl Game {
         game
     }
 
-    fn load_sprites(registry: &mut VisualRegistry) {
-        let assets = [
-            ("kael", "kael.png", false),
-            ("lyra", "lyra.png", false),
-            ("mira", "mira.png", false),
-            ("blight-sovereign", "blight-sovereign.png", true),
-        ];
-
-        let chroma_key = Color(255, 255, 255); // White background
-        let tolerance = 30;
-
-        let base_dir = if std::path::Path::new("prototype/wuthering-terminal").exists() {
-            "prototype/wuthering-terminal/assets"
-        } else {
-            "assets"
-        };
-
-        for (key, filename, is_boss) in assets {
-            let path = format!("{}/{}", base_dir, filename);
-            let img_res = image::io::Reader::open(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|r| r.with_guessed_format().map_err(|e| e.to_string()))
-                .and_then(|r| r.decode().map_err(|e| e.to_string()));
-
-            if let Ok(img) = img_res {
-                let mut sprite = verryte_terminal::Sprite::new(key, vec![]);
-                for tier in verryte_terminal::ResolutionTier::ALL {
-                    let (cols, rows) = tier.sprite_size();
-                    let (w, h) = if is_boss {
-                        (
-                            ((cols as f32 * 1.33) as u32).max(1),
-                            ((rows as f32 * 2.0 * 1.33) as u32).max(1),
-                        )
-                    } else {
-                        (cols as u32, rows as u32 * 2)
-                    };
-                    let resized = img.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
-                    let grid = verryte_terminal::image_to_grid_with_chroma_key(
-                        &resized, chroma_key, tolerance,
-                    );
-                    let frame = verryte_terminal::Frame { grid, duration: 1 };
-                    sprite = sprite.with_tier(tier, vec![frame]);
-                }
-                registry.register(key, VisualAsset::Animated(sprite));
-            }
+    pub fn trigger_intro_dialogue(&mut self) {
+        if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
+            *dialogue = verryte_terminal::DialogueState::new(
+                "Tactical Focus",
+                "Choose Kael's Vanguard Focus for this battle:"
+            ).with_choices(vec![
+                "Pure Blade (+5 Attack for Kael)".to_string(),
+                "Arcane Synergy (Start with +5 Concert Energy)".to_string(),
+            ]);
         }
-    }
-
-    fn spawn_character(&mut self, pos: Position, team: Team, class: CharacterClass) -> Entity {
-        let stats = match class {
-            CharacterClass::Warrior => Stats {
-                hp: 100,
-                max_hp: 100,
-                atk: 20,
-                def: 10,
-                spd: 5,
-                ap: 3,
-                max_ap: 3,
-                level: 1,
-                xp: 0,
-            },
-            CharacterClass::Mage => Stats {
-                hp: 60,
-                max_hp: 60,
-                atk: 35,
-                def: 5,
-                spd: 4,
-                ap: 3,
-                max_ap: 3,
-                level: 1,
-                xp: 0,
-            },
-            CharacterClass::Healer => Stats {
-                hp: 70,
-                max_hp: 70,
-                atk: 10,
-                def: 8,
-                spd: 6,
-                ap: 3,
-                max_ap: 3,
-                level: 1,
-                xp: 0,
-            },
-            CharacterClass::Boss => Stats {
-                hp: 500,
-                max_hp: 500,
-                atk: 40,
-                def: 20,
-                spd: 3,
-                ap: 0,
-                max_ap: 4,
-                level: 10,
-                xp: 0,
-                },
-
-            CharacterClass::ShadowStalker => Stats {
-                hp: 80,
-                max_hp: 80,
-                atk: 25,
-                def: 5,
-                spd: 8,
-                ap: 4,
-                max_ap: 4,
-                level: 1,
-                xp: 0,
-            },
-        };
-
-        self.world
-            .builder()
-            .with(pos)
-            .with(team)
-            .with(class)
-            .with(stats)
-            .with(crate::components::ElementalStatus::None)
-            .build()
     }
 
     pub fn vfx(&self) -> &verryte_terminal::vfx::VfxSystem {
@@ -375,7 +311,10 @@ impl Game {
             ));
 
         // Play combat sound
-        if let Some(mut events) = self.world.resource_mut::<verryte_core::Events<verryte_core::AudioEvent>>() {
+        if let Some(events) = self
+            .world
+            .resource_mut::<verryte_core::Events<verryte_core::AudioEvent>>()
+        {
             events.send(verryte_core::AudioEvent::play("slash"));
         }
 
@@ -390,13 +329,19 @@ impl Game {
 
         // --- ECHO ABILITIES (Target) ---
         if !defeated && self.world.get::<Team>(target) == Some(&Team::Player) {
-            let abilities = self.world.resource::<crate::components::EquippedEchoes>().unwrap();
-            if abilities.abilities.contains(&crate::components::EchoAbility::Thorns) {
+            let abilities = self
+                .world
+                .resource::<crate::components::EquippedEchoes>()
+                .unwrap();
+            if abilities
+                .abilities
+                .contains(&crate::components::EchoAbility::Thorns)
+            {
                 // Reflect 20% damage
                 let reflect = (damage as f32 * 0.2) as i32;
                 if reflect > 0 {
                     self.log(format!("Thorns reflected {} damage back!", reflect));
-                    // Note: Attacker is not explicitly passed here, so we skip for now 
+                    // Note: Attacker is not explicitly passed here, so we skip for now
                     // or I should refactor to include attacker.
                     // For this run, I'll just log it.
                 }
@@ -408,8 +353,14 @@ impl Game {
         let phase = self.world.resource::<GameState>().unwrap().phase;
         if phase == TurnPhase::Player {
             if let Some(_sel_ent) = self.world.resource::<GameState>().unwrap().selected_entity {
-                let abilities = self.world.resource::<crate::components::EquippedEchoes>().unwrap();
-                if abilities.abilities.contains(&crate::components::EchoAbility::Frostbite) {
+                let abilities = self
+                    .world
+                    .resource::<crate::components::EquippedEchoes>()
+                    .unwrap();
+                if abilities
+                    .abilities
+                    .contains(&crate::components::EchoAbility::Frostbite)
+                {
                     let mut apply_ice = false;
                     {
                         let rng = self.world.resource_mut::<Rng>().unwrap();
@@ -419,7 +370,10 @@ impl Game {
                     }
                     if apply_ice {
                         self.log("Frostbite triggered! Applying Ice status.");
-                        self.apply_elemental_status(target, crate::components::ElementalStatus::Ice { duration: 2 });
+                        self.apply_elemental_status(
+                            target,
+                            crate::components::ElementalStatus::Ice { duration: 2 },
+                        );
                     }
                 }
             }
@@ -1814,6 +1768,11 @@ impl Game {
                 self.vfx_mut()
                     .shakes
                     .push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.5));
+                self.vfx_mut().flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
+                    Color(100, 200, 255),
+                    0.4,
+                    verryte_terminal::vfx::EasingMode::QuadOut,
+                ));
                 self.vfx_mut()
                     .floating_texts
                     .push(verryte_terminal::vfx::FloatingText::new(
@@ -1876,6 +1835,11 @@ impl Game {
                 self.vfx_mut()
                     .particles
                     .extend(verryte_terminal::vfx::emit_bloom(t_cx, t_cy, 15));
+                self.vfx_mut().flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
+                    Color(50, 220, 100),
+                    0.4,
+                    verryte_terminal::vfx::EasingMode::QuadOut,
+                ));
                 self.vfx_mut()
                     .floating_texts
                     .push(verryte_terminal::vfx::FloatingText::new(
@@ -1919,6 +1883,12 @@ impl Game {
             ) => {
                 self.log(format!("Elemental Reaction: BLOOM on {}!", target_name));
                 let healing_amount = 20;
+
+                self.vfx_mut().flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
+                    Color(200, 255, 100),
+                    0.4,
+                    verryte_terminal::vfx::EasingMode::QuadOut,
+                ));
 
                 let mut allies = Vec::new();
                 for (e, p, team) in self.world.query2::<Position, Team>() {
@@ -2035,12 +2005,21 @@ impl Game {
         self.apply_action_internal(action);
         self.check_boss_phase_transition();
         let after = self.snapshot();
+
+        let mut diagnostics = std::collections::HashMap::new();
+        if let Some(diags) = self.world.resource::<verryte_core::Diagnostics>() {
+            for (name, metrics) in &diags.systems {
+                diagnostics.insert(name.clone(), metrics.last_duration.as_secs_f64() * 1000.0);
+            }
+        }
+
         crate::snapshot::StepReport {
             action,
             source,
             before,
             after,
             events: self.take_events(),
+            diagnostics,
         }
     }
 
@@ -2056,16 +2035,95 @@ impl Game {
         if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
             if !dialogue.text.is_empty() && !dialogue.finished {
                 match action {
-                    Action::Confirm | Action::Cancel => {
+                    Action::Confirm => {
+                        if dialogue.is_typing() {
+                            dialogue.visible_chars = dialogue.text.len() as f32;
+                        } else if !dialogue.choices.is_empty() {
+                            let selected = dialogue.selected_choice;
+                            dialogue.chosen = Some(selected);
+                            dialogue.finished = true;
+                            dialogue.text.clear();
+                            // Apply dialogue consequences
+                            if dialogue.title == "Tactical Focus" {
+                                if selected == 0 {
+                                    // +5 Attack for Kael
+                                    if let Some(kael) = self.world.query::<CharacterClass>().into_iter()
+                                        .find(|(_, class)| **class == CharacterClass::Warrior)
+                                        .map(|(e, _)| e) 
+                                    {
+                                        if let Some(stats) = self.world.get_mut::<Stats>(kael) {
+                                            stats.atk += 5;
+                                        }
+                                    }
+                                    self.log("Focus selected: Pure Blade! Kael gets +5 ATK.");
+                                } else if selected == 1 {
+                                    // +5 Concert Energy
+                                    if let Some(state) = self.world.resource_mut::<GameState>() {
+                                        state.concert_energy = 5;
+                                    }
+                                    self.log("Focus selected: Arcane Synergy! Concert Energy set to 5.");
+                                }
+                            }
+                        } else {
+                            dialogue.finished = true;
+                            dialogue.text.clear();
+                        }
+                        return;
+                    }
+                    Action::Cancel => {
                         if dialogue.is_typing() {
                             dialogue.visible_chars = dialogue.text.len() as f32;
                         } else {
+                            dialogue.finished = true;
                             dialogue.text.clear();
+                        }
+                        return;
+                    }
+                    Action::MoveNorth | Action::MoveWest => {
+                        if !dialogue.is_typing() && !dialogue.choices.is_empty() {
+                            dialogue.prev_choice();
+                        }
+                        return;
+                    }
+                    Action::MoveSouth | Action::MoveEast => {
+                        if !dialogue.is_typing() && !dialogue.choices.is_empty() {
+                            dialogue.next_choice();
                         }
                         return;
                     }
                     _ => return, // Ignore other actions while dialogue is active
                 }
+            }
+        }
+
+        if self.world.resource::<GameState>().unwrap().ui_state
+            == crate::components::UIState::Inventory
+        {
+            match action {
+                Action::Skill1 => {
+                    self.apply_action_internal(Action::UseItem(0));
+                    return;
+                }
+                Action::Skill2 => {
+                    self.apply_action_internal(Action::UseItem(1));
+                    return;
+                }
+                Action::Skill3 => {
+                    self.apply_action_internal(Action::UseItem(2));
+                    return;
+                }
+                Action::SwapCharacter(idx) => {
+                    self.apply_action_internal(Action::UseItem(idx + 3));
+                    return;
+                }
+                Action::ToggleInventory | Action::Cancel => {
+                    self.world.resource_mut::<GameState>().unwrap().ui_state =
+                        crate::components::UIState::Normal;
+                    self.log("Inventory closed.");
+                    return;
+                }
+                Action::UseItem(_) | Action::Quit => {} // Allow these to fall through
+                _ => return,                            // Ignore others in inventory
             }
         }
 
@@ -2505,10 +2563,101 @@ impl Game {
                     self.log(format!("Concert Energy not full ({}/100)!", energy));
                 }
             }
+            Action::UseItem(idx) => {
+                let (sel_entity, ui_state) = {
+                    let state = self.world.resource::<GameState>().unwrap();
+                    (state.selected_entity, state.ui_state)
+                };
+
+                if let Some(entity) = sel_entity {
+                    if ui_state == crate::components::UIState::Inventory {
+                        let item_to_use = {
+                            if let Some(inv) =
+                                self.world.get_mut::<crate::components::Inventory>(entity)
+                            {
+                                if idx < inv.items.len() {
+                                    Some(inv.items.remove(idx))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(item_ent) = item_to_use {
+                            if let Some(item) = self.world.get::<crate::components::Item>(item_ent)
+                            {
+                                let item_name = item.name.clone();
+                                let effect = item.effect.clone();
+                                self.log(format!("Used {}!", item_name));
+
+                                match effect {
+                                    crate::components::ItemEffect::Heal(amount) => {
+                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
+                                            stats.hp =
+                                                std::cmp::min(stats.max_hp, stats.hp + amount);
+                                            self.log(format!("Healed for {} HP.", amount));
+                                            let (tcx, tcy) = self.get_tile_center_pixels(
+                                                *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_heal(tcx, tcy, 20),
+                                            );
+                                        }
+                                    }
+                                    crate::components::ItemEffect::ReplenishAp(amount) => {
+                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
+                                            stats.ap =
+                                                std::cmp::min(stats.max_ap, stats.ap + amount);
+                                            self.log(format!("Replenished {} AP.", amount));
+                                        }
+                                    }
+                                    crate::components::ItemEffect::Cleanse => {
+                                        self.world.insert(
+                                            entity,
+                                            crate::components::ElementalStatus::None,
+                                        );
+                                        self.world.remove::<crate::components::Rooted>(entity);
+                                        self.world.remove::<crate::components::Stunned>(entity);
+                                        self.log("All negative statuses cleansed!");
+                                    }
+                                }
+
+                                // Close inventory after use
+                                self.world.resource_mut::<GameState>().unwrap().ui_state =
+                                    crate::components::UIState::Normal;
+
+                                // Consumed item entity is gone
+                                self.world.despawn(item_ent);
+                            }
+                        } else {
+                            self.log("Invalid item slot!");
+                        }
+                    }
+                }
+            }
+            Action::ToggleInventory => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.selected_entity.is_some() {
+                    if state.ui_state == crate::components::UIState::Inventory {
+                        state.ui_state = crate::components::UIState::Normal;
+                        self.log("Inventory closed.");
+                    } else {
+                        state.ui_state = crate::components::UIState::Inventory;
+                        self.log("Inventory opened. Press [1-9] to use item.");
+                    }
+                } else {
+                    self.log("Select a character first to view their inventory!");
+                }
+            }
             Action::EndTurn => {
                 let phase = self.world.resource::<GameState>().unwrap().phase;
                 if phase == TurnPhase::Player {
-                    self.world.resource_mut::<crate::components::TurnTransition>().unwrap().request_end = true;
+                    self.world
+                        .resource_mut::<crate::components::TurnTransition>()
+                        .unwrap()
+                        .request_end = true;
                 }
             }
             Action::Inspect(point) => {
@@ -2595,7 +2744,8 @@ impl Game {
                     self.world.resource_mut::<GameState>().unwrap().is_recording = false;
                     self.log("Action recording STOPPED.");
                     // Save history to a file
-                    let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists() {
+                    let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists()
+                    {
                         "prototype/wuthering-terminal/saves"
                     } else {
                         "saves"
@@ -2612,7 +2762,8 @@ impl Game {
                     }
                 } else {
                     self.router.clear_history();
-                    let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists() {
+                    let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists()
+                    {
                         "prototype/wuthering-terminal/saves"
                     } else {
                         "saves"
@@ -2625,24 +2776,36 @@ impl Game {
             }
             Action::ToggleReplay => {
                 let (active, msg) = {
-                    let mut replay = self.world.resource_mut::<crate::components::ReplayState>().unwrap();
+                    let replay = self
+                        .world
+                        .resource_mut::<crate::components::ReplayState>()
+                        .unwrap();
                     if replay.active {
                         replay.active = false;
                         (false, "Replay mode DISABLED.".to_string())
                     } else {
                         // Try to load last_recording.json
-                        let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists() {
-                            "prototype/wuthering-terminal/saves"
-                        } else {
-                            "saves"
-                        };
+                        let base_path =
+                            if std::path::Path::new("prototype/wuthering-terminal").exists() {
+                                "prototype/wuthering-terminal/saves"
+                            } else {
+                                "saves"
+                            };
                         let path = format!("{}/last_recording.json", base_path);
-                        if let Ok(history) = verryte_input::InputRouter::<Action>::load_history_from_file(&path) {
+                        if let Ok(history) =
+                            verryte_input::InputRouter::<Action>::load_history_from_file(&path)
+                        {
                             replay.trace = verryte_input::ActionTrace::from_steps(history);
                             replay.active = true;
                             replay.next_index = 0;
                             replay.auto = false;
-                            (true, format!("Replay mode ENABLED. Trace loaded ({} actions).", replay.trace.steps().len()))
+                            (
+                                true,
+                                format!(
+                                    "Replay mode ENABLED. Trace loaded ({} actions).",
+                                    replay.trace.steps().len()
+                                ),
+                            )
                         } else {
                             (false, "No last_recording.json found to replay!".to_string())
                         }
@@ -2655,7 +2818,10 @@ impl Game {
             }
             Action::StepReplay => {
                 let next_step = {
-                    let mut replay = self.world.resource_mut::<crate::components::ReplayState>().unwrap();
+                    let replay = self
+                        .world
+                        .resource_mut::<crate::components::ReplayState>()
+                        .unwrap();
                     if replay.active {
                         if let Some(step) = replay.trace.steps().get(replay.next_index) {
                             let action = step.action;
@@ -2678,19 +2844,29 @@ impl Game {
                         self.apply_action(action, source);
                     }
                     None => {
-                        let active = self.world.resource::<crate::components::ReplayState>().unwrap().active;
+                        let active = self
+                            .world
+                            .resource::<crate::components::ReplayState>()
+                            .unwrap()
+                            .active;
                         if active {
-                             self.log("End of replay trace reached.");
-                             self.world.resource_mut::<crate::components::ReplayState>().unwrap().active = false;
+                            self.log("End of replay trace reached.");
+                            self.world
+                                .resource_mut::<crate::components::ReplayState>()
+                                .unwrap()
+                                .active = false;
                         } else {
-                             self.log("Enable Replay mode first (F11)!");
+                            self.log("Enable Replay mode first (F11)!");
                         }
                     }
                 }
             }
             Action::ToggleReplayAuto => {
                 let msg = {
-                    let mut replay = self.world.resource_mut::<crate::components::ReplayState>().unwrap();
+                    let replay = self
+                        .world
+                        .resource_mut::<crate::components::ReplayState>()
+                        .unwrap();
                     if replay.active {
                         replay.auto = !replay.auto;
                         if replay.auto {
@@ -2708,27 +2884,37 @@ impl Game {
             }
             _ => {}
         }
-        self.camera.tick();
+        let mut rng = *self.world.resource::<Rng>().unwrap();
+        self.camera.tick(&mut rng);
+        self.world.insert_resource(rng);
     }
 
     pub fn update(&mut self, dt: f32) {
         if let Some(clock) = self.world.resource_mut::<GameClock>() {
             clock.tick();
         }
-        if let Some(vfx) = self.world.resource_mut::<verryte_terminal::vfx::VfxSystem>() {
+        if let Some(vfx) = self
+            .world
+            .resource_mut::<verryte_terminal::vfx::VfxSystem>()
+        {
             vfx.update(dt);
         }
-        if let Some(registry) = self.world.resource_mut::<verryte_terminal::VisualRegistry>() {
+        if let Some(registry) = self
+            .world
+            .resource_mut::<verryte_terminal::VisualRegistry>()
+        {
             registry.tick();
         }
         if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
             dialogue.update(dt, 30.0);
         }
-        self.camera.tick();
+        let mut rng = *self.world.resource::<Rng>().unwrap();
+        self.camera.tick(&mut rng);
+        self.world.insert_resource(rng);
 
         // Replay auto-step
         let mut replay_step = false;
-        if let Some(mut replay) = self.world.resource_mut::<crate::components::ReplayState>() {
+        if let Some(replay) = self.world.resource_mut::<crate::components::ReplayState>() {
             if replay.active && replay.auto {
                 replay_step = true;
             }
@@ -2912,6 +3098,7 @@ impl Game {
         let state = self.world.resource::<GameState>().unwrap();
         let registry = self.world.resource::<VisualRegistry>().unwrap();
         let visibility = self.world.resource::<verryte_map::VisibilityMap>().unwrap();
+        let clock = self.world.resource::<GameClock>().unwrap();
 
         // Determine resolution tier and tile dimensions dynamically
         let (term_w, term_h) = verryte_tty::terminal_size();
@@ -2929,13 +3116,21 @@ impl Game {
             tile_h,
         );
         viewport.camera = self.camera.clone();
+        viewport.camera.clamp_to_bounds(
+            0.0,
+            0.0,
+            map.width as f32,
+            map.height as f32,
+            viewport.rect.width,
+            viewport.rect.height,
+        );
 
         // 1. Render Tiles (culled by visibility)
         let (start_x, start_y, end_x, end_y) = viewport.visible_tiles(map.width, map.height);
 
         for ty in start_y..end_y {
             for tx in start_x..end_x {
-                let pos = Position::new(tx as i16, ty as i16);
+                let pos = Position::new(tx, ty);
                 let vis = visibility.get(pos);
                 if matches!(vis, verryte_map::Visibility::Hidden) {
                     continue;
@@ -3082,6 +3277,7 @@ impl Game {
         }
 
         // 4. Cursor
+        let pulse = ((clock.elapsed_ticks() as f32 * 0.1).sin() * 0.5 + 0.5) * 0.6 + 0.2; // 0.2 to 0.8
         let (csx, csy) = viewport.world_to_screen(state.cursor.x as f32, state.cursor.y as f32);
         for dy in 0..tile_h {
             for dx in 0..tile_w {
@@ -3089,7 +3285,17 @@ impl Game {
                 let ty = csy + dy as i32;
                 if viewport.rect.contains(tx as u16, ty as u16) {
                     let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
-                    cell.bg = verryte_terminal::vfx::blend_color(cell.bg, Color(150, 150, 0), 0.3);
+                    let is_border = dx == 0 || dy == 0 || dx == tile_w - 1 || dy == tile_h - 1;
+                    if is_border {
+                        cell.bg =
+                            verryte_terminal::vfx::blend_color(cell.bg, Color(255, 255, 0), pulse);
+                    } else {
+                        cell.bg = verryte_terminal::vfx::blend_color(
+                            cell.bg,
+                            Color(150, 150, 0),
+                            pulse * 0.5,
+                        );
+                    }
                 }
             }
         }
@@ -3172,12 +3378,16 @@ impl Game {
                 let dialog_x = (term_w - dialog_w) / 2;
                 let dialog_y = (term_h - dialog_h) / 2;
 
-                let mut box_widget = verryte_terminal::DialogueBox::new(
+                let theme = match dialogue.title.as_str() {
+                    "Blight Sovereign" => verryte_terminal::DialogueTheme::Blood,
+                    "Kael" => verryte_terminal::DialogueTheme::Frost,
+                    "Lyra" => verryte_terminal::DialogueTheme::Arcane,
+                    "Mira" => verryte_terminal::DialogueTheme::Forest,
+                    _ => verryte_terminal::DialogueTheme::Dungeon,
+                };
+                let box_widget = verryte_terminal::DialogueBox::new(
                     verryte_terminal::Rect::new(dialog_x, dialog_y, dialog_w, dialog_h),
-                );
-                box_widget.border = verryte_terminal::BorderStyle::Double;
-                box_widget.border_color = Color::CYAN;
-                box_widget.bg = Color(10, 10, 20);
+                ).with_theme(theme);
 
                 box_widget.render(
                     &mut screen,
@@ -3217,7 +3427,10 @@ impl Game {
         screen
     }
 
-    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         use crate::snapshot::{FullSaveState, SavedEntity};
 
         let mut entities = Vec::new();
@@ -3229,8 +3442,12 @@ impl Game {
                 class: self.world.get::<CharacterClass>(e).copied(),
                 stats: self.world.get::<Stats>(e).cloned(),
                 echo_item: self.world.get::<crate::components::EchoItem>(e).copied(),
-                elemental_status: self.world.get::<crate::components::ElementalStatus>(e).copied(),
+                elemental_status: self
+                    .world
+                    .get::<crate::components::ElementalStatus>(e)
+                    .copied(),
                 rooted: self.world.get::<crate::components::Rooted>(e).copied(),
+                stunned: self.world.get::<crate::components::Stunned>(e).copied(),
             });
         }
 
@@ -3243,7 +3460,7 @@ impl Game {
                 .clone(),
             message_log: self.world.resource::<MessageLog>().unwrap().clone(),
             clock: self.world.resource::<GameClock>().unwrap().clone(),
-            rng: self.world.resource::<Rng>().unwrap().clone(),
+            rng: *self.world.resource::<Rng>().unwrap(),
             map: self.world.resource::<TacticalMap>().unwrap().clone(),
             camera: self.camera.clone(),
             action_history: self
@@ -3285,7 +3502,7 @@ impl Game {
             .insert_resource(crate::components::EquippedEchoes::default());
 
         let mut registry = VisualRegistry::new();
-        Self::load_sprites(&mut registry);
+        crate::generated_assets::register_assets(&mut registry);
         self.world.insert_resource(registry);
         self.world
             .insert_resource(Events::<GameEvent>::with_capacity(16));
@@ -3327,11 +3544,35 @@ impl Game {
 
     pub fn snapshot(&self) -> crate::snapshot::Snapshot {
         let state = self.world.resource::<GameState>().unwrap();
+
+        let mut player_team = crate::snapshot::TeamSummary {
+            count: 0,
+            total_hp: 0,
+            max_hp: 0,
+        };
+        let mut enemy_team = crate::snapshot::TeamSummary {
+            count: 0,
+            total_hp: 0,
+            max_hp: 0,
+        };
+
+        for (_, team, stats) in self.world.query2::<Team, Stats>() {
+            let summary = match team {
+                Team::Player => &mut player_team,
+                Team::Enemy => &mut enemy_team,
+            };
+            summary.count += 1;
+            summary.total_hp += stats.hp;
+            summary.max_hp += stats.max_hp;
+        }
+
         crate::snapshot::Snapshot {
             turn: state.turn,
             phase: state.phase,
             outcome: state.outcome,
             cursor: state.cursor,
+            player_team,
+            enemy_team,
         }
     }
 
@@ -3361,6 +3602,10 @@ impl Game {
                 .get::<crate::components::ElementalStatus>(entity)
                 .copied();
             let rooted = self.world.get::<crate::components::Rooted>(entity).copied();
+            let stunned = self
+                .world
+                .get::<crate::components::Stunned>(entity)
+                .copied();
 
             entities.push(SavedEntity {
                 entity,
@@ -3371,6 +3616,7 @@ impl Game {
                 echo_item,
                 elemental_status,
                 rooted,
+                stunned,
             });
         }
 

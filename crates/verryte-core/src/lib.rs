@@ -21,21 +21,25 @@ pub mod event;
 pub mod log;
 pub mod rng;
 pub mod schedule;
+pub mod snapshot;
 pub mod tag;
 pub mod world;
 
-pub use clock::GameClock;
+pub use clock::{FixedTime, GameClock};
 pub use diagnostics::{Diagnostics, SystemMetrics};
 pub use entity::Entity;
 pub use event::{EventReader, EventReaderIter, Events};
 pub use log::MessageLog;
 pub use rng::Rng;
 pub use schedule::{NamedSystem, Schedule, System};
+#[cfg(feature = "serde")]
+pub use snapshot::{EntitySnapshot, WorldRegistry, WorldSnapshot};
 pub use tag::Tag;
 pub use world::{Query, Query2, Query3, World};
 
 /// A request to play a specific sound by name.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AudioEvent {
     pub name: String,
     pub volume: Option<f32>,
@@ -60,5 +64,15 @@ impl AudioEvent {
             pan: None,
             looped: true,
         }
+    }
+
+    pub fn with_volume(mut self, volume: f32) -> Self {
+        self.volume = Some(volume);
+        self
+    }
+
+    pub fn with_pan(mut self, pan: f32) -> Self {
+        self.pan = Some(pan);
+        self
     }
 }

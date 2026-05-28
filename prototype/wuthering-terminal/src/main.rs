@@ -6,6 +6,7 @@ use wuthering_terminal::{Game, Outcome};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut game = Game::new();
+    game.trigger_intro_dialogue();
     let mut prev_frame: Option<Grid> = None;
 
     let _guard = init()?;
@@ -46,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let now = Instant::now();
         let dt = now.duration_since(last_tick).as_secs_f32();
         last_tick = now;
+        game.router.tick(dt);
         game.update(dt);
 
         // Render

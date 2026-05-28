@@ -3,8 +3,10 @@
 pub mod action;
 pub mod components;
 pub mod game;
+pub mod generated_assets;
 pub mod map;
 pub mod snapshot;
+pub mod spawn;
 pub mod systems;
 pub mod ui;
 
@@ -12,6 +14,7 @@ pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
 pub use snapshot::{FullSaveState, SavedEntity, Snapshot, StepReport};
+pub use spawn::Spawner;
 pub use verryte_map::Point as Position;
 
 #[cfg(test)]
@@ -23,7 +26,7 @@ mod tests {
     #[test]
     fn test_game_init() {
         let game = Game::new();
-        assert_eq!(game.world.entity_count(), 6); // 3 player chars + 1 boss + 2 shadow stalkers
+        assert_eq!(game.world.entity_count(), 9); // 3 player chars + 1 boss + 2 shadow stalkers + 3 items
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -76,7 +79,7 @@ mod tests {
         );
 
         // Check that all entities are restored
-        assert_eq!(game2.world.entity_count(), 6);
+        assert_eq!(game2.world.entity_count(), 9);
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -696,6 +699,65 @@ mod tests {
     }
 
     #[test]
+    fn test_inventory_usage() {
+        let mut game = Game::new();
+
+        // Find Warrior
+        let mut warrior_ent = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Warrior {
+                warrior_ent = Some(e);
+                break;
+            }
+        }
+        let warrior = warrior_ent.unwrap();
+
+        // Damage warrior
+        {
+            let stats = game.world.get_mut::<Stats>(warrior).unwrap();
+            stats.hp = 50;
+        }
+
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Open inventory
+        game.apply_action(Action::ToggleInventory, ActionSource::Terminal);
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.ui_state, crate::components::UIState::Inventory);
+        }
+
+        // Use Item 1 (Healing Potion)
+        game.apply_action(Action::Skill1, ActionSource::Terminal);
+
+        // Verify HP restored
+        {
+            let stats = game.world.get::<Stats>(warrior).unwrap();
+            assert_eq!(stats.hp, 80); // 50 + 30
+        }
+
+        // Verify inventory closed
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.ui_state, crate::components::UIState::Normal);
+        }
+
+        // Verify item consumed
+        {
+            let inv = game
+                .world
+                .get::<crate::components::Inventory>(warrior)
+                .unwrap();
+            assert_eq!(inv.items.len(), 1); // Had 2, used 1
+        }
+    }
+
+    #[test]
     fn test_adaptive_sprites_tier_existence() {
         let game = Game::new();
         let registry = game
@@ -765,5 +827,56 @@ mod tests {
                 panic!("Asset {} should be an Animated sprite", key);
             }
         }
+    }
+
+    #[test]
+    fn test_dialogue_choices_and_consequences() {
+        let mut game = Game::new();
+        game.trigger_intro_dialogue();
+        
+        // At start, the "Tactical Focus" dialogue is active
+        {
+            let dialogue = game.world.resource::<verryte_terminal::DialogueState>().unwrap();
+            assert_eq!(dialogue.title, "Tactical Focus");
+            assert_eq!(dialogue.choices.len(), 2);
+            assert_eq!(dialogue.selected_choice, 0);
+            assert!(!dialogue.finished);
+        }
+
+        // Skip typing to allow options navigation
+        game.world.resource_mut::<verryte_terminal::DialogueState>().unwrap().skip_typing();
+
+        // Press MoveSouth to go to choice 1
+        game.apply_action(Action::MoveSouth, ActionSource::Terminal);
+        {
+            let dialogue = game.world.resource::<verryte_terminal::DialogueState>().unwrap();
+            assert_eq!(dialogue.selected_choice, 1);
+        }
+
+        // Press Confirm to select choice 1 ("Arcane Synergy")
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+        {
+            let dialogue = game.world.resource::<verryte_terminal::DialogueState>().unwrap();
+            assert!(dialogue.finished);
+            assert_eq!(dialogue.chosen, Some(1));
+        }
+
+        // GameState concert_energy should be 5
+        let state = game.world.resource::<GameState>().unwrap();
+        assert_eq!(state.concert_energy, 5);
+    }
+
+    #[test]
+    fn test_panned_audio_event_and_eased_flashes() {
+        let event = verryte_core::AudioEvent::play("crit").with_pan(0.5).with_volume(0.8);
+        assert_eq!(event.pan, Some(0.5));
+        assert_eq!(event.volume, Some(0.8));
+
+        let flash = verryte_terminal::Flash::full_screen_eased(
+            verryte_terminal::Color::RED,
+            0.5,
+            verryte_terminal::EasingMode::ExpoOut,
+        );
+        assert_eq!(flash.easing, verryte_terminal::EasingMode::ExpoOut);
     }
 }

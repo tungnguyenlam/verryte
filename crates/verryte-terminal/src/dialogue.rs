@@ -2,6 +2,16 @@ use crate::color::Color;
 use crate::grid::{Cell, Grid};
 use crate::layout::{BorderStyle, Rect};
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum DialogueTheme {
+    Arcane,
+    Forest,
+    Blood,
+    Frost,
+    Dungeon,
+}
+
 /// A UI widget for rendering interactive dialogue boxes.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -28,6 +38,43 @@ impl DialogueBox {
         }
     }
 
+    pub fn with_theme(mut self, theme: DialogueTheme) -> Self {
+        match theme {
+            DialogueTheme::Arcane => {
+                self.border_color = Color(150, 50, 250);
+                self.title_fg = Color(220, 180, 255);
+                self.text_fg = Color::WHITE;
+                self.bg = Color(10, 5, 20);
+            }
+            DialogueTheme::Forest => {
+                self.border_color = Color(50, 180, 80);
+                self.title_fg = Color(180, 255, 180);
+                self.text_fg = Color::WHITE;
+                self.bg = Color(5, 15, 10);
+            }
+            DialogueTheme::Blood => {
+                self.border_color = Color(200, 20, 20);
+                self.title_fg = Color(255, 100, 100);
+                self.text_fg = Color::WHITE;
+                self.bg = Color(20, 5, 5);
+            }
+            DialogueTheme::Frost => {
+                self.border_color = Color(80, 180, 240);
+                self.title_fg = Color(180, 240, 255);
+                self.text_fg = Color::WHITE;
+                self.bg = Color(5, 10, 20);
+            }
+            DialogueTheme::Dungeon => {
+                self.border_color = Color::GREY;
+                self.title_fg = Color::YELLOW;
+                self.text_fg = Color::WHITE;
+                self.bg = Color::BLACK;
+            }
+        }
+        self
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         grid: &mut Grid,
@@ -88,9 +135,9 @@ impl DialogueBox {
         // Draw choices if typing is finished
         if visible_chars >= text.len() && !choices.is_empty() {
             let choice_y_start = text_rect.bottom().saturating_sub(choices.len() as u16);
-            let mut cy = choice_y_start.max(current_y + 1);
+            let start_y = choice_y_start.max(current_y + 1);
 
-            for (i, choice) in choices.iter().enumerate() {
+            for (cy, (i, choice)) in (start_y..).zip(choices.iter().enumerate()) {
                 if cy >= text_rect.bottom() {
                     break;
                 }
@@ -106,7 +153,6 @@ impl DialogueBox {
                 };
                 let choice_text = format!("{}{}", prefix, choice);
                 grid.write_str(text_rect.x, cy, &choice_text, color, self.bg);
-                cy += 1;
             }
         }
     }
@@ -122,6 +168,7 @@ pub struct DialogueState {
     pub selected_choice: usize,
     pub visible_chars: f32,
     pub finished: bool,
+    pub chosen: Option<usize>,
 }
 
 impl DialogueState {
@@ -133,6 +180,7 @@ impl DialogueState {
             selected_choice: 0,
             visible_chars: 0.0,
             finished: false,
+            chosen: None,
         }
     }
 

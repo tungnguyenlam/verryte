@@ -23,7 +23,10 @@ pub fn visibility_system(world: &mut World) {
 
     for pos in player_positions {
         visibility.compute_fov(pos, 8, |p| {
-            map_tiles.get(p).map(|t| matches!(t, Tile::Wall)).unwrap_or(true)
+            map_tiles
+                .get(p)
+                .map(|t| matches!(t, Tile::Wall))
+                .unwrap_or(true)
         });
     }
 }
@@ -275,16 +278,30 @@ pub fn enemy_ai_system(world: &mut World) {
                 }
 
                 // Generate Dijkstra map towards all players
-                let d_map = map.tiles.dijkstra_map(&player_positions, |pt, tile| {
-                    matches!(tile, Tile::Grass) && !is_occupied_except(world, pt, enemy_entity)
-                });
+                let d_map = verryte_map::DijkstraMap::compute(
+                    map.width,
+                    map.height,
+                    &player_positions,
+                    |pt| {
+                        if pt.x < 0
+                            || pt.x >= map.width as i16
+                            || pt.y < 0
+                            || pt.y >= map.height as i16
+                        {
+                            return false;
+                        }
+                        let tile = map.tiles.get(pt).unwrap();
+                        matches!(tile, Tile::Grass) && !is_occupied_except(world, pt, enemy_entity)
+                    },
+                    false, // 4-way movement
+                );
 
                 // Find neighbor with lowest distance
                 let mut best_move = None;
-                let mut min_d = d_map.get(&enemy_pos).copied().unwrap_or(u32::MAX);
+                let mut min_d = d_map.get(enemy_pos).unwrap_or(u32::MAX);
 
                 for neighbor in enemy_pos.neighbors4() {
-                    if let Some(&dist) = d_map.get(&neighbor) {
+                    if let Some(dist) = d_map.get(neighbor) {
                         if dist < min_d {
                             min_d = dist;
                             best_move = Some(neighbor);
@@ -323,13 +340,18 @@ pub fn enemy_ai_system(world: &mut World) {
     }
 
     if all_done {
-        world.resource_mut::<crate::components::TurnTransition>().unwrap().request_end = true;
+        world
+            .resource_mut::<crate::components::TurnTransition>()
+            .unwrap()
+            .request_end = true;
     }
 }
 
 pub fn turn_management_system(world: &mut World) {
     let request_end = {
-        let trans = world.resource_mut::<crate::components::TurnTransition>().unwrap();
+        let trans = world
+            .resource_mut::<crate::components::TurnTransition>()
+            .unwrap();
         let req = trans.request_end;
         trans.request_end = false;
         req
@@ -362,21 +384,40 @@ pub fn turn_management_system(world: &mut World) {
                 }
             }
             for e in enemies {
-                let mut is_rooted = false;
+                let mut cannot_act = false;
+                let mut status_msg = "";
+
                 let mut root_remains = false;
                 if let Some(rooted) = world.get_mut::<Rooted>(e) {
                     if rooted.duration > 0 {
                         rooted.duration -= 1;
-                        is_rooted = true;
+                        cannot_act = true;
+                        status_msg = "rooted";
                         if rooted.duration > 0 {
                             root_remains = true;
                         }
                     }
                 }
-                if is_rooted {
-                    if !root_remains {
-                        world.remove::<Rooted>(e);
+                if cannot_act && !root_remains {
+                    world.remove::<Rooted>(e);
+                }
+
+                let mut stun_remains = false;
+                if let Some(stunned) = world.get_mut::<crate::components::Stunned>(e) {
+                    if stunned.duration > 0 {
+                        stunned.duration -= 1;
+                        cannot_act = true;
+                        status_msg = "stunned";
+                        if stunned.duration > 0 {
+                            stun_remains = true;
+                        }
                     }
+                }
+                if cannot_act && !stun_remains && status_msg == "stunned" {
+                    world.remove::<crate::components::Stunned>(e);
+                }
+
+                if cannot_act {
                     if let Some(stats) = world.get_mut::<Stats>(e) {
                         stats.ap = 0;
                     }
@@ -384,8 +425,9 @@ pub fn turn_management_system(world: &mut World) {
                     log(
                         world,
                         format!(
-                            "{} is rooted and cannot act this turn!",
-                            Game::get_class_name(class)
+                            "{} is {} and cannot act this turn!",
+                            Game::get_class_name(class),
+                            status_msg
                         ),
                     );
                 } else {
@@ -421,9 +463,11 @@ pub fn turn_management_system(world: &mut World) {
                                 duration: duration - 1,
                             }
                         }
-                        ElementalStatus::Nature { duration } if duration > 1 => ElementalStatus::Nature {
-                            duration: duration - 1,
-                        },
+                        ElementalStatus::Nature { duration } if duration > 1 => {
+                            ElementalStatus::Nature {
+                                duration: duration - 1,
+                            }
+                        }
                         _ => ElementalStatus::None,
                     };
                 }
@@ -445,21 +489,40 @@ pub fn turn_management_system(world: &mut World) {
                 });
 
             for e in players {
-                let mut is_rooted = false;
+                let mut cannot_act = false;
+                let mut status_msg = "";
+
                 let mut root_remains = false;
                 if let Some(rooted) = world.get_mut::<Rooted>(e) {
                     if rooted.duration > 0 {
                         rooted.duration -= 1;
-                        is_rooted = true;
+                        cannot_act = true;
+                        status_msg = "rooted";
                         if rooted.duration > 0 {
                             root_remains = true;
                         }
                     }
                 }
-                if is_rooted {
-                    if !root_remains {
-                        world.remove::<Rooted>(e);
+                if cannot_act && !root_remains {
+                    world.remove::<Rooted>(e);
+                }
+
+                let mut stun_remains = false;
+                if let Some(stunned) = world.get_mut::<crate::components::Stunned>(e) {
+                    if stunned.duration > 0 {
+                        stunned.duration -= 1;
+                        cannot_act = true;
+                        status_msg = "stunned";
+                        if stunned.duration > 0 {
+                            stun_remains = true;
+                        }
                     }
+                }
+                if cannot_act && !stun_remains && status_msg == "stunned" {
+                    world.remove::<crate::components::Stunned>(e);
+                }
+
+                if cannot_act {
                     if let Some(stats) = world.get_mut::<Stats>(e) {
                         stats.ap = 0;
                     }
@@ -467,8 +530,9 @@ pub fn turn_management_system(world: &mut World) {
                     log(
                         world,
                         format!(
-                            "{} is rooted and cannot act this turn!",
-                            Game::get_class_name(class)
+                            "{} is {} and cannot act this turn!",
+                            Game::get_class_name(class),
+                            status_msg
                         ),
                     );
                 } else {
@@ -505,9 +569,10 @@ pub fn end_player_turn_system(world: &mut World) {
         // VFX feedback!
         {
             let vfx = world.resource_mut::<VfxSystem>().unwrap();
-            vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(
+            vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
                 Color(120, 0, 180),
                 0.3,
+                verryte_terminal::EasingMode::ExpoOut,
             ));
             vfx.shakes
                 .push(verryte_terminal::vfx::ScreenShake::new(4.5, 0.6));
@@ -738,10 +803,11 @@ pub fn resolve_combat_hit(
 
     {
         if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+            let pan = ((pos.x as f32 - 12.0) / 12.0).clamp(-1.0, 1.0);
             if is_crit {
-                events.send(verryte_core::AudioEvent::play("crit"));
+                events.send(verryte_core::AudioEvent::play("crit").with_pan(pan));
             } else {
-                events.send(verryte_core::AudioEvent::play("hit"));
+                events.send(verryte_core::AudioEvent::play("hit").with_pan(pan));
             }
         }
 
@@ -761,8 +827,11 @@ pub fn resolve_combat_hit(
             Color(255, 100, 100)
         };
         let flash_duration = if is_crit { 0.15 } else { 0.1 };
-        vfx.flashes
-            .push(verryte_terminal::vfx::Flash::full_screen(flash_color, flash_duration));
+        vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
+            flash_color,
+            flash_duration,
+            verryte_terminal::EasingMode::QuadOut,
+        ));
 
         vfx.particles.extend(verryte_terminal::vfx::emit_slash(
             tcx,
@@ -819,9 +888,10 @@ pub fn handle_defeat(
             ));
             vfx.shakes
                 .push(verryte_terminal::vfx::ScreenShake::new(5.0, 1.0));
-            vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(
+            vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
                 Color(255, 0, 0),
                 0.5,
+                verryte_terminal::EasingMode::ExpoOut,
             ));
             return;
         }
@@ -837,7 +907,10 @@ pub fn handle_defeat(
     world.despawn(entity);
 
     // Award XP if it was an enemy
-    if class != CharacterClass::Boss || (class == CharacterClass::Boss && world.resource::<GameState>().unwrap().boss_phase == BossPhase::Phase2) {
+    if class != CharacterClass::Boss
+        || (class == CharacterClass::Boss
+            && world.resource::<GameState>().unwrap().boss_phase == BossPhase::Phase2)
+    {
         let xp_amount = match class {
             CharacterClass::Boss => 1000,
             CharacterClass::ShadowStalker => 50,
@@ -865,9 +938,10 @@ pub fn handle_defeat(
         ));
         vfx.shakes
             .push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.8));
-        vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(
+        vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
             Color(255, 255, 255),
             0.4,
+            verryte_terminal::EasingMode::ExpoOut,
         ));
     }
 
