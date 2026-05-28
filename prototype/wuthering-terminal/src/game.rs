@@ -155,8 +155,9 @@ impl Game {
         if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
             *dialogue = verryte_terminal::DialogueState::new(
                 "Tactical Focus",
-                "Choose Kael's Vanguard Focus for this battle:"
-            ).with_choices(vec![
+                "Choose Kael's Vanguard Focus for this battle:",
+            )
+            .with_choices(vec![
                 "Pure Blade (+5 Attack for Kael)".to_string(),
                 "Arcane Synergy (Start with +5 Concert Energy)".to_string(),
             ]);
@@ -1751,7 +1752,10 @@ impl Game {
                 crate::components::ElementalStatus::Lightning { .. },
                 crate::components::ElementalStatus::Ice { .. },
             ) => {
-                self.log(format!("[fg:64C8FF][b]Elemental Reaction: SHATTER[/] on {}![/fg]", target_name));
+                self.log(format!(
+                    "[fg:64C8FF][b]Elemental Reaction: SHATTER[/] on {}![/fg]",
+                    target_name
+                ));
                 let bonus_damage = 30;
                 let mut defeated = false;
                 if let Some(stats) = self.world.get_mut::<Stats>(target) {
@@ -1768,11 +1772,13 @@ impl Game {
                 self.vfx_mut()
                     .shakes
                     .push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.5));
-                self.vfx_mut().flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
-                    Color(100, 200, 255),
-                    0.4,
-                    verryte_terminal::vfx::EasingMode::QuadOut,
-                ));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                        Color(100, 200, 255),
+                        0.4,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
+                    ));
                 self.vfx_mut()
                     .floating_texts
                     .push(verryte_terminal::vfx::FloatingText::new(
@@ -1835,11 +1841,13 @@ impl Game {
                 self.vfx_mut()
                     .particles
                     .extend(verryte_terminal::vfx::emit_bloom(t_cx, t_cy, 15));
-                self.vfx_mut().flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
-                    Color(50, 220, 100),
-                    0.4,
-                    verryte_terminal::vfx::EasingMode::QuadOut,
-                ));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                        Color(50, 220, 100),
+                        0.4,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
+                    ));
                 self.vfx_mut()
                     .floating_texts
                     .push(verryte_terminal::vfx::FloatingText::new(
@@ -1881,14 +1889,19 @@ impl Game {
                 crate::components::ElementalStatus::Ice { .. },
                 crate::components::ElementalStatus::Nature { .. },
             ) => {
-                self.log(format!("[fg:FFD700][b]Elemental Reaction: BLOOM[/] on {}![/fg]", target_name));
+                self.log(format!(
+                    "[fg:FFD700][b]Elemental Reaction: BLOOM[/] on {}![/fg]",
+                    target_name
+                ));
                 let healing_amount = 20;
 
-                self.vfx_mut().flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
-                    Color(200, 255, 100),
-                    0.4,
-                    verryte_terminal::vfx::EasingMode::QuadOut,
-                ));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                        Color(200, 255, 100),
+                        0.4,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
+                    ));
 
                 let mut allies = Vec::new();
                 for (e, p, team) in self.world.query2::<Position, Team>() {
@@ -2056,9 +2069,12 @@ impl Game {
                             if dialogue.title == "Tactical Focus" {
                                 if selected == 0 {
                                     // +5 Attack for Kael
-                                    if let Some(kael) = self.world.query::<CharacterClass>().into_iter()
+                                    if let Some(kael) = self
+                                        .world
+                                        .query::<CharacterClass>()
+                                        .into_iter()
                                         .find(|(_, class)| **class == CharacterClass::Warrior)
-                                        .map(|(e, _)| e) 
+                                        .map(|(e, _)| e)
                                     {
                                         if let Some(stats) = self.world.get_mut::<Stats>(kael) {
                                             stats.atk += 5;
@@ -2070,7 +2086,9 @@ impl Game {
                                     if let Some(state) = self.world.resource_mut::<GameState>() {
                                         state.concert_energy = 5;
                                     }
-                                    self.log("Focus selected: Arcane Synergy! Concert Energy set to 5.");
+                                    self.log(
+                                        "Focus selected: Arcane Synergy! Concert Energy set to 5.",
+                                    );
                                 }
                             }
                         } else {
@@ -2917,7 +2935,10 @@ impl Game {
         if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
             let newly_typed = dialogue.update(dt, 30.0);
             if newly_typed > 0 {
-                if let Some(events) = self.world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
                     events.send(verryte_core::AudioEvent::play("dialogue_blip"));
                 }
             }
@@ -3399,9 +3420,10 @@ impl Game {
                     "Mira" => verryte_terminal::DialogueTheme::Forest,
                     _ => verryte_terminal::DialogueTheme::Dungeon,
                 };
-                let box_widget = verryte_terminal::DialogueBox::new(
-                    verryte_terminal::Rect::new(dialog_x, dialog_y, dialog_w, dialog_h),
-                ).with_theme(theme);
+                let box_widget = verryte_terminal::DialogueBox::new(verryte_terminal::Rect::new(
+                    dialog_x, dialog_y, dialog_w, dialog_h,
+                ))
+                .with_theme(theme);
 
                 box_widget.render(
                     &mut screen,
@@ -3713,15 +3735,22 @@ impl Game {
         Ok(())
     }
 
-    pub fn handle_mouse_click(&mut self, term_w: u16, term_h: u16, mouse_x: u16, mouse_y: u16) -> bool {
-        let (shake_x, shake_y) = if let Some(vfx) = self.world.resource::<verryte_terminal::vfx::VfxSystem>() {
-            vfx.shake_offset()
-        } else {
-            (0, 0)
-        };
+    pub fn handle_mouse_click(
+        &mut self,
+        term_w: u16,
+        term_h: u16,
+        mouse_x: u16,
+        mouse_y: u16,
+    ) -> bool {
+        let (shake_x, shake_y) =
+            if let Some(vfx) = self.world.resource::<verryte_terminal::vfx::VfxSystem>() {
+                vfx.shake_offset()
+            } else {
+                (0, 0)
+            };
         let hud_h = 6;
         let board_h = term_h.saturating_sub(hud_h);
-        
+
         let rx = mouse_x as i32 - shake_x as i32;
         let ry = mouse_y as i32 - shake_y as i32;
         if rx >= 0 && ry >= 0 && ry < board_h as i32 && rx < term_w as i32 {

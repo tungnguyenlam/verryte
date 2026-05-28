@@ -73,25 +73,31 @@ impl MessageLogView {
                     rich_lines
                 } else {
                     let wrapped = crate::wrap_text(msg, width as usize);
-                    wrapped.into_iter().map(|line| {
+                    wrapped
+                        .into_iter()
+                        .map(|line| {
+                            vec![crate::RichTextSegment {
+                                text: line,
+                                fg: self.fg,
+                                bg: self.bg,
+                                attrs: crate::CellAttrs::NONE,
+                            }]
+                        })
+                        .collect()
+                }
+            } else {
+                let wrapped = crate::wrap_text(msg, width as usize);
+                wrapped
+                    .into_iter()
+                    .map(|line| {
                         vec![crate::RichTextSegment {
                             text: line,
                             fg: self.fg,
                             bg: self.bg,
                             attrs: crate::CellAttrs::NONE,
                         }]
-                    }).collect()
-                }
-            } else {
-                let wrapped = crate::wrap_text(msg, width as usize);
-                wrapped.into_iter().map(|line| {
-                    vec![crate::RichTextSegment {
-                        text: line,
-                        fg: self.fg,
-                        bg: self.bg,
-                        attrs: crate::CellAttrs::NONE,
-                    }]
-                }).collect()
+                    })
+                    .collect()
             };
 
             for line in lines.iter().rev() {

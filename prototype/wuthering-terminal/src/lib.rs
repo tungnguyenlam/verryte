@@ -833,10 +833,13 @@ mod tests {
     fn test_dialogue_choices_and_consequences() {
         let mut game = Game::new();
         game.trigger_intro_dialogue();
-        
+
         // At start, the "Tactical Focus" dialogue is active
         {
-            let dialogue = game.world.resource::<verryte_terminal::DialogueState>().unwrap();
+            let dialogue = game
+                .world
+                .resource::<verryte_terminal::DialogueState>()
+                .unwrap();
             assert_eq!(dialogue.title, "Tactical Focus");
             assert_eq!(dialogue.choices.len(), 2);
             assert_eq!(dialogue.selected_choice, 0);
@@ -844,19 +847,28 @@ mod tests {
         }
 
         // Skip typing to allow options navigation
-        game.world.resource_mut::<verryte_terminal::DialogueState>().unwrap().skip_typing();
+        game.world
+            .resource_mut::<verryte_terminal::DialogueState>()
+            .unwrap()
+            .skip_typing();
 
         // Press MoveSouth to go to choice 1
         game.apply_action(Action::MoveSouth, ActionSource::Terminal);
         {
-            let dialogue = game.world.resource::<verryte_terminal::DialogueState>().unwrap();
+            let dialogue = game
+                .world
+                .resource::<verryte_terminal::DialogueState>()
+                .unwrap();
             assert_eq!(dialogue.selected_choice, 1);
         }
 
         // Press Confirm to select choice 1 ("Arcane Synergy")
         game.apply_action(Action::Confirm, ActionSource::Terminal);
         {
-            let dialogue = game.world.resource::<verryte_terminal::DialogueState>().unwrap();
+            let dialogue = game
+                .world
+                .resource::<verryte_terminal::DialogueState>()
+                .unwrap();
             assert!(dialogue.finished);
             assert_eq!(dialogue.chosen, Some(1));
         }
@@ -868,7 +880,9 @@ mod tests {
 
     #[test]
     fn test_panned_audio_event_and_eased_flashes() {
-        let event = verryte_core::AudioEvent::play("crit").with_pan(0.5).with_volume(0.8);
+        let event = verryte_core::AudioEvent::play("crit")
+            .with_pan(0.5)
+            .with_volume(0.8);
         assert_eq!(event.pan, Some(0.5));
         assert_eq!(event.volume, Some(0.8));
 
@@ -906,7 +920,10 @@ mod tests {
             true,
             verryte_terminal::vfx::EasingMode::QuadOut,
         );
-        assert_eq!(float_text.easing, verryte_terminal::vfx::EasingMode::QuadOut);
+        assert_eq!(
+            float_text.easing,
+            verryte_terminal::vfx::EasingMode::QuadOut
+        );
         assert_eq!(float_text.start_y, 10.0);
 
         // 4. Mouse click handling

@@ -5,9 +5,32 @@
 //! is "translate input -> apply game systems -> snapshot state". Stages,
 //! parallelism, and richer run conditions can grow on top of this once a real
 //! game pulls on the API.
+//!
+//! # Example
+//!
+//! ```rust
+//! use verryte_core::{World, Schedule};
+//!
+//! fn physics_system(world: &mut World) {
+//!     // update positions
+//! }
+//!
+//! fn render_system(world: &mut World) {
+//!     // draw entities
+//! }
+//!
+//! let mut world = World::new();
+//! let mut schedule = Schedule::new();
+//! schedule.add_named("physics", physics_system);
+//! schedule.add_named("render", render_system);
+//!
+//! // Run the loop
+//! schedule.run(&mut world);
+//! ```
 
 use crate::diagnostics::Diagnostics;
 use crate::world::World;
+use std::time::Duration;
 
 pub type System = fn(&mut World);
 
@@ -274,6 +297,49 @@ impl Schedule {
             }
         }
         true
+    }
+
+    /// Run a stage using the [`FixedTime`](crate::clock::FixedTime) resource.
+    ///
+    /// This method accumulates `delta` into the `FixedTime` resource, then loops,
+    /// running the stage and consuming steps until the accumulator is less than the step size.
+    ///
+    /// Returns the number of times the stage was executed. Returns 0 if the stage was not found
+    /// or if the `FixedTime` resource is not present in the world.
+    pub fn run_fixed_stage(&self, name: &str, world: &mut World, delta: Duration) -> usize {
+        let mut runs = 0;
+
+        let has_time = {
+            if let Some(fixed) = world.resource_mut::<crate::clock::FixedTime>() {
+                fixed.accumulate(delta);
+                true
+            } else {
+                false
+            }
+        };
+
+        if !has_time {
+            return 0;
+        }
+
+        loop {
+            let should_run = {
+                let fixed = world.resource_mut::<crate::clock::FixedTime>().unwrap();
+                fixed.consume()
+            };
+
+            if should_run {
+                if self.run_stage(name, world) {
+                    runs += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        runs
     }
 
     /// Return the names of all defined stages, in order.
@@ -663,6 +729,27 @@ mod tests {
 
         // Running "a" after "b" still works independently.
         schedule.run_stage("a", &mut world);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 3);
+    }
+
+    #[test]
+    fn run_fixed_stage_executes_multiple_times() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        world.insert_resource(crate::clock::FixedTime::from_hz(10.0)); // 100ms step
+
+        let mut schedule = Schedule::new();
+        schedule.add_stage("fixed");
+        schedule.add_named("bump", bump);
+
+        // Advance by 250ms -> should run 2 times (200ms), leaving 50ms in accumulator
+        let runs = schedule.run_fixed_stage("fixed", &mut world, Duration::from_millis(250));
+        assert_eq!(runs, 2);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 2);
+
+        // Advance by another 60ms -> total accumulated is 110ms -> should run 1 more time
+        let runs2 = schedule.run_fixed_stage("fixed", &mut world, Duration::from_millis(60));
+        assert_eq!(runs2, 1);
         assert_eq!(world.resource::<Counter>().unwrap().0, 3);
     }
 

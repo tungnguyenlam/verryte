@@ -171,8 +171,20 @@ pub fn read_event() -> Option<InputEvent> {
 }
 
 fn translate_event(term_evt: TermEvent) -> Option<InputEvent> {
+    use verryte_input::KeyEventKind;
+
     match term_evt {
-        TermEvent::Key(key) => Some(InputEvent::Key(map_key(key.code, key.modifiers))),
+        TermEvent::Key(key) => {
+            let kind = match key.kind {
+                crossterm::event::KeyEventKind::Press => KeyEventKind::Press,
+                crossterm::event::KeyEventKind::Repeat => KeyEventKind::Repeat,
+                crossterm::event::KeyEventKind::Release => KeyEventKind::Release,
+            };
+            Some(InputEvent::Key {
+                key: map_key(key.code, key.modifiers),
+                kind,
+            })
+        }
         TermEvent::Mouse(mouse) => match mouse.kind {
             MouseEventKind::Down(button) | MouseEventKind::Up(button) => {
                 let input_button = match button {

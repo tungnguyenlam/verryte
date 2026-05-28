@@ -7,9 +7,10 @@ description = "Core ECS/world/resource/event/schedule primitives for the Verryte
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [features]
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:serde_json"]
 
 [lints]
 workspace = true

@@ -1,5 +1,5 @@
-use verryte_map::Point;
 use crate::action::Action;
+use verryte_map::Point;
 
 pub type Position = Point;
 
@@ -110,6 +110,13 @@ pub enum EchoAbility {
     Swift,     // +1 Max AP
     Thorns,    // Reflect damage
     Frostbite, // 20% chance to apply Ice
+    Stun,      // 15% chance to stun target
+    Lifesteal, // Heal for 15% of damage dealt
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Stunned {
+    pub duration: u32,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]

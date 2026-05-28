@@ -14,6 +14,7 @@ pub enum Action {
     Cancel,
     NextCharacter,
     PrevCharacter,
+    SwapCharacter(usize),
     Skill1,
     Skill2,
     Skill3,
@@ -79,6 +80,9 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('1'), Action::Skill1);
     b.bind(Key::Char('2'), Action::Skill2);
     b.bind(Key::Char('3'), Action::Skill3);
+    b.bind(Key::Char('4'), Action::SwapCharacter(0));
+    b.bind(Key::Char('5'), Action::SwapCharacter(1));
+    b.bind(Key::Char('6'), Action::SwapCharacter(2));
 
     // Save/Load
     b.bind(Key::F(5), Action::Save);
@@ -113,6 +117,9 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("cancel", Action::Cancel);
     c.bind_name("next", Action::NextCharacter);
     c.bind_name("prev", Action::PrevCharacter);
+    c.bind_name("swap1", Action::SwapCharacter(0));
+    c.bind_name("swap2", Action::SwapCharacter(1));
+    c.bind_name("swap3", Action::SwapCharacter(2));
     c.bind_name("skill1", Action::Skill1);
     c.bind_name("skill2", Action::Skill2);
     c.bind_name("skill3", Action::Skill3);
@@ -149,6 +156,19 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
         .or_else(|| token.strip_prefix("look:"))
         .or_else(|| token.strip_prefix("cursor:"))
         .and_then(parse_point);
+    if let Some(point) = inspect {
+        return Some(Action::Inspect(point));
+    }
+
+    if token == "inventory" || token == "items" {
+        return Some(Action::ToggleInventory);
+    }
+
+    if let Some(idx_str) = token.strip_prefix("use:") {
+        if let Ok(idx) = idx_str.parse::<usize>() {
+            return Some(Action::UseItem(idx.saturating_sub(1)));
+        }
+    }
     if let Some(point) = inspect {
         return Some(Action::Inspect(point));
     }

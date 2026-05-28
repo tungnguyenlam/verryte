@@ -1,5 +1,4 @@
-use std::path::Path;
-use verryte_terminal::{ResolutionTier, image_to_grid_with_chroma_key, Color};
+use verryte_terminal::{image_to_grid_with_chroma_key, Color, ResolutionTier};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -28,16 +27,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let img = image::open(input_path)?;
     let (cols, rows) = tier.sprite_size();
-    
+
     // Grid assumes rows are half-blocks, so we need 2x pixel height
-    let resized = img.resize_exact(cols as u32, rows as u32 * 2, image::imageops::FilterType::Lanczos3);
-    
+    let resized = img.resize_exact(
+        cols as u32,
+        rows as u32 * 2,
+        image::imageops::FilterType::Lanczos3,
+    );
+
     // Default chroma key for Wuthering Terminal assets is white
     let grid = image_to_grid_with_chroma_key(&resized, Color(255, 255, 255), 30);
     let bytes = grid.to_bytes();
-    
+
     std::fs::write(output_path, bytes)?;
-    println!("Baked {} into {} (Tier: {:?}, {}x{} cells)", input_path, output_path, tier, cols, rows);
+    println!(
+        "Baked {} into {} (Tier: {:?}, {}x{} cells)",
+        input_path, output_path, tier, cols, rows
+    );
 
     Ok(())
 }

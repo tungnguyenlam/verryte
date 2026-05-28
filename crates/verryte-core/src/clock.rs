@@ -156,6 +156,44 @@ impl Default for GameClock {
     }
 }
 
+/// State for running systems on a fixed time step.
+///
+/// Store this as a resource in the ECS world. Systems or the game loop can
+/// call [`accumulate`](Self::accumulate) with delta time, and then consume
+/// steps with [`consume`](Self::consume).
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FixedTime {
+    pub step: Duration,
+    pub accumulator: Duration,
+}
+
+impl FixedTime {
+    pub fn new(step: Duration) -> Self {
+        Self {
+            step,
+            accumulator: Duration::ZERO,
+        }
+    }
+
+    pub fn from_hz(hz: f64) -> Self {
+        Self::new(Duration::from_secs_f64(1.0 / hz))
+    }
+
+    pub fn accumulate(&mut self, delta: Duration) {
+        self.accumulator += delta;
+    }
+
+    pub fn consume(&mut self) -> bool {
+        if self.accumulator >= self.step {
+            self.accumulator -= self.step;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +322,21 @@ mod tests {
         let clock = GameClock::default();
         assert_eq!(clock.elapsed_ticks(), 0);
         assert!(!clock.is_paused());
+    }
+
+    #[test]
+    fn fixed_time_accumulates_and_consumes() {
+        let mut fixed = FixedTime::from_hz(60.0);
+        assert_eq!(fixed.accumulator, Duration::ZERO);
+
+        fixed.accumulate(Duration::from_millis(10));
+        assert!(!fixed.consume());
+
+        fixed.accumulate(Duration::from_millis(10));
+        // 20ms total, step is 16.666ms
+        assert!(fixed.consume());
+        // Should have some remainder
+        assert!(fixed.accumulator > Duration::ZERO);
+        assert!(!fixed.consume());
     }
 }

@@ -94,6 +94,15 @@ impl<E> Events<E> {
         matched
     }
 
+    /// Retain only events matching a predicate, removing the rest.
+    pub fn retain<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(&E) -> bool,
+    {
+        self.clear_count = self.clear_count.wrapping_add(1);
+        self.queue.retain(|e| predicate(e));
+    }
+
     pub fn iter(&self) -> std::collections::vec_deque::Iter<'_, E> {
         self.queue.iter()
     }
@@ -259,6 +268,19 @@ mod tests {
         let result = events.drain_filter(|_| true);
         assert!(result.is_empty());
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn retain_keeps_only_matching() {
+        let mut events = Events::<Bump>::new();
+        events.send(Bump(1));
+        events.send(Bump(2));
+        events.send(Bump(3));
+        events.send(Bump(4));
+
+        events.retain(|e| e.0 % 2 != 0); // Keep odd
+        let remaining: Vec<Bump> = events.drain().collect();
+        assert_eq!(remaining, vec![Bump(1), Bump(3)]);
     }
 
     #[test]

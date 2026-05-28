@@ -65,6 +65,84 @@ impl<T: 'static + Send + Sync> Column for TypedColumn<T> {
 }
 
 /// The container that holds entities, their components, and engine resources.
+///
+/// `World` is the core data storage for Verryte. It uses a sparse-set structure
+/// to map entity IDs to component data. It also acts as a type-map for single-instance
+/// resources (like `GameClock`, `MessageLog`, or `TacticalMap`).
+///
+/// # Examples
+///
+/// **Spawning entities and adding components:**
+/// ```
+/// use verryte_core::World;
+///
+/// struct Position { x: i32, y: i32 }
+/// struct Health(i32);
+///
+/// let mut world = World::new();
+/// let player = world.spawn();
+/// world.insert(player, Position { x: 0, y: 0 });
+/// world.insert(player, Health(100));
+/// ```
+///
+/// **Using the Builder pattern:**
+/// ```
+/// # use verryte_core::World;
+/// # struct Position { x: i32, y: i32 }
+/// # struct Health(i32);
+/// # let mut world = World::new();
+/// let enemy = world.builder()
+///     .with(Position { x: 10, y: 10 })
+///     .with(Health(50))
+///     .build();
+/// ```
+///
+/// **Working with Resources:**
+/// ```
+/// # use verryte_core::World;
+/// # let mut world = World::new();
+/// struct Config { volume: f32 }
+///
+/// world.insert_resource(Config { volume: 0.8 });
+///
+/// // Borrow resource
+/// if let Some(config) = world.resource::<Config>() {
+///     assert_eq!(config.volume, 0.8);
+/// }
+///
+/// // Mutate resource
+/// if let Some(mut config) = world.resource_mut::<Config>() {
+///     config.volume = 1.0;
+/// }
+/// ```
+/// **Querying components:**
+/// ```
+/// # use verryte_core::World;
+/// # struct Position { x: i32, y: i32 }
+/// # struct Health(i32);
+/// # let mut world = World::new();
+/// # let player = world.builder().with(Position { x: 0, y: 0 }).with(Health(100)).build();
+/// // Iterate over all entities with both Position and Health
+/// for (entity, pos, health) in world.query2::<Position, Health>() {
+///     println!("Entity {:?} is at ({}, {}) with {} HP", entity, pos.x, pos.y, health.0);
+/// }
+/// ```
+///
+/// **Managing Resources:**
+/// ```
+/// # use verryte_core::World;
+/// struct Score(u32);
+///
+/// # let mut world = World::new();
+/// world.insert_resource(Score(0));
+///
+/// {
+///     let mut score = world.resource_mut::<Score>().unwrap();
+///     score.0 += 100;
+/// }
+///
+/// assert_eq!(world.resource::<Score>().unwrap().0, 100);
+/// ```
 pub struct World {
     generations: Vec<u32>,
     alive: Vec<bool>,
@@ -1350,6 +1428,23 @@ impl World {
         self.resources
             .get_mut(&TypeId::of::<R>())?
             .downcast_mut::<R>()
+    }
+
+    /// Get a shared reference to a resource. Panics if the resource is missing.
+    ///
+    /// Use [`Self::resource`] if the resource might not be present.
+    pub fn res<R: 'static + Send + Sync>(&self) -> &R {
+        self.resource::<R>()
+            .unwrap_or_else(|| panic!("Resource {} missing from world", std::any::type_name::<R>()))
+    }
+
+    /// Get a unique reference to a resource. Panics if the resource is missing.
+    ///
+    /// Use [`Self::resource_mut`] if the resource might not be present.
+    pub fn res_mut<R: 'static + Send + Sync>(&mut self) -> &mut R {
+        let name = std::any::type_name::<R>();
+        self.resource_mut::<R>()
+            .unwrap_or_else(|| panic!("Resource {} missing from world", name))
     }
 
     pub fn remove_resource<R: 'static + Send + Sync>(&mut self) -> Option<R> {

@@ -2220,11 +2220,15 @@ impl<T> TileGrid<T> {
         while let Some(p) = queue.pop_front() {
             let dist = *d_map.get(&p).unwrap();
             for neighbor in p.neighbors4() {
-                if neighbor.x >= 0 && neighbor.y >= 0 && neighbor.x < w && neighbor.y < h {
-                    if !d_map.contains_key(&neighbor) && is_walkable(neighbor, self.get(neighbor).unwrap()) {
-                        d_map.insert(neighbor, dist + 1);
-                        queue.push_back(neighbor);
-                    }
+                if neighbor.x >= 0
+                    && neighbor.y >= 0
+                    && neighbor.x < w
+                    && neighbor.y < h
+                    && !d_map.contains_key(&neighbor)
+                    && is_walkable(neighbor, self.get(neighbor).unwrap())
+                {
+                    d_map.insert(neighbor, dist + 1);
+                    queue.push_back(neighbor);
                 }
             }
         }
@@ -4363,6 +4367,22 @@ mod tests {
         let flee = map.flee_direction(Point::new(0, 0), false);
         assert!(flee == Some(Point::new(1, 0)) || flee == Some(Point::new(0, 1)));
     }
+
+    #[test]
+    fn test_dijkstra_map_path_to() {
+        let passable = |p: Point| !(p.x == 1 && p.y == 1);
+        let map = DijkstraMap::compute(3, 3, &[Point::new(0, 0)], passable, false);
+
+        // Start from (2, 2) and path to (0, 0)
+        let path = map.path_to(Point::new(2, 2), false);
+        assert_eq!(path.len(), 5);
+        assert_eq!(path[0], Point::new(2, 2));
+        assert_eq!(path[4], Point::new(0, 0));
+
+        // Start from an unreachable point (1, 1) which is not passable
+        let path_unreachable = map.path_to(Point::new(1, 1), false);
+        assert!(path_unreachable.is_empty());
+    }
 }
 
 /// Visibility state of a tile in a [`VisibilityMap`].
@@ -4438,18 +4458,11 @@ impl VisibilityMap {
         self.set_visible(center);
 
         for octant in 0..8 {
-            self.compute_octant(
-                center,
-                radius,
-                octant,
-                1,
-                0.0,
-                1.0,
-                &mut is_opaque,
-            );
+            self.compute_octant(center, radius, octant, 1, 0.0, 1.0, &mut is_opaque);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compute_octant<F>(
         &mut self,
         center: Point,
@@ -4680,6 +4693,44 @@ impl DijkstraMap {
         }
 
         best_point
+    }
+
+    /// Returns a path from the starting point to the nearest source.
+    ///
+    /// The path includes the starting point and the target source.
+    /// Returns an empty vector if the starting point is unreachable or already at a source.
+    pub fn path_to(&self, from: Point, diagonal: bool) -> Vec<Point> {
+        let mut path = Vec::new();
+        let mut current = from;
+
+        if self.get(current).is_none() {
+            return path;
+        }
+
+        path.push(current);
+
+        while let Some(dist) = self.get(current) {
+            if dist == 0 {
+                break;
+            }
+
+            if let Some(next) = self.chase_direction(current, diagonal) {
+                if next == current {
+                    break;
+                }
+                path.push(next);
+                current = next;
+            } else {
+                break;
+            }
+
+            // Safety break for cycles (though Dijkstra shouldn't have them)
+            if path.len() > (self.width as usize) * (self.height as usize) {
+                break;
+            }
+        }
+
+        path
     }
 }
 

@@ -36,7 +36,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 prev_frame = None;
                 continue;
             }
-            if let InputEvent::Mouse { x, y, button: verryte_input::MouseButton::Left, pressed: true } = event {
+            if let InputEvent::Mouse {
+                x,
+                y,
+                button: verryte_input::MouseButton::Left,
+                pressed: true,
+            } = event
+            {
                 if game.handle_mouse_click(w, h, x, y) {
                     continue;
                 }

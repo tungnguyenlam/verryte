@@ -86,7 +86,10 @@ pub fn enemy_ai_system(world: &mut World) {
             let Some((player_entity, player_pos, player_stats, player_class)) = nearest_player
             else {
                 world.resource_mut::<GameState>().unwrap().outcome = Outcome::Defeat;
-                log(world, "[fg:FF3333][b]Defeat![/] All player characters defeated.[/fg]");
+                log(
+                    world,
+                    "[fg:FF3333][b]Defeat![/] All player characters defeated.[/fg]",
+                );
                 return;
             };
 
@@ -178,7 +181,11 @@ pub fn enemy_ai_system(world: &mut World) {
                         &['░', '▓', '✦', '¤'],
                     ));
                     vfx.shakes
-                        .push(verryte_terminal::vfx::ScreenShake::new_eased(2.5, 0.4, verryte_terminal::vfx::EasingMode::QuadOut));
+                        .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                            2.5,
+                            0.4,
+                            verryte_terminal::vfx::EasingMode::QuadOut,
+                        ));
                     break;
                 }
 
@@ -445,7 +452,13 @@ pub fn turn_management_system(world: &mut World) {
                 state.turn += 1;
             }
             let turn_num = world.resource::<GameState>().unwrap().turn;
-            log(world, format!("[fg:32CD32][b]Player Phase starts! Turn {}[/][/fg]", turn_num));
+            log(
+                world,
+                format!(
+                    "[fg:32CD32][b]Player Phase starts! Turn {}[/][/fg]",
+                    turn_num
+                ),
+            );
 
             // Decrement elemental statuses
             let mut status_entities = Vec::new();
@@ -564,18 +577,26 @@ pub fn end_player_turn_system(world: &mut World) {
     };
 
     if !telegraph_tiles.is_empty() {
-        log(world, "[fg:E6E600][b]Blight Sovereign[/] releases [fg:9933FF][b]Dark Annihilation![/][/fg]");
+        log(
+            world,
+            "[fg:E6E600][b]Blight Sovereign[/] releases [fg:9933FF][b]Dark Annihilation![/][/fg]",
+        );
 
         // VFX feedback!
         {
             let vfx = world.resource_mut::<VfxSystem>().unwrap();
-            vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
-                Color(120, 0, 180),
-                0.3,
-                verryte_terminal::EasingMode::ExpoOut,
-            ));
+            vfx.flashes
+                .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                    Color(120, 0, 180),
+                    0.3,
+                    verryte_terminal::EasingMode::ExpoOut,
+                ));
             vfx.shakes
-                .push(verryte_terminal::vfx::ScreenShake::new_eased(4.5, 0.6, verryte_terminal::vfx::EasingMode::ExpoOut));
+                .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                    4.5,
+                    0.6,
+                    verryte_terminal::vfx::EasingMode::ExpoOut,
+                ));
         }
 
         let mut hit_count = 0;
@@ -832,11 +853,12 @@ pub fn resolve_combat_hit(
             Color(255, 100, 100)
         };
         let flash_duration = if is_crit { 0.15 } else { 0.1 };
-        vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
-            flash_color,
-            flash_duration,
-            verryte_terminal::EasingMode::QuadOut,
-        ));
+        vfx.flashes
+            .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                flash_color,
+                flash_duration,
+                verryte_terminal::EasingMode::QuadOut,
+            ));
 
         vfx.particles.extend(verryte_terminal::vfx::emit_slash(
             tcx,
@@ -851,11 +873,12 @@ pub fn resolve_combat_hit(
         } else {
             verryte_terminal::vfx::EasingMode::QuadOut
         };
-        vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new_eased(
-            shake_intensity,
-            shake_duration,
-            shake_easing,
-        ));
+        vfx.shakes
+            .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                shake_intensity,
+                shake_duration,
+                shake_easing,
+            ));
     }
 
     (damage, defeated)
@@ -898,12 +921,17 @@ pub fn handle_defeat(
                 &['✦', '*', '░', '▓', '¤'],
             ));
             vfx.shakes
-                .push(verryte_terminal::vfx::ScreenShake::new_eased(5.0, 1.0, verryte_terminal::vfx::EasingMode::ExpoOut));
-            vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
-                Color(255, 0, 0),
-                0.5,
-                verryte_terminal::EasingMode::ExpoOut,
-            ));
+                .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                    5.0,
+                    1.0,
+                    verryte_terminal::vfx::EasingMode::ExpoOut,
+                ));
+            vfx.flashes
+                .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                    Color(255, 0, 0),
+                    0.5,
+                    verryte_terminal::EasingMode::ExpoOut,
+                ));
             return;
         }
     }
@@ -948,12 +976,17 @@ pub fn handle_defeat(
             &['✦', '✧', '░', '▓', '¤'],
         ));
         vfx.shakes
-            .push(verryte_terminal::vfx::ScreenShake::new_eased(4.0, 0.8, verryte_terminal::vfx::EasingMode::ExpoOut));
-        vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
-            Color(255, 255, 255),
-            0.4,
-            verryte_terminal::EasingMode::ExpoOut,
-        ));
+            .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                4.0,
+                0.8,
+                verryte_terminal::vfx::EasingMode::ExpoOut,
+            ));
+        vfx.flashes
+            .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                Color(255, 255, 255),
+                0.4,
+                verryte_terminal::EasingMode::ExpoOut,
+            ));
     }
 
     let enemy_exists = world
@@ -963,7 +996,10 @@ pub fn handle_defeat(
     let echo_exists = world.query::<EchoItem>().into_iter().next().is_some();
     if !enemy_exists && !echo_exists {
         world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
-        log(world, "[fg:32CD32][b]Victory![/] All enemies defeated.[/fg]");
+        log(
+            world,
+            "[fg:32CD32][b]Victory![/] All enemies defeated.[/fg]",
+        );
     }
 }
 

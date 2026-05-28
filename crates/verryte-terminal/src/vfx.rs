@@ -510,7 +510,14 @@ impl FloatingText {
         }
     }
 
-    pub fn new_eased(x: f32, y: f32, text: &str, fg: Color, bold: bool, easing: EasingMode) -> Self {
+    pub fn new_eased(
+        x: f32,
+        y: f32,
+        text: &str,
+        fg: Color,
+        bold: bool,
+        easing: EasingMode,
+    ) -> Self {
         let lifetime = 1.5;
         Self {
             x,

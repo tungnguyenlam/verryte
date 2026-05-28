@@ -66,10 +66,26 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
                 _ => "".to_string(),
             };
             let is_rooted = world.get::<Rooted>(sel_entity).is_some();
-            let root_badge = if is_rooted { " [ROOTED]" } else { "" };
+            let is_stunned = world
+                .get::<crate::components::Stunned>(sel_entity)
+                .is_some();
+            let root_badge = if is_stunned {
+                " [STUNNED]"
+            } else if is_rooted {
+                " [ROOTED]"
+            } else {
+                ""
+            };
             selection_str = format!(
                 "Selected: {} (Lvl {} | HP: {}/{}, AP: {}/{}){}{}",
-                name, stats.level, stats.hp, stats.max_hp, stats.ap, stats.max_ap, status_badge, root_badge
+                name,
+                stats.level,
+                stats.hp,
+                stats.max_hp,
+                stats.ap,
+                stats.max_ap,
+                status_badge,
+                root_badge
             );
         }
     }
@@ -98,23 +114,24 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     );
 
     let ce_pct = (state.concert_energy as f32 / 100.0).clamp(0.0, 1.0);
-    let bar_len = 10;
-    let filled_len = (ce_pct * bar_len as f32).round() as usize;
-    let empty_len = bar_len - filled_len;
-    let bar_str = format!("[{}{}]", "█".repeat(filled_len), "░".repeat(empty_len));
-    let ce_display = format!("CONCERT: {}/100 {}", state.concert_energy, bar_str);
     let ce_color = if state.concert_energy >= 100 {
         Color(255, 215, 0) // Gold
     } else {
         Color(100, 200, 255) // Cyan-ish
     };
+
     grid.write_str(
         90,
         hud_y + 1,
-        &format!(" | {}", ce_display),
+        &format!(" | CONCERT: {:>3}/100 ", state.concert_energy),
         ce_color,
         hud_bg,
     );
+
+    verryte_terminal::ProgressBar::new(verryte_terminal::Rect::new(110, hud_y + 1, 10, 1))
+        .with_value(ce_pct)
+        .with_colors(ce_color, Color(40, 40, 50))
+        .render(grid);
 
     let hovered_tile = map.tile(state.cursor.x, state.cursor.y);
     let tile_type_str = match hovered_tile {
@@ -161,7 +178,22 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
                 .map(|p| *p == state.cursor)
                 .unwrap_or(false)
         });
-        let root_badge = if is_rooted { " [ROOTED]" } else { "" };
+        let is_stunned = world
+            .query::<crate::components::Stunned>()
+            .into_iter()
+            .any(|(e, _)| {
+                world
+                    .get::<crate::Position>(e)
+                    .map(|p| *p == state.cursor)
+                    .unwrap_or(false)
+            });
+        let root_badge = if is_stunned {
+            " [STUNNED]"
+        } else if is_rooted {
+            " [ROOTED]"
+        } else {
+            ""
+        };
         format!(
             "Tile: {} | Entity: {} (HP: {}/{}, AP: {}/{}, Team: {}){}{}",
             tile_type_str,

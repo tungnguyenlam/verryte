@@ -208,11 +208,7 @@ impl Layout {
 
         let total_allocated = fixed_sum + percent_sum;
         let left_over = total_size.saturating_sub(total_allocated);
-        let remaining_size = if remaining_count > 0 {
-            left_over / remaining_count
-        } else {
-            0
-        };
+        let remaining_size = left_over.checked_div(remaining_count).unwrap_or(0);
 
         let mut rects = Vec::with_capacity(self.constraints.len());
         let mut offset = 0;

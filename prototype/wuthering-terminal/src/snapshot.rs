@@ -3,9 +3,16 @@
 use crate::action::Action;
 use crate::components::{
     CharacterClass, EchoItem, ElementalStatus, GameEvent, GameState, Outcome, Position, Rooted,
-    Stats, Team, TelegraphZone, TurnPhase,
+    Stats, Stunned, Team, TelegraphZone, TurnPhase,
 };
 use verryte_input::ActionSource;
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TeamSummary {
+    pub count: usize,
+    pub total_hp: i32,
+    pub max_hp: i32,
+}
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
@@ -13,6 +20,8 @@ pub struct Snapshot {
     pub phase: TurnPhase,
     pub outcome: Outcome,
     pub cursor: Position,
+    pub player_team: TeamSummary,
+    pub enemy_team: TeamSummary,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -22,6 +31,7 @@ pub struct StepReport {
     pub before: Snapshot,
     pub after: Snapshot,
     pub events: Vec<GameEvent>,
+    pub diagnostics: std::collections::HashMap<String, f64>, // ms
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -34,6 +44,7 @@ pub struct SavedEntity {
     pub echo_item: Option<EchoItem>,
     pub elemental_status: Option<ElementalStatus>,
     pub rooted: Option<Rooted>,
+    pub stunned: Option<Stunned>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

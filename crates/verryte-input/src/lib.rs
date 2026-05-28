@@ -22,8 +22,54 @@
 //!
 //! The router is generic over the game's action enum, so games define their
 //! own action vocabulary without giving up the shared dispatch path.
+//!
+//! # Example
+//!
+//! ```rust
+//! use verryte_input::{Bindings, InputRouter, Key, InputEvent, KeyEventKind};
+//!
+//! #[derive(Clone, Debug, PartialEq)]
+//! enum Action {
+//!     MoveUp,
+//!     MoveDown,
+//!     Quit,
+//! }
+//!
+//! let mut bindings = Bindings::new();
+//! bindings.bind(Key::Char('w'), Action::MoveUp);
+//! bindings.bind(Key::Char('s'), Action::MoveDown);
+//! bindings.bind(Key::Esc, Action::Quit);
+//!
+//! let mut router = InputRouter::new(bindings);
+//!
+//! // Simulate a key press
+//! router.handle(InputEvent::Key { key: Key::Char('w'), kind: KeyEventKind::Press });
+//!
+//! // Game loop consumes the actions
+//! let mut actions: Vec<_> = router.drain().collect();
+//! assert_eq!(actions, vec![Action::MoveUp]);
+//! ```
 
 use std::collections::{vec_deque, HashMap, VecDeque};
+
+/// Configuration for action repeating when a key is held down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RepeatConfig {
+    /// Initial delay in seconds before repeating starts.
+    pub delay: f32,
+    /// Interval in seconds between repeated actions.
+    pub interval: f32,
+}
+
+impl Default for RepeatConfig {
+    fn default() -> Self {
+        Self {
+            delay: 0.25,
+            interval: 0.05,
+        }
+    }
+}
 
 /// Neutral terminal-side key identifier.
 ///
@@ -184,12 +230,34 @@ impl MouseTrigger {
     }
 }
 
+/// The kind of key event (press, repeat, or release).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum KeyEventKind {
+    Press,
+    Repeat,
+    Release,
+}
+
+impl std::fmt::Display for KeyEventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeyEventKind::Press => write!(f, "Press"),
+            KeyEventKind::Repeat => write!(f, "Repeat"),
+            KeyEventKind::Release => write!(f, "Release"),
+        }
+    }
+}
+
 /// One discrete input event. Frontends emit these; the router converts them
 /// (when bound) into game actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InputEvent {
-    Key(Key),
+    Key {
+        key: Key,
+        kind: KeyEventKind,
+    },
     Mouse {
         x: u16,
         y: u16,
@@ -406,6 +474,29 @@ impl<A> ActionTrace<A> {
         self.steps
     }
 
+    /// Create a trace from a list of records.
+    pub fn from_records(records: &[ActionRecord<A>]) -> Self
+    where
+        A: Clone,
+    {
+        Self {
+            steps: records
+                .iter()
+                .map(|r| QueuedAction::new(r.action.clone(), r.source))
+                .collect(),
+        }
+    }
+
+    /// Create a trace from a history of queued actions.
+    pub fn from_history(history: &[QueuedAction<A>]) -> Self
+    where
+        A: Clone,
+    {
+        Self {
+            steps: history.to_vec(),
+        }
+    }
+
     /// Serialize the action trace to a detailed string using a custom formatter for action values.
     ///
     /// Each step is written on its own line in the format: `Source:ActionString`.
@@ -572,7 +663,13 @@ impl<A: Clone> Bindings<A> {
 
     pub fn translate_event(&self, event: InputEvent) -> Option<A> {
         match event {
-            InputEvent::Key(key) => self.translate(key),
+            InputEvent::Key { key, kind } => {
+                if matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                    self.translate(key)
+                } else {
+                    None
+                }
+            }
             InputEvent::Mouse {
                 button, pressed, ..
             } => self.translate_mouse(button, pressed),
@@ -932,6 +1029,71 @@ impl std::fmt::Display for CommandParseError {
 
 impl std::error::Error for CommandParseError {}
 
+/// A stateful replayer that can feed an [`ActionTrace`] into an [`InputRouter`]
+/// one step at a time.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "A: serde::Serialize + serde::de::DeserializeOwned")
+)]
+pub struct ActionReplayer<A> {
+    trace: ActionTrace<A>,
+    index: usize,
+    pub auto_advance: bool,
+}
+
+impl<A> ActionReplayer<A> {
+    pub fn new(trace: ActionTrace<A>) -> Self {
+        Self {
+            trace,
+            index: 0,
+            auto_advance: false,
+        }
+    }
+
+    pub fn with_auto(mut self) -> Self {
+        self.auto_advance = true;
+        self
+    }
+
+    pub fn reset(&mut self) {
+        self.index = 0;
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.index >= self.trace.len()
+    }
+
+    pub fn current_index(&self) -> usize {
+        self.index
+    }
+
+    pub fn total_steps(&self) -> usize {
+        self.trace.len()
+    }
+
+    /// Pull the next action from the trace and inject it into the router.
+    ///
+    /// Returns `true` if an action was replayed, `false` if the trace is finished.
+    pub fn step(&mut self, router: &mut InputRouter<A>) -> bool
+    where
+        A: Clone,
+    {
+        if let Some(step) = self.trace.steps().get(self.index) {
+            router.inject_from(step.action.clone(), step.source);
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn trace(&self) -> &ActionTrace<A> {
+        &self.trace
+    }
+}
+
 /// The shared event/script funnel.
 ///
 /// Holds the active [`Bindings`] and a queue of pending actions. Frontends
@@ -945,6 +1107,10 @@ pub struct InputRouter<A: Clone> {
     context_stack: Vec<Bindings<A>>,
     history: Vec<QueuedAction<A>>,
     recording_path: Option<std::path::PathBuf>,
+    repeat_config: RepeatConfig,
+    held_key: Option<(Key, ActionSource)>,
+    held_time: f32,
+    last_repeat_time: f32,
 }
 
 impl<A: Clone> InputRouter<A> {
@@ -956,6 +1122,10 @@ impl<A: Clone> InputRouter<A> {
             context_stack: Vec::new(),
             history: Vec::new(),
             recording_path: None,
+            repeat_config: RepeatConfig::default(),
+            held_key: None,
+            held_time: 0.0,
+            last_repeat_time: 0.0,
         }
     }
 
@@ -1045,6 +1215,35 @@ impl<A: Clone> InputRouter<A> {
     pub fn context_depth(&self) -> usize {
         self.context_stack.len()
     }
+
+    pub fn repeat_config(&self) -> RepeatConfig {
+        self.repeat_config
+    }
+
+    pub fn set_repeat_config(&mut self, config: RepeatConfig) {
+        self.repeat_config = config;
+    }
+
+    /// Advance input timers.
+    ///
+    /// This should be called once per frame with the elapsed time in seconds.
+    /// It handles repeating actions for held keys.
+    pub fn tick(&mut self, dt: f32) {
+        if let Some((key, source)) = self.held_key {
+            self.held_time += dt;
+
+            if self.held_time >= self.repeat_config.delay {
+                let time_since_last = self.held_time - self.last_repeat_time;
+                if time_since_last >= self.repeat_config.interval {
+                    if let Some(action) = self.bindings.translate(key) {
+                        self.pending.push_back(QueuedAction::new(action, source));
+                        self.total_queued += 1;
+                        self.last_repeat_time = self.held_time;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Restores the original bindings when dropped.
@@ -1104,12 +1303,46 @@ impl<A: Clone> InputRouter<A> {
     /// provenance. This keeps replayed or synthetic input events on the same
     /// path as real terminal input while preserving useful report metadata.
     pub fn handle_from(&mut self, event: InputEvent, source: ActionSource) -> bool {
-        if let Some(action) = self.bindings.translate_event(event) {
-            self.pending.push_back(QueuedAction::new(action, source));
-            self.total_queued += 1;
-            true
-        } else {
-            false
+        match event {
+            InputEvent::Key { key, kind } => {
+                match kind {
+                    KeyEventKind::Press => {
+                        self.held_key = Some((key, source));
+                        self.held_time = 0.0;
+                        self.last_repeat_time = 0.0;
+
+                        if let Some(action) = self.bindings.translate(key) {
+                            self.pending.push_back(QueuedAction::new(action, source));
+                            self.total_queued += 1;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    KeyEventKind::Release => {
+                        if let Some((held, _)) = self.held_key {
+                            if held == key {
+                                self.held_key = None;
+                            }
+                        }
+                        false
+                    }
+                    KeyEventKind::Repeat => {
+                        // We ignore frontend repeats and use our own timer in tick()
+                        // for consistent behavior across platforms.
+                        false
+                    }
+                }
+            }
+            _ => {
+                if let Some(action) = self.bindings.translate_event(event) {
+                    self.pending.push_back(QueuedAction::new(action, source));
+                    self.total_queued += 1;
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -1702,11 +1935,12 @@ impl TextInput {
     /// Handle an InputEvent. Only Key events are processed.
     /// Returns `true` if the input was submitted (Enter pressed).
     pub fn handle_event(&mut self, event: InputEvent) -> bool {
-        if let InputEvent::Key(key) = event {
-            self.handle_key(key)
-        } else {
-            false
+        if let InputEvent::Key { key, kind } = event {
+            if matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                return self.handle_key(key);
+            }
         }
+        false
     }
 
     /// Get the current text content.
@@ -2070,6 +2304,55 @@ mod tests {
     }
 
     #[test]
+    fn test_key_repeat_config_and_ticking() {
+        let mut router = bound_router();
+        router.set_repeat_config(RepeatConfig {
+            delay: 0.1,
+            interval: 0.05,
+        });
+
+        // Key Press
+        router.handle_from(
+            InputEvent::Key {
+                key: Key::Up,
+                kind: KeyEventKind::Press,
+            },
+            ActionSource::Terminal,
+        );
+
+        // First action is immediately queued
+        assert_eq!(router.total_actions_queued(), 1);
+        assert_eq!(router.next_action(), Some(Move::North));
+
+        // Advance by 0.05s (less than delay) -> no extra repeat
+        router.tick(0.05);
+        assert_eq!(router.total_actions_queued(), 1); // no action added yet
+
+        // Advance by another 0.06s (total 0.11s, >= delay 0.1s, interval >= 0.05s) -> 1 action repeated
+        router.tick(0.06);
+        assert_eq!(router.total_actions_queued(), 2);
+        assert_eq!(router.next_action(), Some(Move::North));
+
+        // Advance by another 0.06s -> another action repeated
+        router.tick(0.06);
+        assert_eq!(router.total_actions_queued(), 3);
+        assert_eq!(router.next_action(), Some(Move::North));
+
+        // Release Key
+        router.handle_from(
+            InputEvent::Key {
+                key: Key::Up,
+                kind: KeyEventKind::Release,
+            },
+            ActionSource::Terminal,
+        );
+
+        // Advance by 0.1s -> no actions queued since key was released
+        router.tick(0.1);
+        assert_eq!(router.total_actions_queued(), 3);
+    }
+
+    #[test]
     fn test_router_history_tracking() {
         let mut router = bound_router();
         assert!(router.history().is_empty());
@@ -2179,7 +2462,10 @@ mod tests {
     #[test]
     fn key_event_translates_to_action() {
         let mut router = bound_router();
-        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::North));
         assert!(router.is_idle());
     }
@@ -2187,7 +2473,10 @@ mod tests {
     #[test]
     fn unbound_key_is_dropped() {
         let mut router = bound_router();
-        assert!(!router.handle(InputEvent::Key(Key::Char('z'))));
+        assert!(!router.handle(InputEvent::Key {
+            key: Key::Char('z'),
+            kind: KeyEventKind::Press
+        }));
         assert!(router.is_idle());
     }
 
@@ -2266,7 +2555,13 @@ mod tests {
     #[test]
     fn handle_with_prefers_custom_translation() {
         let mut router = bound_router();
-        let handled = router.handle_with(InputEvent::Key(Key::Up), |_| Some(Move::Scan(2)));
+        let handled = router.handle_with(
+            InputEvent::Key {
+                key: Key::Up,
+                kind: KeyEventKind::Press,
+            },
+            |_| Some(Move::Scan(2)),
+        );
         assert!(handled);
         assert_eq!(
             router.next_queued(),
@@ -2277,7 +2572,13 @@ mod tests {
     #[test]
     fn handle_with_falls_back_to_bindings() {
         let mut router = bound_router();
-        let handled = router.handle_with(InputEvent::Key(Key::Right), |_| None);
+        let handled = router.handle_with(
+            InputEvent::Key {
+                key: Key::Right,
+                kind: KeyEventKind::Press,
+            },
+            |_| None,
+        );
         assert!(handled);
         assert_eq!(
             router.next_queued(),
@@ -2288,7 +2589,13 @@ mod tests {
     #[test]
     fn input_events_can_be_queued_with_explicit_source() {
         let mut router = bound_router();
-        assert!(router.handle_from(InputEvent::Key(Key::Right), ActionSource::Replay));
+        assert!(router.handle_from(
+            InputEvent::Key {
+                key: Key::Right,
+                kind: KeyEventKind::Press
+            },
+            ActionSource::Replay
+        ));
         assert_eq!(
             router.next_queued(),
             Some(QueuedAction::new(Move::East, ActionSource::Replay))
@@ -2298,9 +2605,15 @@ mod tests {
     #[test]
     fn injected_actions_share_queue_with_translated_events() {
         let mut router = bound_router();
-        router.handle(InputEvent::Key(Key::Up));
+        router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press,
+        });
         router.inject(Move::Wait);
-        router.handle(InputEvent::Key(Key::Right));
+        router.handle(InputEvent::Key {
+            key: Key::Right,
+            kind: KeyEventKind::Press,
+        });
         let drained: Vec<Move> = router.drain().collect();
         assert_eq!(drained, vec![Move::North, Move::Wait, Move::East]);
     }
@@ -2308,7 +2621,10 @@ mod tests {
     #[test]
     fn queued_actions_track_source_without_changing_order() {
         let mut router = bound_router();
-        router.handle(InputEvent::Key(Key::Up));
+        router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press,
+        });
         router.inject_from(Move::Wait, ActionSource::Agent);
         router.inject_all_from([Move::East, Move::South], ActionSource::Replay);
 
@@ -2327,9 +2643,18 @@ mod tests {
     #[test]
     fn drain_trace_preserves_sources_and_clears_queue() {
         let mut router = bound_router();
-        router.handle(InputEvent::Key(Key::Up));
+        router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press,
+        });
         router.inject_from(Move::Wait, ActionSource::Agent);
-        router.handle_from(InputEvent::Key(Key::Right), ActionSource::Replay);
+        router.handle_from(
+            InputEvent::Key {
+                key: Key::Right,
+                kind: KeyEventKind::Press,
+            },
+            ActionSource::Replay,
+        );
 
         let trace = router.drain_trace();
         assert!(router.is_idle());
@@ -2361,7 +2686,10 @@ mod tests {
         let mut router = bound_router();
         let prev = router.bindings_mut().bind(Key::Up, Move::Wait);
         assert_eq!(prev, Some(Move::North));
-        router.handle(InputEvent::Key(Key::Up));
+        router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press,
+        });
         assert_eq!(router.next_action(), Some(Move::Wait));
     }
 
@@ -2530,7 +2858,10 @@ mod tests {
     fn pending_trace_snapshots_queue_without_draining() {
         let mut router = bound_router();
         router.inject_from(Move::North, ActionSource::Agent);
-        router.handle(InputEvent::Key(Key::Right));
+        router.handle(InputEvent::Key {
+            key: Key::Right,
+            kind: KeyEventKind::Press,
+        });
 
         let trace = router.pending_trace();
         assert_eq!(router.pending(), 2);
@@ -2574,9 +2905,18 @@ mod tests {
     fn handle_batch_queues_multiple_events() {
         let mut router = bound_router();
         let count = router.handle_batch([
-            InputEvent::Key(Key::Up),
-            InputEvent::Key(Key::Right),
-            InputEvent::Key(Key::Down),
+            InputEvent::Key {
+                key: Key::Up,
+                kind: KeyEventKind::Press,
+            },
+            InputEvent::Key {
+                key: Key::Right,
+                kind: KeyEventKind::Press,
+            },
+            InputEvent::Key {
+                key: Key::Down,
+                kind: KeyEventKind::Press,
+            },
         ]);
         assert_eq!(count, 3);
         assert_eq!(router.pending(), 3);
@@ -2588,10 +2928,19 @@ mod tests {
     fn handle_batch_skips_unbound_events() {
         let mut router = bound_router();
         let count = router.handle_batch([
-            InputEvent::Key(Key::Up),
-            InputEvent::Key(Key::Char('z')),
+            InputEvent::Key {
+                key: Key::Up,
+                kind: KeyEventKind::Press,
+            },
+            InputEvent::Key {
+                key: Key::Char('z'),
+                kind: KeyEventKind::Press,
+            },
             InputEvent::Tick,
-            InputEvent::Key(Key::Left),
+            InputEvent::Key {
+                key: Key::Left,
+                kind: KeyEventKind::Press,
+            },
         ]);
         assert_eq!(count, 2);
         assert_eq!(router.pending(), 2);
@@ -2601,7 +2950,16 @@ mod tests {
     fn handle_batch_from_preserves_source() {
         let mut router = bound_router();
         router.handle_batch_from(
-            [InputEvent::Key(Key::Up), InputEvent::Key(Key::Right)],
+            [
+                InputEvent::Key {
+                    key: Key::Up,
+                    kind: KeyEventKind::Press,
+                },
+                InputEvent::Key {
+                    key: Key::Right,
+                    kind: KeyEventKind::Press,
+                },
+            ],
             ActionSource::Agent,
         );
         let queued: Vec<QueuedAction<Move>> = router.drain_queued().collect();
@@ -2613,9 +2971,21 @@ mod tests {
     fn handle_batch_with_prefers_custom_translation() {
         let mut router = bound_router();
         let count = router.handle_batch_with(
-            [InputEvent::Key(Key::Up), InputEvent::Key(Key::Right)],
+            [
+                InputEvent::Key {
+                    key: Key::Up,
+                    kind: KeyEventKind::Press,
+                },
+                InputEvent::Key {
+                    key: Key::Right,
+                    kind: KeyEventKind::Press,
+                },
+            ],
             |event| match event {
-                InputEvent::Key(Key::Up) => Some(Move::Scan(2)),
+                InputEvent::Key {
+                    key: Key::Up,
+                    kind: KeyEventKind::Press,
+                } => Some(Move::Scan(2)),
                 _ => None,
             },
         );
@@ -2633,7 +3003,16 @@ mod tests {
     fn handle_batch_with_from_preserves_source() {
         let mut router = bound_router();
         let count = router.handle_batch_with_from(
-            [InputEvent::Key(Key::Up), InputEvent::Key(Key::Down)],
+            [
+                InputEvent::Key {
+                    key: Key::Up,
+                    kind: KeyEventKind::Press,
+                },
+                InputEvent::Key {
+                    key: Key::Down,
+                    kind: KeyEventKind::Press,
+                },
+            ],
             ActionSource::Replay,
             |_| None,
         );
@@ -2645,7 +3024,10 @@ mod tests {
     #[test]
     fn set_bindings_swaps_keymap_and_returns_old() {
         let mut router = bound_router();
-        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::North));
 
         let mut menu_bindings = Bindings::new();
@@ -2654,12 +3036,21 @@ mod tests {
 
         let old = router.set_bindings(menu_bindings);
         assert!(old.translate(Key::Up).is_some());
-        assert!(!router.handle(InputEvent::Key(Key::Up)));
-        assert!(router.handle(InputEvent::Key(Key::Enter)));
+        assert!(!router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Enter,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::Wait));
 
         router.set_bindings(old);
-        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::North));
     }
 
@@ -2670,18 +3061,30 @@ mod tests {
         menu_bindings.bind(Key::Enter, Move::Wait);
 
         // Verify original bindings work.
-        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::North));
 
         {
             let mut guard = router.bindings_guard(menu_bindings);
-            assert!(guard.handle(InputEvent::Key(Key::Enter)));
+            assert!(guard.handle(InputEvent::Key {
+                key: Key::Enter,
+                kind: KeyEventKind::Press
+            }));
             assert_eq!(guard.next_action(), Some(Move::Wait));
-            assert!(!guard.handle(InputEvent::Key(Key::Up)));
+            assert!(!guard.handle(InputEvent::Key {
+                key: Key::Up,
+                kind: KeyEventKind::Press
+            }));
         }
 
         // Verify original bindings are restored.
-        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::North));
     }
 
@@ -2696,7 +3099,10 @@ mod tests {
             panic!("intentional");
         }));
 
-        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::North));
     }
 
@@ -2749,7 +3155,10 @@ mod tests {
         let mut router = bound_router();
         assert_eq!(router.total_actions_queued(), 0);
 
-        router.handle(InputEvent::Key(Key::Up));
+        router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press,
+        });
         assert_eq!(router.total_actions_queued(), 1);
 
         router.inject(Move::Wait);
@@ -2762,7 +3171,10 @@ mod tests {
         let _: Vec<Move> = router.drain().collect();
         assert_eq!(router.total_actions_queued(), 4);
 
-        router.handle(InputEvent::Key(Key::Down));
+        router.handle(InputEvent::Key {
+            key: Key::Down,
+            kind: KeyEventKind::Press,
+        });
         assert_eq!(router.total_actions_queued(), 5);
     }
 
@@ -3431,9 +3843,15 @@ mod tests {
         router.push_bindings(menu);
 
         assert_eq!(router.context_depth(), 1);
-        assert!(router.handle(InputEvent::Key(Key::Enter)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Enter,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::Wait));
-        assert!(!router.handle(InputEvent::Key(Key::Up)));
+        assert!(!router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
     }
 
     #[test]
@@ -3446,9 +3864,15 @@ mod tests {
 
         assert!(router.pop_bindings());
         assert_eq!(router.context_depth(), 0);
-        assert!(router.handle(InputEvent::Key(Key::Up)));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
         assert_eq!(router.next_action(), Some(Move::North));
-        assert!(!router.handle(InputEvent::Key(Key::Enter)));
+        assert!(!router.handle(InputEvent::Key {
+            key: Key::Enter,
+            kind: KeyEventKind::Press
+        }));
     }
 
     #[test]
@@ -3473,18 +3897,36 @@ mod tests {
         assert_eq!(router.context_depth(), 2);
 
         // Level 2 is active.
-        assert!(router.handle(InputEvent::Key(Key::Char('b'))));
-        assert!(!router.handle(InputEvent::Key(Key::Char('a'))));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Char('b'),
+            kind: KeyEventKind::Press
+        }));
+        assert!(!router.handle(InputEvent::Key {
+            key: Key::Char('a'),
+            kind: KeyEventKind::Press
+        }));
 
         // Pop to level 1.
         router.pop_bindings();
-        assert!(router.handle(InputEvent::Key(Key::Char('a'))));
-        assert!(!router.handle(InputEvent::Key(Key::Char('b'))));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Char('a'),
+            kind: KeyEventKind::Press
+        }));
+        assert!(!router.handle(InputEvent::Key {
+            key: Key::Char('b'),
+            kind: KeyEventKind::Press
+        }));
 
         // Pop back to original.
         router.pop_bindings();
-        assert!(router.handle(InputEvent::Key(Key::Up)));
-        assert!(!router.handle(InputEvent::Key(Key::Char('a'))));
+        assert!(router.handle(InputEvent::Key {
+            key: Key::Up,
+            kind: KeyEventKind::Press
+        }));
+        assert!(!router.handle(InputEvent::Key {
+            key: Key::Char('a'),
+            kind: KeyEventKind::Press
+        }));
     }
 
     #[test]
@@ -3587,7 +4029,10 @@ mod tests {
     #[test]
     fn serde_roundtrip_input_event() {
         let events = [
-            InputEvent::Key(Key::Char('x')),
+            InputEvent::Key {
+                key: Key::Char('x'),
+                kind: KeyEventKind::Press,
+            },
             InputEvent::Mouse {
                 x: 10,
                 y: 5,
