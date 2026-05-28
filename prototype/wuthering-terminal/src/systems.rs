@@ -86,7 +86,7 @@ pub fn enemy_ai_system(world: &mut World) {
             let Some((player_entity, player_pos, player_stats, player_class)) = nearest_player
             else {
                 world.resource_mut::<GameState>().unwrap().outcome = Outcome::Defeat;
-                log(world, "Defeat! All player characters defeated.");
+                log(world, "[fg:FF3333][b]Defeat![/] All player characters defeated.[/fg]");
                 return;
             };
 
@@ -178,7 +178,7 @@ pub fn enemy_ai_system(world: &mut World) {
                         &['░', '▓', '✦', '¤'],
                     ));
                     vfx.shakes
-                        .push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
+                        .push(verryte_terminal::vfx::ScreenShake::new_eased(2.5, 0.4, verryte_terminal::vfx::EasingMode::QuadOut));
                     break;
                 }
 
@@ -370,7 +370,7 @@ pub fn turn_management_system(world: &mut World) {
                 state.phase = TurnPhase::Enemy;
                 state.selected_entity = None;
             }
-            log(world, "Enemy Phase starts!");
+            log(world, "[fg:FFA500][b]Enemy Phase starts![/][/fg]");
             if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
                 events.send(GameEvent::PhaseChanged(TurnPhase::Enemy));
                 events.send(GameEvent::TurnEnded);
@@ -445,7 +445,7 @@ pub fn turn_management_system(world: &mut World) {
                 state.turn += 1;
             }
             let turn_num = world.resource::<GameState>().unwrap().turn;
-            log(world, format!("Player Phase starts! Turn {}", turn_num));
+            log(world, format!("[fg:32CD32][b]Player Phase starts! Turn {}[/][/fg]", turn_num));
 
             // Decrement elemental statuses
             let mut status_entities = Vec::new();
@@ -564,7 +564,7 @@ pub fn end_player_turn_system(world: &mut World) {
     };
 
     if !telegraph_tiles.is_empty() {
-        log(world, "Blight Sovereign releases Dark Annihilation!");
+        log(world, "[fg:E6E600][b]Blight Sovereign[/] releases [fg:9933FF][b]Dark Annihilation![/][/fg]");
 
         // VFX feedback!
         {
@@ -575,7 +575,7 @@ pub fn end_player_turn_system(world: &mut World) {
                 verryte_terminal::EasingMode::ExpoOut,
             ));
             vfx.shakes
-                .push(verryte_terminal::vfx::ScreenShake::new(4.5, 0.6));
+                .push(verryte_terminal::vfx::ScreenShake::new_eased(4.5, 0.6, verryte_terminal::vfx::EasingMode::ExpoOut));
         }
 
         let mut hit_count = 0;
@@ -641,12 +641,13 @@ pub fn end_player_turn_system(world: &mut World) {
             {
                 let vfx = world.resource_mut::<VfxSystem>().unwrap();
                 vfx.floating_texts
-                    .push(verryte_terminal::vfx::FloatingText::new(
+                    .push(verryte_terminal::vfx::FloatingText::new_eased(
                         cx,
                         cy - 2.0,
                         "-50",
                         Color(255, 20, 20),
                         true,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
                     ));
                 vfx.particles
                     .extend(verryte_terminal::vfx::emit_fire(cx, cy, 15));
@@ -718,7 +719,7 @@ pub fn award_xp(world: &mut World, amount: u32) {
         log(
             world,
             format!(
-                "LEVEL UP! {} reached level {}!",
+                "[fg:FFD700][b]LEVEL UP![/] {} reached level {}![/fg]",
                 Game::get_class_name(class),
                 level
             ),
@@ -769,20 +770,23 @@ pub fn resolve_combat_hit(
         }
     }
 
-    let crit_str = if is_crit {
-        " (CRITICAL HIT!)"
-    } else if is_block {
-        " (BLOCKED!)"
-    } else {
-        ""
-    };
-    log(
-        world,
+    let log_msg = if is_crit {
         format!(
-            "{} attacked {} for {} damage!{} (Target HP: {})",
-            attacker_name, target_name, damage, crit_str, final_hp
-        ),
-    );
+            "[fg:FF8080]{} attacked {} for [b]{} damage![/] [fg:E6E600][b](CRITICAL HIT!)[/] (Target HP: {})[/fg]",
+            attacker_name, target_name, damage, final_hp
+        )
+    } else if is_block {
+        format!(
+            "[fg:CCCCCC]{} attacked {} for {} damage! (BLOCKED!) (Target HP: {})[/fg]",
+            attacker_name, target_name, damage, final_hp
+        )
+    } else {
+        format!(
+            "{} attacked {} for [fg:FF3333]{} damage![/] (Target HP: {})",
+            attacker_name, target_name, damage, final_hp
+        )
+    };
+    log(world, log_msg);
 
     let (tcx, tcy) = get_tile_center_pixels(world, pos);
     let float_text = if is_crit {
@@ -813,12 +817,13 @@ pub fn resolve_combat_hit(
 
         let vfx = world.resource_mut::<VfxSystem>().unwrap();
         vfx.floating_texts
-            .push(verryte_terminal::vfx::FloatingText::new(
+            .push(verryte_terminal::vfx::FloatingText::new_eased(
                 tcx,
                 tcy - 2.0,
                 &float_text,
                 float_color,
                 is_crit,
+                verryte_terminal::vfx::EasingMode::QuadOut,
             ));
 
         let flash_color = if is_crit {
@@ -841,9 +846,15 @@ pub fn resolve_combat_hit(
 
         let shake_intensity = if is_crit { 3.5 } else { 1.5 };
         let shake_duration = if is_crit { 0.4 } else { 0.25 };
-        vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new(
+        let shake_easing = if is_crit {
+            verryte_terminal::vfx::EasingMode::ExpoOut
+        } else {
+            verryte_terminal::vfx::EasingMode::QuadOut
+        };
+        vfx.shakes.push(verryte_terminal::vfx::ScreenShake::new_eased(
             shake_intensity,
             shake_duration,
+            shake_easing,
         ));
     }
 
@@ -887,7 +898,7 @@ pub fn handle_defeat(
                 &['✦', '*', '░', '▓', '¤'],
             ));
             vfx.shakes
-                .push(verryte_terminal::vfx::ScreenShake::new(5.0, 1.0));
+                .push(verryte_terminal::vfx::ScreenShake::new_eased(5.0, 1.0, verryte_terminal::vfx::EasingMode::ExpoOut));
             vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
                 Color(255, 0, 0),
                 0.5,
@@ -937,7 +948,7 @@ pub fn handle_defeat(
             &['✦', '✧', '░', '▓', '¤'],
         ));
         vfx.shakes
-            .push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.8));
+            .push(verryte_terminal::vfx::ScreenShake::new_eased(4.0, 0.8, verryte_terminal::vfx::EasingMode::ExpoOut));
         vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
             Color(255, 255, 255),
             0.4,
@@ -952,7 +963,7 @@ pub fn handle_defeat(
     let echo_exists = world.query::<EchoItem>().into_iter().next().is_some();
     if !enemy_exists && !echo_exists {
         world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
-        log(world, "Victory! All enemies defeated.");
+        log(world, "[fg:32CD32][b]Victory![/] All enemies defeated.[/fg]");
     }
 }
 

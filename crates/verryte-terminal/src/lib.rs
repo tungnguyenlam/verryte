@@ -22,7 +22,7 @@ pub use assets::{image_to_grid, image_to_grid_with_chroma_key, VisualAsset, Visu
 pub use camera::Camera;
 pub use color::{BlendMode, Color};
 pub use dialogue::{DialogueBox, DialogueState, DialogueTheme};
-pub use grid::{wrap_text, write_wrapped_text, Cell, CellAttrs, CellChange, Grid};
+pub use grid::{wrap_text, write_wrapped_text, Cell, CellAttrs, CellChange, Grid, RichTextSegment};
 pub use layer::{Layer, Layers};
 pub use layout::{Alignment, BorderStyle, Constraint, Layout, Rect};
 pub use math::easing;

@@ -879,4 +879,39 @@ mod tests {
         );
         assert_eq!(flash.easing, verryte_terminal::EasingMode::ExpoOut);
     }
+
+    #[test]
+    fn test_new_autonomous_features() {
+        // 1. Dialogue typewriter character count
+        let mut dialogue = verryte_terminal::DialogueState::new("Test", "Hello!");
+        let newly_typed = dialogue.update(0.1, 30.0);
+        assert!(newly_typed > 0);
+        assert_eq!(dialogue.visible_chars.floor() as usize, newly_typed);
+
+        // 2. ScreenShake new_eased
+        let shake = verryte_terminal::vfx::ScreenShake::new_eased(
+            4.0,
+            0.5,
+            verryte_terminal::vfx::EasingMode::ExpoOut,
+        );
+        assert_eq!(shake.easing, verryte_terminal::vfx::EasingMode::ExpoOut);
+        assert!(shake.active());
+
+        // 3. FloatingText new_eased
+        let float_text = verryte_terminal::vfx::FloatingText::new_eased(
+            10.0,
+            10.0,
+            "-50",
+            verryte_terminal::Color::RED,
+            true,
+            verryte_terminal::vfx::EasingMode::QuadOut,
+        );
+        assert_eq!(float_text.easing, verryte_terminal::vfx::EasingMode::QuadOut);
+        assert_eq!(float_text.start_y, 10.0);
+
+        // 4. Mouse click handling
+        let mut game = Game::new();
+        // Just call it to verify it runs without panicking
+        let _handled = game.handle_mouse_click(120, 40, 10, 10);
+    }
 }

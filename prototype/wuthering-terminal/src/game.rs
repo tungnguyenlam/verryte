@@ -1140,7 +1140,7 @@ impl Game {
         let next_name = Self::get_class_name(next_class);
 
         self.log(format!(
-            "QTE Swap! {} swaps in for {} at ({}, {})!",
+            "[fg:9933FF][b]QTE Swap![/] [fg:E6E600]{}[/] swaps in for [fg:CCCCCC]{}[/] at ({}, {})!",
             next_name, active_name, active_pos.x, active_pos.y
         ));
 
@@ -1751,7 +1751,7 @@ impl Game {
                 crate::components::ElementalStatus::Lightning { .. },
                 crate::components::ElementalStatus::Ice { .. },
             ) => {
-                self.log(format!("Elemental Reaction: SHATTER on {}!", target_name));
+                self.log(format!("[fg:64C8FF][b]Elemental Reaction: SHATTER[/] on {}![/fg]", target_name));
                 let bonus_damage = 30;
                 let mut defeated = false;
                 if let Some(stats) = self.world.get_mut::<Stats>(target) {
@@ -1815,7 +1815,7 @@ impl Game {
                 crate::components::ElementalStatus::Lightning { .. },
             ) => {
                 self.log(format!(
-                    "Elemental Reaction: OVERGROWTH on {}!",
+                    "[fg:32DC64][b]Elemental Reaction: OVERGROWTH[/] on {}![/fg]",
                     target_name
                 ));
                 let bonus_damage = 10;
@@ -1881,7 +1881,7 @@ impl Game {
                 crate::components::ElementalStatus::Ice { .. },
                 crate::components::ElementalStatus::Nature { .. },
             ) => {
-                self.log(format!("Elemental Reaction: BLOOM on {}!", target_name));
+                self.log(format!("[fg:FFD700][b]Elemental Reaction: BLOOM[/] on {}![/fg]", target_name));
                 let healing_amount = 20;
 
                 self.vfx_mut().flashes.push(verryte_terminal::vfx::Flash::full_screen_eased(
@@ -1911,7 +1911,7 @@ impl Game {
                         final_hp = stats.hp;
                     }
                     self.log(format!(
-                        "Bloom healed {} for {} HP! (HP: {})",
+                        "[fg:32FF32]Bloom healed {} for [b]{} HP![/] (HP: {})[/fg]",
                         Self::get_class_name(a_class),
                         healing_amount,
                         final_hp
@@ -1963,7 +1963,16 @@ impl Game {
                     _ => "None",
                 };
 
-                self.log(format!("Applied {} element to {}.", badge, target_name));
+                let color_hex = match badge {
+                    "Ice" => "64C8FF",
+                    "Lightning" => "FFFF64",
+                    "Nature" => "32DC64",
+                    _ => "FFFFFF",
+                };
+                self.log(format!(
+                    "Applied [fg:{}][b]{}[/] element to {}.",
+                    color_hex, badge, target_name
+                ));
 
                 if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
                     log.send(GameEvent::ElementalApplied {
@@ -2906,7 +2915,12 @@ impl Game {
             registry.tick();
         }
         if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
-            dialogue.update(dt, 30.0);
+            let newly_typed = dialogue.update(dt, 30.0);
+            if newly_typed > 0 {
+                if let Some(events) = self.world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+                    events.send(verryte_core::AudioEvent::play("dialogue_blip"));
+                }
+            }
         }
         let mut rng = *self.world.resource::<Rng>().unwrap();
         self.camera.tick(&mut rng);
@@ -3697,5 +3711,46 @@ impl Game {
         }
 
         Ok(())
+    }
+
+    pub fn handle_mouse_click(&mut self, term_w: u16, term_h: u16, mouse_x: u16, mouse_y: u16) -> bool {
+        let (shake_x, shake_y) = if let Some(vfx) = self.world.resource::<verryte_terminal::vfx::VfxSystem>() {
+            vfx.shake_offset()
+        } else {
+            (0, 0)
+        };
+        let hud_h = 6;
+        let board_h = term_h.saturating_sub(hud_h);
+        
+        let rx = mouse_x as i32 - shake_x as i32;
+        let ry = mouse_y as i32 - shake_y as i32;
+        if rx >= 0 && ry >= 0 && ry < board_h as i32 && rx < term_w as i32 {
+            let map = self.world.resource::<TacticalMap>().unwrap();
+            let tier = verryte_terminal::ResolutionTier::from_size(term_w, term_h);
+            let (tile_w, tile_h) = tier.tile_dimensions();
+            let mut viewport = verryte_terminal::TileViewport::new(
+                verryte_terminal::Rect::new(0, 0, term_w, board_h),
+                tile_w,
+                tile_h,
+            );
+            viewport.camera = self.camera.clone();
+            viewport.camera.clamp_to_bounds(
+                0.0,
+                0.0,
+                map.width as f32,
+                map.height as f32,
+                viewport.rect.width,
+                viewport.rect.height,
+            );
+            let (tx, ty) = viewport.screen_to_world(rx, ry);
+            let tx = tx.floor() as i32;
+            let ty = ty.floor() as i32;
+            if tx >= 0 && tx < map.width as i32 && ty >= 0 && ty < map.height as i32 {
+                let point = verryte_map::Point::new(tx as i16, ty as i16);
+                self.apply_action(Action::Inspect(point), ActionSource::Terminal);
+                return true;
+            }
+        }
+        false
     }
 }

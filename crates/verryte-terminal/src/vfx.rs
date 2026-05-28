@@ -338,10 +338,14 @@ pub fn emit_shatter(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
 // ── Screen Shake ──────────────────────────────────────────────────────────────
 
 /// A screen shake effect with sinusoidal offset and decay.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ScreenShake {
     pub intensity: f32,
     pub duration: f32,
     pub elapsed: f32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub easing: EasingMode,
 }
 
 impl ScreenShake {
@@ -350,6 +354,16 @@ impl ScreenShake {
             intensity,
             duration,
             elapsed: 0.0,
+            easing: EasingMode::Linear,
+        }
+    }
+
+    pub fn new_eased(intensity: f32, duration: f32, easing: EasingMode) -> Self {
+        Self {
+            intensity,
+            duration,
+            elapsed: 0.0,
+            easing,
         }
     }
 
@@ -361,7 +375,15 @@ impl ScreenShake {
         if !self.active() {
             return (0, 0);
         }
-        let decay = 1.0 - (self.elapsed / self.duration);
+        let t = (self.elapsed / self.duration).clamp(0.0, 1.0);
+        let decay = match self.easing {
+            EasingMode::Linear => 1.0 - crate::math::easing::linear(t),
+            EasingMode::QuadIn => 1.0 - crate::math::easing::quad_in(t),
+            EasingMode::QuadOut => 1.0 - crate::math::easing::quad_out(t),
+            EasingMode::CubicIn => 1.0 - crate::math::easing::cubic_in(t),
+            EasingMode::CubicOut => 1.0 - crate::math::easing::cubic_out(t),
+            EasingMode::ExpoOut => 1.0 - crate::math::easing::expo_out(t),
+        };
         let strength = self.intensity * decay;
         let ox = (strength * (self.elapsed * 47.0).sin()) as i16;
         let oy = (strength * (self.elapsed * 31.0).cos() * 0.5) as i16;
@@ -371,9 +393,10 @@ impl ScreenShake {
 
 // ── Flash Overlay ─────────────────────────────────────────────────────────────
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EasingMode {
+    #[default]
     Linear,
     QuadIn,
     QuadOut,
@@ -453,15 +476,21 @@ impl Flash {
 // ── Floating Text ─────────────────────────────────────────────────────────────
 
 /// Text that rises upward and fades over time.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FloatingText {
     pub x: f32,
     pub y: f32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub start_y: f32,
     pub text: String,
     pub fg: Color,
     pub vy: f32,
     pub lifetime: f32,
     pub max_lifetime: f32,
     pub bold: bool,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub easing: EasingMode,
 }
 
 impl FloatingText {
@@ -470,12 +499,30 @@ impl FloatingText {
         Self {
             x,
             y,
+            start_y: y,
             text: text.to_string(),
             fg,
-            vy: -1.0,
+            vy: -1.5,
             lifetime,
             max_lifetime: lifetime,
             bold,
+            easing: EasingMode::Linear,
+        }
+    }
+
+    pub fn new_eased(x: f32, y: f32, text: &str, fg: Color, bold: bool, easing: EasingMode) -> Self {
+        let lifetime = 1.5;
+        Self {
+            x,
+            y,
+            start_y: y,
+            text: text.to_string(),
+            fg,
+            vy: -2.5, // Total distance is -2.5 cells
+            lifetime,
+            max_lifetime: lifetime,
+            bold,
+            easing,
         }
     }
 
@@ -594,8 +641,17 @@ impl VfxSystem {
         self.flashes.retain(|f| f.active());
 
         for t in &mut self.floating_texts {
-            t.y += t.vy * dt;
             t.lifetime -= dt;
+            let progress = (1.0 - t.alpha_ratio()).clamp(0.0, 1.0);
+            let eased_progress = match t.easing {
+                EasingMode::Linear => crate::math::easing::linear(progress),
+                EasingMode::QuadIn => crate::math::easing::quad_in(progress),
+                EasingMode::QuadOut => crate::math::easing::quad_out(progress),
+                EasingMode::CubicIn => crate::math::easing::cubic_in(progress),
+                EasingMode::CubicOut => crate::math::easing::cubic_out(progress),
+                EasingMode::ExpoOut => crate::math::easing::expo_out(progress),
+            };
+            t.y = t.start_y + t.vy * eased_progress;
         }
         self.floating_texts.retain(|t| t.alive());
 

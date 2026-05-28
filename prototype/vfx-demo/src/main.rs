@@ -186,16 +186,13 @@ impl Scene {
         self.enemy_flash = 6;
         let dmg = 15 + (self.frame_count % 10) as i32;
         self.enemy_hp = (self.enemy_hp - dmg).max(0);
-        self.vfx.floating_texts.push(FloatingText {
-            x: cx - 1.0,
-            y: cy - 2.0,
-            text: format!("-{}", dmg),
-            fg: Color(255, 80, 30),
-            vy: -1.5,
-            lifetime: 1.5,
-            max_lifetime: 1.5,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            cx - 1.0,
+            cy - 2.0,
+            &format!("-{}", dmg),
+            Color(255, 80, 30),
+            true,
+        ));
         self.add_log(format!("Fire burst! {} damage", dmg));
     }
 
@@ -217,16 +214,13 @@ impl Scene {
         self.enemy_flash = 6;
         let dmg = 20 + (self.frame_count % 8) as i32;
         self.enemy_hp = (self.enemy_hp - dmg).max(0);
-        self.vfx.floating_texts.push(FloatingText {
-            x: cx - 1.0,
-            y: cy - 2.0,
-            text: format!("-{}", dmg),
-            fg: Color(150, 200, 255),
-            vy: -1.5,
-            lifetime: 1.5,
-            max_lifetime: 1.5,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            cx - 1.0,
+            cy - 2.0,
+            &format!("-{}", dmg),
+            Color(150, 200, 255),
+            true,
+        ));
         self.add_log(format!("Ice explosion! {} damage", dmg));
     }
 
@@ -243,16 +237,13 @@ impl Scene {
         self.enemy_flash = 8;
         let dmg = 35 + (self.frame_count % 15) as i32;
         self.enemy_hp = (self.enemy_hp - dmg).max(0);
-        self.vfx.floating_texts.push(FloatingText {
-            x: tx - 1.0,
-            y: ty - 3.0,
-            text: format!("-{} ⚡", dmg),
-            fg: Color(255, 255, 100),
-            vy: -2.0,
-            lifetime: 1.8,
-            max_lifetime: 1.8,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            tx - 1.0,
+            ty - 3.0,
+            &format!("-{} ⚡", dmg),
+            Color(255, 255, 100),
+            true,
+        ));
         self.add_log(format!("Lightning strike! {} damage", dmg));
     }
 
@@ -274,16 +265,13 @@ impl Scene {
         self.enemy_flash = 5;
         let dmg = 25 + (self.frame_count % 12) as i32;
         self.enemy_hp = (self.enemy_hp - dmg).max(0);
-        self.vfx.floating_texts.push(FloatingText {
-            x: w as f32 * 0.65,
-            y: h as f32 * 0.3,
-            text: format!("-{}", dmg),
-            fg: Color(255, 255, 255),
-            vy: -2.0,
-            lifetime: 1.2,
-            max_lifetime: 1.2,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            w as f32 * 0.65,
+            h as f32 * 0.3,
+            &format!("-{}", dmg),
+            Color(255, 255, 255),
+            true,
+        ));
         self.add_log(format!("Sword slash! {} damage", dmg));
     }
 
@@ -304,16 +292,13 @@ impl Scene {
         let heal = 20;
         self.mira_hp = (self.mira_hp + heal).min(self.mira_max_hp);
         self.mira_flash = 6;
-        self.vfx.floating_texts.push(FloatingText {
-            x: cx - 1.0,
-            y: cy - 3.0,
-            text: format!("+{} ♥", heal),
-            fg: Color(100, 255, 150),
-            vy: -1.0,
-            lifetime: 1.5,
-            max_lifetime: 1.5,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            cx - 1.0,
+            cy - 3.0,
+            &format!("+{} ♥", heal),
+            Color(100, 255, 150),
+            true,
+        ));
         self.add_log(format!("Mira heals! +{} HP", heal));
     }
 
@@ -356,16 +341,13 @@ impl Scene {
         self.enemy_flash = 8;
         let dmg = 30 + (self.frame_count % 10) as i32;
         self.enemy_hp = (self.enemy_hp - dmg).max(0);
-        self.vfx.floating_texts.push(FloatingText {
-            x: cx as f32 - 2.0,
-            y: cy as f32 - 4.0,
-            text: format!("-{} AoE!", dmg),
-            fg: Color(255, 120, 80),
-            vy: -2.0,
-            lifetime: 2.0,
-            max_lifetime: 2.0,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            cx as f32 - 2.0,
+            cy as f32 - 4.0,
+            &format!("-{} AoE!", dmg),
+            Color(255, 120, 80),
+            true,
+        ));
         self.add_log(format!("AoE blast! {} damage", dmg));
     }
 
@@ -398,16 +380,13 @@ impl Scene {
         self.enemy_flash = 6;
         let dmg = 10 + self.combo_counter as i32 * 5;
         self.enemy_hp = (self.enemy_hp - dmg).max(0);
-        self.vfx.floating_texts.push(FloatingText {
-            x: cx - 2.0,
-            y: cy - 3.0,
-            text: format!("{}x COMBO -{}", self.combo_counter, dmg),
-            fg: Color(255, 220, 80),
-            vy: -2.0,
-            lifetime: 1.5,
-            max_lifetime: 1.5,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            cx - 2.0,
+            cy - 3.0,
+            &format!("{}x COMBO -{}", self.combo_counter, dmg),
+            Color(255, 220, 80),
+            true,
+        ));
         self.add_log(format!("Combo x{}! {} damage", self.combo_counter, dmg));
     }
 
@@ -453,16 +432,13 @@ impl Scene {
         self.enemy_flash = 15;
         let dmg = 80 + (self.frame_count % 20) as i32;
         self.enemy_hp = (self.enemy_hp - dmg).max(0);
-        self.vfx.floating_texts.push(FloatingText {
-            x: ex - 3.0,
-            y: ey - 5.0,
-            text: format!("ULTIMATE -{}", dmg),
-            fg: Color(255, 100, 255),
-            vy: -1.5,
-            lifetime: 2.5,
-            max_lifetime: 2.5,
-            bold: true,
-        });
+        self.vfx.floating_texts.push(FloatingText::new(
+            ex - 3.0,
+            ey - 5.0,
+            &format!("ULTIMATE -{}", dmg),
+            Color(255, 100, 255),
+            true,
+        ));
         self.add_log(format!("ULTIMATE! {} damage!", dmg));
     }
 
@@ -710,46 +686,84 @@ fn main() {
 
         // Input
         while let Some(event) = poll_event() {
+            use verryte_tty::verryte_input::KeyEventKind;
             match event {
-                InputEvent::Key(Key::Char('q')) | InputEvent::Key(Key::Esc) => {
+                InputEvent::Key {
+                    key: Key::Char('q'),
+                    kind: KeyEventKind::Press,
+                }
+                | InputEvent::Key {
+                    key: Key::Esc,
+                    kind: KeyEventKind::Press,
+                } => {
                     return;
                 }
-                InputEvent::Key(Key::Char('1')) => {
+                InputEvent::Key {
+                    key: Key::Char('1'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_fire(w, h);
                 }
-                InputEvent::Key(Key::Char('2')) => {
+                InputEvent::Key {
+                    key: Key::Char('2'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_ice(w, h);
                 }
-                InputEvent::Key(Key::Char('3')) => {
+                InputEvent::Key {
+                    key: Key::Char('3'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_lightning(w, h);
                 }
-                InputEvent::Key(Key::Char('4')) => {
+                InputEvent::Key {
+                    key: Key::Char('4'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_slash(w, h);
                 }
-                InputEvent::Key(Key::Char('5')) => {
+                InputEvent::Key {
+                    key: Key::Char('5'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_heal(w, h);
                 }
-                InputEvent::Key(Key::Char('6')) => {
+                InputEvent::Key {
+                    key: Key::Char('6'),
+                    kind: KeyEventKind::Press,
+                } => {
                     scene.trigger_shake();
                 }
-                InputEvent::Key(Key::Char('7')) => {
+                InputEvent::Key {
+                    key: Key::Char('7'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_flash(w, h);
                 }
-                InputEvent::Key(Key::Char('8')) => {
+                InputEvent::Key {
+                    key: Key::Char('8'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_aoe(w, h);
                 }
-                InputEvent::Key(Key::Char('9')) => {
+                InputEvent::Key {
+                    key: Key::Char('9'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_combo(w, h);
                 }
-                InputEvent::Key(Key::Char('0')) => {
+                InputEvent::Key {
+                    key: Key::Char('0'),
+                    kind: KeyEventKind::Press,
+                } => {
                     let (w, h) = terminal_size();
                     scene.trigger_ultimate(w, h);
                 }

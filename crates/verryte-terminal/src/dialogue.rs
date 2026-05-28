@@ -189,7 +189,8 @@ impl DialogueState {
         self
     }
 
-    pub fn update(&mut self, dt: f32, speed: f32) {
+    pub fn update(&mut self, dt: f32, speed: f32) -> usize {
+        let prev = self.visible_chars.floor() as usize;
         if self.visible_chars < self.text.len() as f32 {
             self.visible_chars += speed * dt;
             if self.visible_chars >= self.text.len() as f32 {
@@ -199,6 +200,8 @@ impl DialogueState {
                 }
             }
         }
+        let next = self.visible_chars.floor() as usize;
+        next.saturating_sub(prev)
     }
 
     pub fn is_typing(&self) -> bool {

@@ -481,6 +481,7 @@ impl Grid {
         count
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn write_aligned(
         &mut self,
         x: u16,
@@ -621,6 +622,7 @@ impl Grid {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_text_box(
         &mut self,
         rect: Rect,
@@ -686,10 +688,13 @@ impl Grid {
         let mut count = 0u16;
 
         loop {
-            if x0 >= 0 && y0 >= 0 && (x0 as u16) < self.width && (y0 as u16) < self.height {
-                if self.put(x0 as u16, y0 as u16, cell) {
-                    count += 1;
-                }
+            if x0 >= 0
+                && y0 >= 0
+                && (x0 as u16) < self.width
+                && (y0 as u16) < self.height
+                && self.put(x0 as u16, y0 as u16, cell)
+            {
+                count += 1;
             }
             if x0 == x1 && y0 == y1 {
                 break;
@@ -951,12 +956,24 @@ impl Grid {
             bytes.push(cell.bg.1);
             bytes.push(cell.bg.2);
             let mut attrs = 0u8;
-            if cell.attrs.bold { attrs |= 1 << 0; }
-            if cell.attrs.underline { attrs |= 1 << 1; }
-            if cell.attrs.dim { attrs |= 1 << 2; }
-            if cell.attrs.italic { attrs |= 1 << 3; }
-            if cell.attrs.reverse { attrs |= 1 << 4; }
-            if cell.attrs.blink { attrs |= 1 << 5; }
+            if cell.attrs.bold {
+                attrs |= 1 << 0;
+            }
+            if cell.attrs.underline {
+                attrs |= 1 << 1;
+            }
+            if cell.attrs.dim {
+                attrs |= 1 << 2;
+            }
+            if cell.attrs.italic {
+                attrs |= 1 << 3;
+            }
+            if cell.attrs.reverse {
+                attrs |= 1 << 4;
+            }
+            if cell.attrs.blink {
+                attrs |= 1 << 5;
+            }
             bytes.push(attrs);
         }
         bytes
@@ -976,11 +993,12 @@ impl Grid {
             if pos + 11 > bytes.len() {
                 return Err("buffer truncated".to_string());
             }
-            let glyph_u32 = u32::from_le_bytes([bytes[pos], bytes[pos+1], bytes[pos+2], bytes[pos+3]]);
+            let glyph_u32 =
+                u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
             let glyph = std::char::from_u32(glyph_u32).unwrap_or(' ');
-            let fg = Color(bytes[pos+4], bytes[pos+5], bytes[pos+6]);
-            let bg = Color(bytes[pos+7], bytes[pos+8], bytes[pos+9]);
-            let attr_bits = bytes[pos+10];
+            let fg = Color(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6]);
+            let bg = Color(bytes[pos + 7], bytes[pos + 8], bytes[pos + 9]);
+            let attr_bits = bytes[pos + 10];
             let attrs = CellAttrs {
                 bold: attr_bits & (1 << 0) != 0,
                 underline: attr_bits & (1 << 1) != 0,
@@ -989,10 +1007,19 @@ impl Grid {
                 reverse: attr_bits & (1 << 4) != 0,
                 blink: attr_bits & (1 << 5) != 0,
             };
-            cells.push(Cell { glyph, fg, bg, attrs });
+            cells.push(Cell {
+                glyph,
+                fg,
+                bg,
+                attrs,
+            });
             pos += 11;
         }
-        Ok(Self { width, height, cells })
+        Ok(Self {
+            width,
+            height,
+            cells,
+        })
     }
 
     pub fn to_plain_string(&self) -> String {
@@ -1286,6 +1313,44 @@ impl Grid {
         }
         Ok(line_count)
     }
+
+    pub fn parse_and_wrap_rich(
+        text: &str,
+        width: u16,
+    ) -> Result<Vec<Vec<RichTextSegment>>, String> {
+        let mut parser = RichTextParser::new(text);
+        let mut segments = Vec::new();
+        while let Some(segment) = parser.next_segment()? {
+            segments.push(segment);
+        }
+
+        let mut lines = Vec::new();
+        let mut current_line = Vec::new();
+        let mut current_width = 0;
+
+        for segment in segments {
+            let words = segment.text.split_inclusive(' ');
+            for word in words {
+                let word_len = word.chars().count();
+                if current_width + word_len > width as usize && current_width > 0 {
+                    lines.push(current_line);
+                    current_line = Vec::new();
+                    current_width = 0;
+                }
+                current_line.push(RichTextSegment {
+                    text: word.to_string(),
+                    fg: segment.fg,
+                    bg: segment.bg,
+                    attrs: segment.attrs,
+                });
+                current_width += word_len;
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+        Ok(lines)
+    }
 }
 
 pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
@@ -1390,12 +1455,13 @@ pub fn draw_sparkline(
     count
 }
 
-#[derive(Debug, Clone)]
-struct RichTextSegment {
-    text: String,
-    fg: Color,
-    bg: Color,
-    attrs: CellAttrs,
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RichTextSegment {
+    pub text: String,
+    pub fg: Color,
+    pub bg: Color,
+    pub attrs: CellAttrs,
 }
 
 struct RichTextParser<'a> {
@@ -1536,5 +1602,21 @@ mod tests {
                 after: Some(Cell::new('c')),
             },]
         );
+    }
+
+    #[test]
+    fn test_parse_and_wrap_rich() {
+        let text = "Hello [fg:ff0000][b]world[/][/fg]!";
+        let lines = Grid::parse_and_wrap_rich(text, 15).unwrap();
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        assert_eq!(line.len(), 3);
+        assert_eq!(line[0].text, "Hello ");
+        assert_eq!(line[0].fg, Color::WHITE);
+        assert_eq!(line[1].text, "world");
+        assert_eq!(line[1].fg, Color(255, 0, 0));
+        assert!(line[1].attrs.bold);
+        assert_eq!(line[2].text, "!");
+        assert_eq!(line[2].fg, Color::WHITE);
     }
 }
