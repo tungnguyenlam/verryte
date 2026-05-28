@@ -1913,7 +1913,8 @@ impl<T> TileGrid<T> {
             for &(dx, dy) in &candidates {
                 let nx = current.x + dx;
                 let ny = current.y + dy;
-                if nx > 0 && nx < self.width() as i16 - 1 && ny > 0 && ny < self.height() as i16 - 1 {
+                if nx > 0 && nx < self.width() as i16 - 1 && ny > 0 && ny < self.height() as i16 - 1
+                {
                     let p = Point::new(nx, ny);
                     if !visited.contains(&p) {
                         neighbors.push((p, dx, dy));
@@ -4705,7 +4706,9 @@ mod tests {
         assert_eq!(path8.len(), 5); // 4 diagonals = 5 points
 
         // Test with obstacles
-        let passable = |p: Point, _tile: &char| p != Point::new(1, 1) && p != Point::new(1, 0) && p != Point::new(0, 1);
+        let passable = |p: Point, _tile: &char| {
+            p != Point::new(1, 1) && p != Point::new(1, 0) && p != Point::new(0, 1)
+        };
         let blocked_path = grid.astar4(start, goal, passable);
         assert!(blocked_path.is_none());
     }

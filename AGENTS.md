@@ -28,6 +28,8 @@ project context, not runtime code.
   diff, line, border, and text rendering primitives.
 - `crates/verryte-tty` - crossterm frontend that translates real terminal input
   into `verryte-input` events and renders `verryte-terminal::Grid`.
+- `crates/verryte-audio` - spatial/panned audio playback via rodio, with
+  `AudioEvent` integration from `verryte-core` and volume/pan controls.
 - `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
   Validates the engine on complex mechanics: team swapping, Echo absorption,
   parry/dodge, and adaptive-resolution sprite rendering. Source PNG artwork
@@ -76,6 +78,7 @@ As of the latest commits, Verryte has:
 - **Map & geometry** (`verryte-map`): grid, bounds, distance, visibility, reachability, pathfinding, `TileGrid` with iterators.
 - **Terminal rendering** (`verryte-terminal`): cell, color, grid, clipping, viewport, diff, line, border, text rendering, batch write helpers.
 - **TTY frontend** (`verryte-tty`): crossterm integration, real-time input translation, incremental cell-diff rendering.
+- **Audio** (`verryte-audio`): spatial/panned audio playback via rodio, with `AudioEvent` integration from `verryte-core` and volume/pan controls.
 - **Adaptive resolution sprites**: build-time PNG-to-Rust compilation pipeline (`scratch/png_to_ansi.py`) that bakes chibi pixel art into static `[[(u8, u8, u8); W]; H]` arrays at 6 resolution tiers (TINY through ULTRA). At runtime, `crossterm::terminal::size()` selects the best tier purely by terminal cols×rows.
 - **Wuthering Terminal prototype** (`prototype/wuthering-terminal`): tactical RPG prototype, multi-character teams, high-fidelity image-based sprites, larger tile grids, complex turn-phase scheduling. (Step 1 Complete: Tactical Grid Scene)
 - **Terminal VFX demo** (`prototype/vfx-demo`): interactive demo proving real-time terminal animation at 30 FPS. Particle system (fire, ice, lightning, slash, burst, heal, AoE), screen shake, flash overlays, floating damage text, expanding ring indicators, diff-based rendering. Loads PNG character sprites (Kael, Mira, Blight Sovereign) from `wuthering-terminal/assets/` via `image_to_grid()` with chroma-key transparency. Run with `cargo run -p vfx-demo`.
@@ -140,22 +143,23 @@ The VFX demo proves these terminal-native effects work:
 Build order for the tactical RPG prototype:
 
 1. **Tactical grid scene** — grid-based battlefield, tile rendering, character
-   placement, cursor movement.
+   placement, cursor movement. *(Complete)*
 2. **Turn system** — player phase → enemy phase, action points per character.
+   *(Complete)*
 3. **Basic combat** — attack ranges, damage calculation, HP bars (VFX already
-   proven).
+   proven). *(Complete)*
 4. **Team swap QTE** — swap between Kael, Lyra, and Mira mid-turn, cooldown
-   timer.
+   timer. *(Complete)*
 5. **Telegraphed attacks** — enemy shows attack zones (colored tiles), player
-   can dodge/parry.
+   can dodge/parry. *(Complete)*
 6. **Echo absorption** — defeated enemies drop abilities the player can absorb.
+   *(Complete)*
 7. **Sprite pipeline** — PNG → Rust const arrays via `scratch/png_to_ansi.py`,
-   adaptive resolution.
-8. **Boss fight** — Blight Sovereign with multi-phase patterns.
+   adaptive resolution. *(Complete)*
+8. **Boss fight** — Blight Sovereign with multi-phase patterns. *(Complete)*
 
-The VFX system from the demo should be extracted into a reusable module (either
-in `verryte-terminal` or a new `verryte-vfx` crate) before the tactical
-prototype begins.
+The VFX system has been extracted into `verryte-terminal::vfx` and is reusable
+across prototypes.
 
 ## Verification
 

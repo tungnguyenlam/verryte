@@ -2075,3 +2075,41 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** Adding starting items to Kael's inventory increased the default entity count in the RPG prototype world from 9 to 10, requiring test assertions updates. Fixing match braces prevented item entities from leaking.
 
 **Follow-ups.** None. All workspace checks and tests are clean.
+
+## 2026-05-29 - autonomous engine run: formatting, docs, union_many, find_all_cells
+
+**Goal.** Complete a batch of autonomous improvements: fix formatting, update
+stale documentation, and add two reusable engine primitives flagged in prior
+worklog follow-ups.
+
+**Changes.**
+- `crates/verryte-map/src/lib.rs` - ran `cargo fmt` to fix two rustfmt
+  violations (line break in conditional, multi-line closure).
+- `AGENTS.md` - added `verryte-audio` to workspace map; updated "Current Engine
+  Capabilities" to include audio crate; marked all 8 tactical RPG roadmap steps
+  as complete with `(Complete)` annotations; noted VFX extraction into
+  `verryte-terminal::vfx`.
+- `crates/verryte-terminal/src/layout.rs:68` - added `Rect::union_many(rects)`
+  combining an arbitrary slice of rects into a single bounding rect. Delegates
+  to the existing `union` method. Tests at :311 and :323.
+- `crates/verryte-terminal/src/grid.rs:292` - added `Grid::find_all_cells(f)`
+  returning all `(x, y, &Cell)` tuples matching a predicate, complementing the
+  existing `find_cell`. Tests at :1968 and :1981.
+
+**Reasoning.** `Grid::col_mut` was considered but cancelled because returning
+multiple mutable references into a row-major `Vec<Cell>` requires `unsafe`,
+which the workspace lint forbids. `union_many` and `find_all_cells` are safe,
+ergonomic primitives that fill genuine API gaps identified in prior worklog
+follow-ups. The AGENTS.md documentation was stale (missing audio crate, outdated
+roadmap) and needed alignment with the actual codebase state.
+
+**Assumptions.** `union_many` with an empty slice returns an empty rect
+(`0,0,0,0`), consistent with the identity element for union. `find_all_cells`
+uses the same row-major iteration order as `iter_cells` and `find_cell`.
+
+**Gotchas.** The uncommitted changes in `prototype/wuthering-terminal/` are
+from a prior session and were not touched.
+
+**Follow-ups.** The existing clippy warnings (10 in verryte-map, 3 in
+verryte-terminal) are pre-existing and not from this batch. Consider cleaning
+them in a dedicated clippy-fix pass.

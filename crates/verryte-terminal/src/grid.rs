@@ -289,6 +289,13 @@ impl Grid {
         self.iter_cells().find(|(_, _, cell)| f(cell))
     }
 
+    pub fn find_all_cells<F>(&self, mut f: F) -> Vec<(u16, u16, &Cell)>
+    where
+        F: FnMut(&Cell) -> bool,
+    {
+        self.iter_cells().filter(|(_, _, cell)| f(cell)).collect()
+    }
+
     pub fn diff(&self, other: &Grid) -> Vec<CellChange> {
         let width = self.width.max(other.width);
         let height = self.height.max(other.height);
@@ -443,7 +450,13 @@ impl Grid {
 
     /// Tint the colors of cells within the given `rect` with a specified `tint` color
     /// and `alpha` intensity (0.0 to 1.0) using the specified `BlendMode`.
-    pub fn apply_tint(&mut self, rect: Rect, tint: Color, alpha: f32, mode: crate::color::BlendMode) {
+    pub fn apply_tint(
+        &mut self,
+        rect: Rect,
+        tint: Color,
+        alpha: f32,
+        mode: crate::color::BlendMode,
+    ) {
         let alpha = alpha.clamp(0.0, 1.0);
         if alpha <= 0.0 {
             return;
@@ -1868,8 +1881,20 @@ mod tests {
     #[test]
     fn test_grid_filters() {
         let mut grid = Grid::new(3, 3);
-        grid.put(0, 0, Cell::new('A').with_fg(Color(10, 20, 30)).with_bg(Color(40, 50, 60)));
-        grid.put(1, 0, Cell::new('B').with_fg(Color(100, 110, 120)).with_bg(Color(130, 140, 150)));
+        grid.put(
+            0,
+            0,
+            Cell::new('A')
+                .with_fg(Color(10, 20, 30))
+                .with_bg(Color(40, 50, 60)),
+        );
+        grid.put(
+            1,
+            0,
+            Cell::new('B')
+                .with_fg(Color(100, 110, 120))
+                .with_bg(Color(130, 140, 150)),
+        );
 
         // Test apply_filter
         grid.apply_filter(Rect::new(0, 0, 1, 1), |cell| {
@@ -1880,9 +1905,27 @@ mod tests {
 
         // Test apply_blur
         let mut grid_blur = Grid::new(3, 1);
-        grid_blur.put(0, 0, Cell::new('A').with_fg(Color(10, 10, 10)).with_bg(Color(0, 0, 0)));
-        grid_blur.put(1, 0, Cell::new('B').with_fg(Color(30, 30, 30)).with_bg(Color(100, 100, 100)));
-        grid_blur.put(2, 0, Cell::new('C').with_fg(Color(50, 50, 50)).with_bg(Color(200, 200, 200)));
+        grid_blur.put(
+            0,
+            0,
+            Cell::new('A')
+                .with_fg(Color(10, 10, 10))
+                .with_bg(Color(0, 0, 0)),
+        );
+        grid_blur.put(
+            1,
+            0,
+            Cell::new('B')
+                .with_fg(Color(30, 30, 30))
+                .with_bg(Color(100, 100, 100)),
+        );
+        grid_blur.put(
+            2,
+            0,
+            Cell::new('C')
+                .with_fg(Color(50, 50, 50))
+                .with_bg(Color(200, 200, 200)),
+        );
         grid_blur.apply_blur(Rect::new(0, 0, 3, 1), 1);
         // The middle cell (1, 0) should average (10+30+50)/3 = 30 for fg and (0+100+200)/3 = 100 for bg
         assert_eq!(grid_blur.get(1, 0).unwrap().fg, Color(30, 30, 30));
@@ -1890,17 +1933,56 @@ mod tests {
 
         // Test apply_tint
         let mut grid_tint = Grid::new(1, 1);
-        grid_tint.put(0, 0, Cell::new('A').with_fg(Color(100, 100, 100)).with_bg(Color(0, 0, 0)));
-        grid_tint.apply_tint(Rect::new(0, 0, 1, 1), Color(200, 200, 200), 0.5, crate::color::BlendMode::Normal);
+        grid_tint.put(
+            0,
+            0,
+            Cell::new('A')
+                .with_fg(Color(100, 100, 100))
+                .with_bg(Color(0, 0, 0)),
+        );
+        grid_tint.apply_tint(
+            Rect::new(0, 0, 1, 1),
+            Color(200, 200, 200),
+            0.5,
+            crate::color::BlendMode::Normal,
+        );
         // 100 * 0.5 + 200 * 0.5 = 150
         assert_eq!(grid_tint.get(0, 0).unwrap().fg, Color(150, 150, 150));
 
         // Test adjust_hsv
         let mut grid_hsv = Grid::new(1, 1);
-        grid_hsv.put(0, 0, Cell::new('A').with_fg(Color(128, 64, 192)).with_bg(Color(0, 0, 0)));
+        grid_hsv.put(
+            0,
+            0,
+            Cell::new('A')
+                .with_fg(Color(128, 64, 192))
+                .with_bg(Color(0, 0, 0)),
+        );
         grid_hsv.adjust_hsv(Rect::new(0, 0, 1, 1), 0.0, 1.0, 0.5); // Halve the brightness
         let half_val = grid_hsv.get(0, 0).unwrap().fg;
         // Verify value has decreased
         assert!(half_val.0 < 128);
+    }
+
+    #[test]
+    fn find_all_cells_returns_matching_positions() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(0, 0, Cell::new('X'));
+        grid.put(1, 1, Cell::new('X'));
+        grid.put(2, 2, Cell::new('X'));
+        grid.put(0, 1, Cell::new('Y'));
+
+        let matches = grid.find_all_cells(|c| c.glyph == 'X');
+        assert_eq!(matches.len(), 3);
+        assert!(matches.iter().any(|(x, y, _)| *x == 0 && *y == 0));
+        assert!(matches.iter().any(|(x, y, _)| *x == 1 && *y == 1));
+        assert!(matches.iter().any(|(x, y, _)| *x == 2 && *y == 2));
+    }
+
+    #[test]
+    fn find_all_cells_empty_when_no_match() {
+        let grid = Grid::new(2, 2);
+        let matches = grid.find_all_cells(|c| c.glyph == 'Z');
+        assert!(matches.is_empty());
     }
 }

@@ -66,6 +66,14 @@ impl Rect {
         Rect::new(x, y, right - x, bottom - y)
     }
 
+    pub fn union_many(rects: &[Rect]) -> Rect {
+        let mut result = Rect::new(0, 0, 0, 0);
+        for r in rects {
+            result = result.union(*r);
+        }
+        result
+    }
+
     pub fn inset(self, dx: u16, dy: u16) -> Rect {
         let x = self.x.saturating_add(dx);
         let y = self.y.saturating_add(dy);
@@ -298,6 +306,26 @@ mod tests {
         assert_eq!(u.y, 1);
         assert_eq!(u.right(), 8);
         assert_eq!(u.bottom(), 8);
+    }
+
+    #[test]
+    fn rect_union_many_combines_slice() {
+        let rects = [
+            Rect::new(0, 0, 5, 5),
+            Rect::new(3, 3, 5, 5),
+            Rect::new(1, 7, 2, 2),
+        ];
+        let u = Rect::union_many(&rects);
+        assert_eq!(u.x, 0);
+        assert_eq!(u.y, 0);
+        assert_eq!(u.right(), 8);
+        assert_eq!(u.bottom(), 9);
+    }
+
+    #[test]
+    fn rect_union_many_empty_slice() {
+        let u = Rect::union_many(&[]);
+        assert_eq!(u, Rect::new(0, 0, 0, 0));
     }
 
     #[test]
