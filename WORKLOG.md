@@ -2052,3 +2052,26 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** Divergence of trajectory-based particles is dependent on lifetime progress; unit tests must update a non-zero number of frames to allow coordinate divergence, and wave trajectories only oscillate perpendicularly to the velocity vector.
 
 **Follow-ups.** Add shield restoration QTE skills or defensive elemental status reaction items to inventories.
+
+## 2026-05-28 - ECS parent-child hierarchies, grid post-processing, A* pathfinding, maze generation, and shield elixirs
+
+**Goal.** Implement 5 key improvements across the Verryte engine and the wuthering-terminal tactical RPG prototype to support recursive entity hierarchies, grid blurring/tinting, A* pathfinding, procedural maze generation, and shield potions.
+
+**Changes.**
+- `crates/verryte-core/src/world.rs:241` - Updated `World::despawn` to automatically unlink child/parent relationships.
+- `crates/verryte-core/src/world.rs:2211` - Added `Parent` and `Children` components and `World::set_parent`, `World::remove_parent`, and `World::despawn_recursive`.
+- `crates/verryte-terminal/src/grid.rs:365` - Added post-processing methods `Grid::apply_filter`, `Grid::apply_blur`, `Grid::apply_tint`, and `Grid::adjust_hsv`.
+- `crates/verryte-map/src/lib.rs:1176` - Implemented A* pathfinding methods `TileGrid::astar4_ex`, `TileGrid::astar4`, `TileGrid::astar8_ex`, and `TileGrid::astar8`.
+- `crates/verryte-map/src/lib.rs:1867` - Implemented `TileGrid::generate_maze` using randomized DFS.
+- `prototype/wuthering-terminal/src/components.rs:164` - Added `RestoreShield(ShieldType, i32)` variant to `ItemEffect`.
+- `prototype/wuthering-terminal/src/game.rs:2648` - Handled `RestoreShield` item consumption, applying `ElementalShield` and triggering particles.
+- `prototype/wuthering-terminal/src/game.rs:120` - Spawned starting Aegis Elixir in Kael's inventory.
+- `prototype/wuthering-terminal/src/ui.rs:364` - Rendered shield potion descriptions in inventory.
+
+**Reasoning.** Hierarchical entities enable structural grouping and safe recursive despawn lifecycles. Grid-based filters (like blur, tint, and HSV shift) offer game developer tools for screen-wide effects (e.g. poison screen tinting, low HP blur). A* pathfinding scales better than Dijkstra BFS, while DFS maze generation expands procedural primitives. Integrating shield elixirs expands combat options in the RPG prototype.
+
+**Assumptions.** We assumed that grids should keep maze paths and walls distinct via generic parameter `T`.
+
+**Gotchas.** Adding starting items to Kael's inventory increased the default entity count in the RPG prototype world from 9 to 10, requiring test assertions updates. Fixing match braces prevented item entities from leaking.
+
+**Follow-ups.** None. All workspace checks and tests are clean.
