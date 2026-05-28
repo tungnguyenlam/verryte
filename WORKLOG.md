@@ -1981,3 +1981,27 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** Active dialogue blocks other actions in the router, so starting with active dialogue by default broke existing unit tests. We resolved this by isolating the intro dialogue trigger to interactive TTY startup while keeping unit tests green by default.
 
 **Follow-ups.** Dialogue portraits could be dynamically rendered using character sprites.
+
+## 2026-05-28 - Dialogue blip audio, eased screen shake/floating text, rich text log wrapping, and TTY mouse grid click
+
+**Goal.** Implement 6 key improvements across the Verryte terminal engine and the `wuthering-terminal` tactical RPG prototype to elevate styling, animation easing, typewriter audio, and mouse click coordinates mapping.
+
+**Changes.**
+- `crates/verryte-terminal/src/dialogue.rs:192` - Modified `DialogueState::update` to return newly typed char count.
+- `crates/verryte-terminal/src/vfx.rs:341` - Added `EasingMode` to `ScreenShake` with `new_eased()` constructor.
+- `crates/verryte-terminal/src/vfx.rs:478` - Added `start_y` and `EasingMode` to `FloatingText` with `new_eased()`.
+- `crates/verryte-terminal/src/grid.rs:1421` - Exposed `RichTextSegment` and implemented `Grid::parse_and_wrap_rich` wrapping.
+- `crates/verryte-terminal/src/widgets.rs:70` - Updated `MessageLogView::render` to dynamically parse and wrap rich text.
+- `prototype/wuthering-terminal/src/game.rs:2917` - Added dialogue SFX triggering.
+- `prototype/wuthering-terminal/src/game.rs:3703` - Added `Game::handle_mouse_click` screen-to-world coordination mapping.
+- `prototype/wuthering-terminal/src/main.rs:36` - Hooked left click events to map click coordinate actions.
+- `prototype/wuthering-terminal/src/systems.rs` - Triggered eased shakes/damage floats and styled battle log statements using rich text tags.
+- `prototype/wuthering-terminal/src/lib.rs:880` and `crates/verryte-terminal/src/grid.rs:1605` - Added tests.
+
+**Reasoning.** Integrating these systems makes the tactical RPG prototype feel premium and retro. Eased translations decelerate floats naturally. Dialogue typewriter SFX increases game-feel feedback. Rich text wrapping on log lines lets us color-code and stylize combat events (gold for crits, red/purple for reactions, green for healing). Hooking mouse clicks validates the Crossterm mouse input translation route into tactical grid selections.
+
+**Assumptions.** We assumed the terminal window layout keeps the HUD at the bottom height of 6, and that mouse clicks outside the tactical board map are ignored.
+
+**Gotchas.** Structural instantiations of `FloatingText` inside `prototype/vfx-demo/src/main.rs` broke when we added the new `start_y` and `easing` fields. We refactored `vfx-demo` to use the constructor method `FloatingText::new` instead, resolving compile errors without compromising visual demo behavior.
+
+**Follow-ups.** None. All workspace checks and tests are clean.
