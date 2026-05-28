@@ -2113,3 +2113,28 @@ from a prior session and were not touched.
 **Follow-ups.** The existing clippy warnings (10 in verryte-map, 3 in
 verryte-terminal) are pre-existing and not from this batch. Consider cleaning
 them in a dedicated clippy-fix pass.
+
+## 2026-05-29 - add Rect::contains_rect, Grid::is_empty
+
+**Goal.** Add two more engine primitives to reach the 5+ improvement target
+for the autonomous run.
+
+**Changes.**
+- `crates/verryte-terminal/src/layout.rs:42` - added `Rect::contains_rect(other)`
+  checking if one rect fully contains another. Complements the existing
+  `contains(x, y)` point containment. Tests at :331, :337, :343.
+- `crates/verryte-terminal/src/grid.rs:221` - added `Grid::is_empty()` returning
+  `true` when width or height is zero. Matches the existing `TileGrid::is_empty()`
+  pattern. Test at :1989.
+
+**Reasoning.** These fill small but genuine API gaps. `contains_rect` is the
+natural companion to `intersect` and `union` for layout composition. `is_empty`
+is a standard guard for zero-dimension grids that `TileGrid` already provides.
+
+**Assumptions.** `contains_rect` uses inclusive lower bound and exclusive upper
+bound, matching the existing `contains(x, y)` semantics. An empty rect does not
+contain anything (including itself) since its bounds are zero-width.
+
+**Gotchas.** None.
+
+**Follow-ups.** None.
