@@ -117,6 +117,10 @@ impl Game {
         let remedy = game
             .world
             .spawn_item("Cleanse Remedy", crate::components::ItemEffect::Cleanse);
+        let aegis = game.world.spawn_item(
+            "Aegis Elixir",
+            crate::components::ItemEffect::RestoreShield(crate::components::ShieldType::Physical, 30),
+        );
 
         if let Some(kael) = game
             .world
@@ -130,6 +134,7 @@ impl Game {
             if let Some(inv) = game.world.get_mut::<crate::components::Inventory>(kael) {
                 inv.items.push(potion);
                 inv.items.push(elixir);
+                inv.items.push(aegis);
             }
         }
         if let Some(mira) = game
@@ -2648,6 +2653,26 @@ impl Game {
                                         self.world.remove::<crate::components::Rooted>(entity);
                                         self.world.remove::<crate::components::Stunned>(entity);
                                         self.log("All negative statuses cleansed!");
+                                    }
+                                    crate::components::ItemEffect::RestoreShield(shield_type, amount) => {
+                                        self.world.insert(
+                                            entity,
+                                            crate::components::ElementalShield {
+                                                shield_type,
+                                                amount,
+                                                max_amount: amount,
+                                            },
+                                        );
+                                        self.log(format!(
+                                            "Shielded! Created a {} HP {:?} Shield.",
+                                            amount, shield_type
+                                        ));
+                                        let (tcx, tcy) = self.get_tile_center_pixels(
+                                            *self.world.get::<Position>(entity).unwrap(),
+                                        );
+                                        self.vfx_mut().particles.extend(
+                                            verryte_terminal::vfx::emit_ice(tcx, tcy, 15),
+                                        );
                                     }
                                 }
 

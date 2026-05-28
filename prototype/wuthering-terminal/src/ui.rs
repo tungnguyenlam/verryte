@@ -361,6 +361,7 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
                         crate::components::ItemEffect::Heal(v) => format!("(Heal {})", v),
                         crate::components::ItemEffect::ReplenishAp(v) => format!("(AP +{})", v),
                         crate::components::ItemEffect::Cleanse => "(Cleanse)".to_string(),
+                        crate::components::ItemEffect::RestoreShield(st, v) => format!("(Shield +{} {:?})", v, st),
                     };
                     grid.write_str(panel_rect.x + 25, y, &effect_str, Color::GREY, panel_bg);
                 }

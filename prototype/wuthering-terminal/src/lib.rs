@@ -26,7 +26,7 @@ mod tests {
     #[test]
     fn test_game_init() {
         let game = Game::new();
-        assert_eq!(game.world.entity_count(), 9); // 3 player chars + 1 boss + 2 shadow stalkers + 3 items
+        assert_eq!(game.world.entity_count(), 10); // 3 player chars + 1 boss + 2 shadow stalkers + 4 items
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -79,7 +79,7 @@ mod tests {
         );
 
         // Check that all entities are restored
-        assert_eq!(game2.world.entity_count(), 9);
+        assert_eq!(game2.world.entity_count(), 10);
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -753,7 +753,45 @@ mod tests {
                 .world
                 .get::<crate::components::Inventory>(warrior)
                 .unwrap();
-            assert_eq!(inv.items.len(), 1); // Had 2, used 1
+            assert_eq!(inv.items.len(), 2); // Had 3, used 1
+        }
+    }
+
+    #[test]
+    fn test_shield_elixir() {
+        let mut game = Game::new();
+
+        // Find Warrior
+        let warrior = game.world.query::<CharacterClass>().iter()
+            .find(|(_, class)| **class == CharacterClass::Warrior)
+            .map(|(e, _)| *e)
+            .unwrap();
+
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Open inventory
+        game.apply_action(Action::ToggleInventory, ActionSource::Terminal);
+
+        // Use Item 3 (Aegis Elixir)
+        game.apply_action(Action::Skill3, ActionSource::Terminal);
+
+        // Verify shield applied
+        {
+            let shield = game.world.get::<crate::components::ElementalShield>(warrior).unwrap();
+            assert_eq!(shield.shield_type, crate::components::ShieldType::Physical);
+            assert_eq!(shield.amount, 30);
+            assert_eq!(shield.max_amount, 30);
+        }
+
+        // Verify item consumed (starts with 3, uses 1, leaves 2)
+        {
+            let inv = game.world.get::<crate::components::Inventory>(warrior).unwrap();
+            assert_eq!(inv.items.len(), 2);
         }
     }
 

@@ -164,6 +164,7 @@ pub enum ItemEffect {
     Heal(i32),
     ReplenishAp(i32),
     Cleanse,
+    RestoreShield(ShieldType, i32),
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

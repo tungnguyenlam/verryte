@@ -362,6 +362,113 @@ impl Grid {
         }
     }
 
+    /// Apply a generic filter closure to all cells within the given `rect`.
+    pub fn apply_filter<F>(&mut self, rect: Rect, filter: F)
+    where
+        F: Fn(&mut Cell),
+    {
+        let x_start = rect.x;
+        let y_start = rect.y;
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+
+        for y in y_start..y_end {
+            for x in x_start..x_end {
+                if let Some(cell) = self.get_mut(x, y) {
+                    filter(cell);
+                }
+            }
+        }
+    }
+
+    /// Blur the foreground and background colors of cells within the given `rect`
+    /// using a box blur of the specified `radius`.
+    pub fn apply_blur(&mut self, rect: Rect, radius: usize) {
+        if radius == 0 {
+            return;
+        }
+        let temp = self.clone();
+        let x_start = rect.x;
+        let y_start = rect.y;
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+
+        for y in y_start..y_end {
+            for x in x_start..x_end {
+                let mut sum_fg_r = 0u32;
+                let mut sum_fg_g = 0u32;
+                let mut sum_fg_b = 0u32;
+                let mut sum_bg_r = 0u32;
+                let mut sum_bg_g = 0u32;
+                let mut sum_bg_b = 0u32;
+                let mut count = 0u32;
+
+                // Box boundaries
+                let ny_start = y.saturating_sub(radius as u16);
+                let ny_end = (y + radius as u16 + 1).min(self.height);
+                let nx_start = x.saturating_sub(radius as u16);
+                let nx_end = (x + radius as u16 + 1).min(self.width);
+
+                for ny in ny_start..ny_end {
+                    for nx in nx_start..nx_end {
+                        if let Some(cell) = temp.get(nx, ny) {
+                            sum_fg_r += cell.fg.0 as u32;
+                            sum_fg_g += cell.fg.1 as u32;
+                            sum_fg_b += cell.fg.2 as u32;
+                            sum_bg_r += cell.bg.0 as u32;
+                            sum_bg_g += cell.bg.1 as u32;
+                            sum_bg_b += cell.bg.2 as u32;
+                            count += 1;
+                        }
+                    }
+                }
+
+                if count > 0 {
+                    if let Some(cell) = self.get_mut(x, y) {
+                        cell.fg = Color(
+                            (sum_fg_r / count) as u8,
+                            (sum_fg_g / count) as u8,
+                            (sum_fg_b / count) as u8,
+                        );
+                        cell.bg = Color(
+                            (sum_bg_r / count) as u8,
+                            (sum_bg_g / count) as u8,
+                            (sum_bg_b / count) as u8,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tint the colors of cells within the given `rect` with a specified `tint` color
+    /// and `alpha` intensity (0.0 to 1.0) using the specified `BlendMode`.
+    pub fn apply_tint(&mut self, rect: Rect, tint: Color, alpha: f32, mode: crate::color::BlendMode) {
+        let alpha = alpha.clamp(0.0, 1.0);
+        if alpha <= 0.0 {
+            return;
+        }
+        self.apply_filter(rect, |cell| {
+            let blended_fg = cell.fg.blend(tint, mode);
+            cell.fg = cell.fg.blend_alpha(blended_fg, alpha);
+            let blended_bg = cell.bg.blend(tint, mode);
+            cell.bg = cell.bg.blend_alpha(blended_bg, alpha);
+        });
+    }
+
+    /// Adjust Hue, Saturation, and Value (Value/Brightness multiplier) of cells within the given `rect`.
+    pub fn adjust_hsv(&mut self, rect: Rect, h_shift: f32, s_mult: f32, v_mult: f32) {
+        self.apply_filter(rect, |cell| {
+            // Apply to FG
+            let (h, s, v) = cell.fg.to_hsv();
+            cell.fg = Color::from_hsv(h + h_shift, s * s_mult, v * v_mult);
+
+            // Apply to BG
+            let (h, s, v) = cell.bg.to_hsv();
+            cell.bg = Color::from_hsv(h + h_shift, s * s_mult, v * v_mult);
+        });
+    }
+
     pub fn viewport(&self, rect: Rect) -> Grid {
         let clipped = rect.intersect(Rect::new(0, 0, self.width, self.height));
         let mut out = Grid::new(clipped.width, clipped.height);
@@ -1756,5 +1863,44 @@ mod tests {
         assert_eq!(grid_pie.get(2, 2).unwrap().glyph, '*');
         assert_eq!(grid_pie.get(4, 2).unwrap().glyph, '*');
         assert_eq!(grid_pie.get(0, 2).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn test_grid_filters() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(0, 0, Cell::new('A').with_fg(Color(10, 20, 30)).with_bg(Color(40, 50, 60)));
+        grid.put(1, 0, Cell::new('B').with_fg(Color(100, 110, 120)).with_bg(Color(130, 140, 150)));
+
+        // Test apply_filter
+        grid.apply_filter(Rect::new(0, 0, 1, 1), |cell| {
+            cell.glyph = 'X';
+        });
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'X');
+        assert_eq!(grid.get(1, 0).unwrap().glyph, 'B');
+
+        // Test apply_blur
+        let mut grid_blur = Grid::new(3, 1);
+        grid_blur.put(0, 0, Cell::new('A').with_fg(Color(10, 10, 10)).with_bg(Color(0, 0, 0)));
+        grid_blur.put(1, 0, Cell::new('B').with_fg(Color(30, 30, 30)).with_bg(Color(100, 100, 100)));
+        grid_blur.put(2, 0, Cell::new('C').with_fg(Color(50, 50, 50)).with_bg(Color(200, 200, 200)));
+        grid_blur.apply_blur(Rect::new(0, 0, 3, 1), 1);
+        // The middle cell (1, 0) should average (10+30+50)/3 = 30 for fg and (0+100+200)/3 = 100 for bg
+        assert_eq!(grid_blur.get(1, 0).unwrap().fg, Color(30, 30, 30));
+        assert_eq!(grid_blur.get(1, 0).unwrap().bg, Color(100, 100, 100));
+
+        // Test apply_tint
+        let mut grid_tint = Grid::new(1, 1);
+        grid_tint.put(0, 0, Cell::new('A').with_fg(Color(100, 100, 100)).with_bg(Color(0, 0, 0)));
+        grid_tint.apply_tint(Rect::new(0, 0, 1, 1), Color(200, 200, 200), 0.5, crate::color::BlendMode::Normal);
+        // 100 * 0.5 + 200 * 0.5 = 150
+        assert_eq!(grid_tint.get(0, 0).unwrap().fg, Color(150, 150, 150));
+
+        // Test adjust_hsv
+        let mut grid_hsv = Grid::new(1, 1);
+        grid_hsv.put(0, 0, Cell::new('A').with_fg(Color(128, 64, 192)).with_bg(Color(0, 0, 0)));
+        grid_hsv.adjust_hsv(Rect::new(0, 0, 1, 1), 0.0, 1.0, 0.5); // Halve the brightness
+        let half_val = grid_hsv.get(0, 0).unwrap().fg;
+        // Verify value has decreased
+        assert!(half_val.0 < 128);
     }
 }

@@ -1173,6 +1173,182 @@ impl<T> TileGrid<T> {
     ///
     /// Each returned path includes `start` and the chosen target. Ties keep the
     /// first shortest path found in target iteration order.
+    /// A* pathfinder for 4-directional grids with custom cost and heuristic.
+    pub fn astar4_ex<F, C, H>(
+        &self,
+        start: Point,
+        goal: Point,
+        passable: F,
+        cost: C,
+        heuristic: H,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+        H: Fn(Point, Point) -> u32,
+    {
+        if !self.in_bounds(start) || !self.in_bounds(goal) {
+            return None;
+        }
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+        let h_score = heuristic(start, goal);
+        frontier.push(std::cmp::Reverse((h_score, start)));
+
+        while let Some(std::cmp::Reverse((_f, current))) = frontier.pop() {
+            if current == goal {
+                let mut path = vec![goal];
+                let mut step = goal;
+                while step != start {
+                    step = came_from[&step];
+                    path.push(step);
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            let current_g = g_score[&current];
+
+            for neighbor in current.neighbors4() {
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if neighbor != goal && !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = cost(current, neighbor, tile);
+                let tentative_g = current_g + step_cost;
+
+                let old_g = g_score.get(&neighbor).copied().unwrap_or(u32::MAX);
+                if tentative_g < old_g {
+                    g_score.insert(neighbor, tentative_g);
+                    came_from.insert(neighbor, current);
+                    let f_score = tentative_g + heuristic(neighbor, goal);
+                    frontier.push(std::cmp::Reverse((f_score, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// A* pathfinder for 4-directional grids using standard Manhattan distance heuristic.
+    pub fn astar4<F>(&self, start: Point, goal: Point, passable: F) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        self.astar4_ex(
+            start,
+            goal,
+            passable,
+            |_, _, _| 10,
+            |p1, p2| (p1.manhattan_distance(p2) as u32) * 10,
+        )
+    }
+
+    /// A* pathfinder for 8-directional grids with custom cost and heuristic.
+    pub fn astar8_ex<F, C, H>(
+        &self,
+        start: Point,
+        goal: Point,
+        passable: F,
+        cost: C,
+        heuristic: H,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+        H: Fn(Point, Point) -> u32,
+    {
+        if !self.in_bounds(start) || !self.in_bounds(goal) {
+            return None;
+        }
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+        let h_score = heuristic(start, goal);
+        frontier.push(std::cmp::Reverse((h_score, start)));
+
+        while let Some(std::cmp::Reverse((_f, current))) = frontier.pop() {
+            if current == goal {
+                let mut path = vec![goal];
+                let mut step = goal;
+                while step != start {
+                    step = came_from[&step];
+                    path.push(step);
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            let current_g = g_score[&current];
+
+            for neighbor in current.neighbors8() {
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if neighbor != goal && !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = cost(current, neighbor, tile);
+                let tentative_g = current_g + step_cost;
+
+                let old_g = g_score.get(&neighbor).copied().unwrap_or(u32::MAX);
+                if tentative_g < old_g {
+                    g_score.insert(neighbor, tentative_g);
+                    came_from.insert(neighbor, current);
+                    let f_score = tentative_g + heuristic(neighbor, goal);
+                    frontier.push(std::cmp::Reverse((f_score, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// A* pathfinder for 8-directional grids using standard Chebyshev/Octile distance heuristic.
+    pub fn astar8<F>(&self, start: Point, goal: Point, passable: F) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        self.astar8_ex(
+            start,
+            goal,
+            passable,
+            |p1, p2, _| {
+                let dx = (p1.x as i16 - p2.x as i16).abs();
+                let dy = (p1.y as i16 - p2.y as i16).abs();
+                if dx > 0 && dy > 0 {
+                    14 // Diagonal cost
+                } else {
+                    10 // Cardinal cost
+                }
+            },
+            |p1, p2| {
+                let dx = (p1.x as i16 - p2.x as i16).abs() as u32;
+                let dy = (p1.y as i16 - p2.y as i16).abs() as u32;
+                let min = dx.min(dy);
+                let max = dx.max(dy);
+                min * 14 + (max - min) * 10
+            },
+        )
+    }
+
     pub fn nearest_path4<I, F>(&self, start: Point, targets: I, passable: F) -> Option<Vec<Point>>
     where
         I: IntoIterator<Item = Point>,
@@ -1684,6 +1860,84 @@ impl<T> TileGrid<T> {
             if self.in_bounds(next) {
                 pos = next;
                 self.set(pos, floor.clone());
+            }
+        }
+    }
+
+    /// Generate a maze using the randomized depth-first search (recursive backtracker) algorithm.
+    ///
+    /// The entire grid is first filled with the `wall_tile`, then paths are carved.
+    /// Note that for the maze pathways to carve cleanly, the grid width and height should
+    /// ideally be odd numbers.
+    ///
+    /// The `seed` controls reproducibility.
+    pub fn generate_maze(&mut self, wall_tile: T, path_tile: T, seed: u64)
+    where
+        T: Clone,
+    {
+        // Fill the grid with wall_tile
+        self.fill(wall_tile.clone());
+
+        if self.width() < 3 || self.height() < 3 {
+            return;
+        }
+
+        // Simple xorshift64 PRNG for reproducibility without external deps.
+        let mut state = seed | 1; // Ensure non-zero.
+        let mut next_u64 = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        let mut visited = std::collections::HashSet::new();
+        let mut stack = Vec::new();
+
+        let start = Point::new(1, 1);
+        self.set(start, path_tile.clone());
+        visited.insert(start);
+        stack.push(start);
+
+        while let Some(current) = stack.last().copied() {
+            let mut neighbors = Vec::new();
+
+            // Check neighbors 2 steps away
+            let candidates = [
+                (0, -2), // North
+                (0, 2),  // South
+                (2, 0),  // East
+                (-2, 0), // West
+            ];
+
+            for &(dx, dy) in &candidates {
+                let nx = current.x + dx;
+                let ny = current.y + dy;
+                if nx > 0 && nx < self.width() as i16 - 1 && ny > 0 && ny < self.height() as i16 - 1 {
+                    let p = Point::new(nx, ny);
+                    if !visited.contains(&p) {
+                        neighbors.push((p, dx, dy));
+                    }
+                }
+            }
+
+            if !neighbors.is_empty() {
+                // Pick a random unvisited neighbor
+                let idx = (next_u64() as usize) % neighbors.len();
+                let (next_point, dx, dy) = neighbors[idx];
+
+                // Carve the wall between current and next_point
+                let mid_x = current.x + dx / 2;
+                let mid_y = current.y + dy / 2;
+                let mid_point = Point::new(mid_x, mid_y);
+
+                self.set(mid_point, path_tile.clone());
+                self.set(next_point, path_tile.clone());
+
+                visited.insert(next_point);
+                stack.push(next_point);
+            } else {
+                stack.pop();
             }
         }
     }
@@ -4430,6 +4684,51 @@ mod tests {
         // Start from an unreachable point (1, 1) which is not passable
         let path_unreachable = map.path_to(Point::new(1, 1), false);
         assert!(path_unreachable.is_empty());
+    }
+
+    #[test]
+    fn test_astar_pathfinding() {
+        let grid = TileGrid::new(5, 5, '.');
+        let start = Point::new(0, 0);
+        let goal = Point::new(4, 4);
+
+        // Standard 4-directional A*
+        let path4 = grid.astar4(start, goal, |_, _| true).unwrap();
+        assert_eq!(path4.first().copied(), Some(start));
+        assert_eq!(path4.last().copied(), Some(goal));
+        assert_eq!(path4.len(), 9); // 4 down + 4 right + 1 start = 9 points
+
+        // Standard 8-directional A*
+        let path8 = grid.astar8(start, goal, |_, _| true).unwrap();
+        assert_eq!(path8.first().copied(), Some(start));
+        assert_eq!(path8.last().copied(), Some(goal));
+        assert_eq!(path8.len(), 5); // 4 diagonals = 5 points
+
+        // Test with obstacles
+        let passable = |p: Point, _tile: &char| p != Point::new(1, 1) && p != Point::new(1, 0) && p != Point::new(0, 1);
+        let blocked_path = grid.astar4(start, goal, passable);
+        assert!(blocked_path.is_none());
+    }
+
+    #[test]
+    fn test_maze_generation() {
+        let mut grid = TileGrid::new(11, 11, '#');
+        let mut seed = 42u64;
+        grid.generate_maze('#', '.', seed);
+
+        // Bounds should still contain walls
+        for x in 0..11 {
+            assert_eq!(grid.get(Point::new(x, 0)).copied(), Some('#'));
+            assert_eq!(grid.get(Point::new(x, 10)).copied(), Some('#'));
+        }
+        for y in 0..11 {
+            assert_eq!(grid.get(Point::new(0, y)).copied(), Some('#'));
+            assert_eq!(grid.get(Point::new(10, y)).copied(), Some('#'));
+        }
+
+        // Inside should contain at least some paths '.'
+        let path_count = grid.tiles().iter().filter(|&&t| t == '.').count();
+        assert!(path_count > 10);
     }
 }
 

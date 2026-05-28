@@ -241,6 +241,20 @@ impl World {
         if !self.is_alive(entity) {
             return false;
         }
+
+        // Unlink parent-child relationships first
+        if let Some(parent) = self.remove::<Parent>(entity) {
+            if let Some(children) = self.get_mut::<Children>(parent.0) {
+                children.0.retain(|&c| c != entity);
+            }
+        }
+
+        if let Some(children) = self.remove::<Children>(entity) {
+            for child in children.0 {
+                self.remove::<Parent>(child);
+            }
+        }
+
         let idx = entity.index as usize;
         self.alive[idx] = false;
         for column in self.columns.values_mut() {
@@ -2194,6 +2208,99 @@ where
     }
 }
 
+/// Component identifying the parent of an entity in a hierarchy.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Parent(pub Entity);
+
+/// Component identifying the children of an entity in a hierarchy.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Children(pub Vec<Entity>);
+
+impl World {
+    /// Sets the parent of a child entity. If the child already had a parent, it is
+    /// removed from the old parent's child list first.
+    pub fn set_parent(&mut self, child: Entity, parent: Entity) {
+        if !self.is_alive(child) || !self.is_alive(parent) {
+            return;
+        }
+
+        // If the child already has a parent, remove it first
+        if let Some(old_parent) = self.get::<Parent>(child).map(|p| p.0) {
+            if old_parent == parent {
+                return; // Already the parent
+            }
+            if let Some(children) = self.get_mut::<Children>(old_parent) {
+                children.0.retain(|&c| c != child);
+            }
+        }
+
+        // Set the new parent
+        self.insert(child, Parent(parent));
+
+        // Add to the new parent's children list
+        if let Some(children) = self.get_mut::<Children>(parent) {
+            if !children.0.contains(&child) {
+                children.0.push(child);
+            }
+        } else {
+            self.insert(parent, Children(vec![child]));
+        }
+    }
+
+    /// Removes the parent link from a child entity, also removing it from the parent's children list.
+    pub fn remove_parent(&mut self, child: Entity) {
+        if !self.is_alive(child) {
+            return;
+        }
+
+        if let Some(parent) = self.remove::<Parent>(child) {
+            if let Some(children) = self.get_mut::<Children>(parent.0) {
+                children.0.retain(|&c| c != child);
+            }
+        }
+    }
+
+    /// Despawns an entity and all of its descendants recursively.
+    /// Returns the total number of entities despawned.
+    pub fn despawn_recursive(&mut self, entity: Entity) -> usize {
+        if !self.is_alive(entity) {
+            return 0;
+        }
+
+        // First remove from parent to prevent dangling reference in parent
+        self.remove_parent(entity);
+
+        let mut count = 0;
+        let mut to_despawn = vec![entity];
+        let mut idx = 0;
+
+        // BFS/DFS to collect all descendants
+        while idx < to_despawn.len() {
+            let current = to_despawn[idx];
+            idx += 1;
+
+            if let Some(children) = self.get::<Children>(current) {
+                for &child in &children.0 {
+                    if self.is_alive(child) && !to_despawn.contains(&child) {
+                        to_despawn.push(child);
+                    }
+                }
+            }
+        }
+
+        // Despawn all collected entities
+        for ent in to_despawn {
+            if self.despawn(ent) {
+                count += 1;
+            }
+        }
+
+        count
+    }
+}
+
 impl Default for World {
     fn default() -> Self {
         Self::new()
@@ -3189,5 +3296,43 @@ mod tests {
         assert_eq!(world.get::<Counter>(e1).unwrap().0, 15);
         assert_eq!(world.get::<Extra>(e1).unwrap().0, 50);
         assert!(world.get::<Flag>(e1).is_some());
+    }
+
+    #[test]
+    fn test_parent_child_hierarchy() {
+        let mut world = World::new();
+        let parent = world.spawn();
+        let child1 = world.spawn();
+        let child2 = world.spawn();
+
+        world.set_parent(child1, parent);
+        world.set_parent(child2, parent);
+
+        assert_eq!(world.get::<Parent>(child1).unwrap().0, parent);
+        assert_eq!(world.get::<Parent>(child2).unwrap().0, parent);
+
+        let children = world.get::<Children>(parent).unwrap();
+        assert_eq!(children.0.len(), 2);
+        assert!(children.0.contains(&child1));
+        assert!(children.0.contains(&child2));
+
+        // Test remove_parent
+        world.remove_parent(child1);
+        assert!(world.get::<Parent>(child1).is_none());
+        let children = world.get::<Children>(parent).unwrap();
+        assert_eq!(children.0.len(), 1);
+        assert!(!children.0.contains(&child1));
+        assert!(children.0.contains(&child2));
+
+        // Re-add and test recursive despawn
+        world.set_parent(child1, parent);
+        let sub_child = world.spawn();
+        world.set_parent(sub_child, child1);
+
+        assert_eq!(world.despawn_recursive(parent), 4); // parent, child1, child2, sub_child
+        assert!(!world.is_alive(parent));
+        assert!(!world.is_alive(child1));
+        assert!(!world.is_alive(child2));
+        assert!(!world.is_alive(sub_child));
     }
 }
