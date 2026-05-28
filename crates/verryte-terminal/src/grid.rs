@@ -218,6 +218,10 @@ impl Grid {
         self.height
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
     pub fn cells(&self) -> &[Cell] {
         &self.cells
     }
@@ -1984,5 +1988,17 @@ mod tests {
         let grid = Grid::new(2, 2);
         let matches = grid.find_all_cells(|c| c.glyph == 'Z');
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn grid_is_empty_for_zero_dimensions() {
+        let grid = Grid::new(0, 0);
+        assert!(grid.is_empty());
+        let grid2 = Grid::new(5, 0);
+        assert!(grid2.is_empty());
+        let grid3 = Grid::new(0, 5);
+        assert!(grid3.is_empty());
+        let grid4 = Grid::new(3, 3);
+        assert!(!grid4.is_empty());
     }
 }

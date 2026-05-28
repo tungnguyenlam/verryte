@@ -40,6 +40,13 @@ impl Rect {
         x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
     }
 
+    pub fn contains_rect(self, other: Rect) -> bool {
+        other.x >= self.x
+            && other.y >= self.y
+            && other.right() <= self.right()
+            && other.bottom() <= self.bottom()
+    }
+
     pub fn intersect(self, other: Rect) -> Rect {
         let x = self.x.max(other.x);
         let y = self.y.max(other.y);
@@ -326,6 +333,27 @@ mod tests {
     fn rect_union_many_empty_slice() {
         let u = Rect::union_many(&[]);
         assert_eq!(u, Rect::new(0, 0, 0, 0));
+    }
+
+    #[test]
+    fn rect_contains_rect_inside() {
+        let outer = Rect::new(0, 0, 10, 10);
+        let inner = Rect::new(2, 3, 4, 5);
+        assert!(outer.contains_rect(inner));
+        assert!(!inner.contains_rect(outer));
+    }
+
+    #[test]
+    fn rect_contains_rect_equal() {
+        let a = Rect::new(1, 2, 3, 4);
+        assert!(a.contains_rect(a));
+    }
+
+    #[test]
+    fn rect_contains_rect_outside() {
+        let outer = Rect::new(0, 0, 5, 5);
+        let beyond = Rect::new(3, 3, 5, 5);
+        assert!(!outer.contains_rect(beyond));
     }
 
     #[test]
