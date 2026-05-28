@@ -76,8 +76,17 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
             } else {
                 ""
             };
+            let shield_badge =
+                if let Some(shield) = world.get::<crate::components::ElementalShield>(sel_entity) {
+                    format!(
+                        " [SHIELD: {:?} ({}/{})]",
+                        shield.shield_type, shield.amount, shield.max_amount
+                    )
+                } else {
+                    "".to_string()
+                };
             selection_str = format!(
-                "Selected: {} (Lvl {} | HP: {}/{}, AP: {}/{}){}{}",
+                "Selected: {} (Lvl {} | HP: {}/{}, AP: {}/{}){}{}{}",
                 name,
                 stats.level,
                 stats.hp,
@@ -85,7 +94,8 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
                 stats.ap,
                 stats.max_ap,
                 status_badge,
-                root_badge
+                root_badge,
+                shield_badge
             );
         }
     }
@@ -140,7 +150,7 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         Tile::Water => "Water",
     };
 
-    let hovered_str = if let Some((_target_entity, target_team, target_stats, target_class)) =
+    let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
         get_entity_at(world, state.cursor)
     {
         let name = Game::get_class_name(target_class);
@@ -194,8 +204,17 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         } else {
             ""
         };
+        let shield_badge =
+            if let Some(shield) = world.get::<crate::components::ElementalShield>(target_entity) {
+                format!(
+                    " [SHIELD: {:?} ({}/{})]",
+                    shield.shield_type, shield.amount, shield.max_amount
+                )
+            } else {
+                "".to_string()
+            };
         format!(
-            "Tile: {} | Entity: {} (HP: {}/{}, AP: {}/{}, Team: {}){}{}",
+            "Tile: {} | Entity: {} (HP: {}/{}, AP: {}/{}, Team: {}){}{}{}",
             tile_type_str,
             name,
             target_stats.hp,
@@ -204,7 +223,8 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
             target_stats.max_ap,
             team_str,
             status_badge,
-            root_badge
+            root_badge,
+            shield_badge
         )
     } else {
         format!("Tile: {} | Entity: None", tile_type_str)

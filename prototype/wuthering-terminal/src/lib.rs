@@ -931,4 +931,113 @@ mod tests {
         // Just call it to verify it runs without panicking
         let _handled = game.handle_mouse_click(120, 40, 10, 10);
     }
+
+    #[test]
+    fn test_elemental_shields() {
+        use crate::components::{ElementalShield, ShieldType, Stats};
+
+        let mut game = Game::new();
+        let mut warrior_ent = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Warrior {
+                warrior_ent = Some(e);
+                break;
+            }
+        }
+        let warrior = warrior_ent.unwrap();
+        if let Some(stats) = game.world.get_mut::<Stats>(warrior) {
+            stats.hp = 1000;
+            stats.max_hp = 1000;
+        }
+
+        // Give Warrior an Ice shield of 50 capacity (max 50)
+        game.world.insert(
+            warrior,
+            ElementalShield {
+                shield_type: ShieldType::Ice,
+                amount: 50,
+                max_amount: 50,
+            },
+        );
+
+        // Verify shield is in place
+        {
+            let shield = game.world.get::<ElementalShield>(warrior).unwrap();
+            assert_eq!(shield.amount, 50);
+            assert_eq!(shield.shield_type, ShieldType::Ice);
+        }
+
+        // Get Warrior stats before the hit
+        let stats_before = game.world.get::<Stats>(warrior).unwrap().clone();
+
+        // Hit Warrior for 30 damage (which will result in at most 45 dmg, so it won't break the shield)
+        let (damage_dealt, defeated) = crate::systems::resolve_combat_hit(
+            &mut game.world,
+            warrior,
+            30,
+            "Attacker",
+            "Warrior",
+            Position::new(4, 4),
+        );
+
+        // Shield should absorb 100% of damage
+        let shield_after = game.world.get::<ElementalShield>(warrior).unwrap();
+        let absorbed_damage = 50 - shield_after.amount;
+        assert!(absorbed_damage == 30 || absorbed_damage == 45 || absorbed_damage == 15);
+        assert_eq!(damage_dealt, 0);
+
+        // Warrior HP should not have decreased
+        let stats_after = game.world.get::<Stats>(warrior).unwrap();
+        assert_eq!(stats_after.hp, stats_before.hp);
+        assert!(!defeated);
+
+        // Now hit the warrior for 100 damage (exceeds remaining shield amount of at most 35)
+        let stats_before_2 = game.world.get::<Stats>(warrior).unwrap().clone();
+
+        let (damage_dealt_2, defeated_2) = crate::systems::resolve_combat_hit(
+            &mut game.world,
+            warrior,
+            100,
+            "Attacker",
+            "Warrior",
+            Position::new(4, 4),
+        );
+
+        // Shield should be completely gone (broke and removed)
+        assert!(game.world.get::<ElementalShield>(warrior).is_none());
+
+        // HP should be reduced by the overflow (which is exactly the damage_dealt_2 returned)
+        let stats_after_2 = game.world.get::<Stats>(warrior).unwrap();
+        assert_eq!(stats_after_2.hp, stats_before_2.hp - damage_dealt_2);
+        assert!(!defeated_2);
+
+        // Test save/load snapshot of the shield
+        game.world.insert(
+            warrior,
+            ElementalShield {
+                shield_type: ShieldType::Lightning,
+                amount: 25,
+                max_amount: 30,
+            },
+        );
+
+        let serialized = game.save_state().unwrap();
+
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let mut warrior2_opt = None;
+        for (e, class) in game2.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Warrior {
+                warrior2_opt = Some(e);
+                break;
+            }
+        }
+        let warrior2 = warrior2_opt.unwrap();
+
+        let shield2 = game2.world.get::<ElementalShield>(warrior2).unwrap();
+        assert_eq!(shield2.amount, 25);
+        assert_eq!(shield2.max_amount, 30);
+        assert_eq!(shield2.shield_type, ShieldType::Lightning);
+    }
 }

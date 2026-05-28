@@ -804,6 +804,118 @@ impl Grid {
         }
     }
 
+    /// Draws a circular arc between start and end angles (in radians, clockwise from positive X axis).
+    pub fn draw_arc(
+        &mut self,
+        cx: i32,
+        cy: i32,
+        radius: u16,
+        start_angle: f32,
+        end_angle: f32,
+        cell: Cell,
+    ) {
+        if radius == 0 {
+            return;
+        }
+        let two_pi = std::f32::consts::TAU;
+        let start = start_angle.rem_euclid(two_pi);
+        let mut end = end_angle.rem_euclid(two_pi);
+        if end < start {
+            end += two_pi;
+        }
+
+        let is_angle_between = |angle: f32| -> bool {
+            let a = angle.rem_euclid(two_pi);
+            let a_plus = a + two_pi;
+            (start <= a && a <= end) || (start <= a_plus && a_plus <= end)
+        };
+
+        let mut x = 0i32;
+        let mut y = radius as i32;
+        let mut d = 1 - radius as i32;
+
+        let mut plot_if_between = |grid: &mut Grid, px: i32, py: i32| {
+            if px >= 0 && py >= 0 && (px as u16) < grid.width && (py as u16) < grid.height {
+                let dx = px - cx;
+                let dy = py - cy;
+                let angle = (dy as f32).atan2(dx as f32);
+                if is_angle_between(angle) {
+                    grid.put(px as u16, py as u16, cell);
+                }
+            }
+        };
+
+        while x <= y {
+            plot_if_between(self, cx + x, cy + y);
+            plot_if_between(self, cx - x, cy + y);
+            plot_if_between(self, cx + x, cy - y);
+            plot_if_between(self, cx - x, cy - y);
+            plot_if_between(self, cx + y, cy + x);
+            plot_if_between(self, cx - y, cy + x);
+            plot_if_between(self, cx + y, cy - x);
+            plot_if_between(self, cx - y, cy - x);
+
+            if d < 0 {
+                d += 2 * x + 3;
+            } else {
+                d += 2 * (x - y) + 5;
+                y -= 1;
+            }
+            x += 1;
+        }
+    }
+
+    /// Fills a pie slice (sector) defined by center, radius, and start/end angles in radians.
+    pub fn fill_pie(
+        &mut self,
+        cx: i32,
+        cy: i32,
+        radius: u16,
+        start_angle: f32,
+        end_angle: f32,
+        cell: Cell,
+    ) {
+        if radius == 0 {
+            return;
+        }
+        let r = radius as i32;
+        let r2 = r * r;
+        let two_pi = std::f32::consts::TAU;
+        let start = start_angle.rem_euclid(two_pi);
+        let mut end = end_angle.rem_euclid(two_pi);
+        if end < start {
+            end += two_pi;
+        }
+
+        let is_angle_between = |angle: f32| -> bool {
+            let a = angle.rem_euclid(two_pi);
+            let a_plus = a + two_pi;
+            (start <= a && a <= end) || (start <= a_plus && a_plus <= end)
+        };
+
+        for dy in -r..=r {
+            let dx_max = ((r2 - dy * dy) as f64).sqrt() as i32;
+            let py = cy + dy;
+            if py < 0 || py >= self.height as i32 {
+                continue;
+            }
+            for dx in -dx_max..=dx_max {
+                let px = cx + dx;
+                if px < 0 || px >= self.width as i32 {
+                    continue;
+                }
+                if dx == 0 && dy == 0 {
+                    self.put(px as u16, py as u16, cell);
+                    continue;
+                }
+                let angle = (dy as f32).atan2(dx as f32);
+                if is_angle_between(angle) {
+                    self.put(px as u16, py as u16, cell);
+                }
+            }
+        }
+    }
+
     pub fn draw_shadow(&mut self, rect: Rect) {
         // Draw a shadow to the right and bottom of the rect.
         // Right shadow: (rect.right, rect.y + 1) to (rect.right + 1, rect.bottom + 1)
@@ -1618,5 +1730,31 @@ mod tests {
         assert!(line[1].attrs.bold);
         assert_eq!(line[2].text, "!");
         assert_eq!(line[2].fg, Color::WHITE);
+    }
+
+    #[test]
+    fn test_grid_arc_and_pie() {
+        let mut grid = Grid::new(5, 5);
+        let cell = Cell::new('*');
+        // Draw arc from 0 to PI (bottom half of circle)
+        grid.draw_arc(2, 2, 2, 0.0, std::f32::consts::PI, cell);
+        // Assert center is empty
+        assert_eq!(grid.get(2, 2).unwrap().glyph, ' ');
+        // Assert bottom part has some points
+        assert_eq!(grid.get(2, 4).unwrap().glyph, '*');
+
+        let mut grid_pie = Grid::new(5, 5);
+        // Fill pie from -PI/4 to PI/4 (right slice)
+        grid_pie.fill_pie(
+            2,
+            2,
+            2,
+            -std::f32::consts::FRAC_PI_4,
+            std::f32::consts::FRAC_PI_4,
+            cell,
+        );
+        assert_eq!(grid_pie.get(2, 2).unwrap().glyph, '*');
+        assert_eq!(grid_pie.get(4, 2).unwrap().glyph, '*');
+        assert_eq!(grid_pie.get(0, 2).unwrap().glyph, ' ');
     }
 }

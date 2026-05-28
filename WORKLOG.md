@@ -2028,3 +2028,27 @@ were corrected to match actual dictionary iteration order.
 **Gotchas.** Clamping viewport coordinates must account for current camera zoom levels; otherwise, the camera would allow panning off-screen under higher zoom ratios. This was corrected by using zoomed dimensions when calculating boundary margins.
 
 **Follow-ups.** None. All unit and doc tests are passing cleanly.
+
+## 2026-05-28 - Autonomous improvements and RPG shield mechanics
+
+**Goal.** Complete 5 meaningful improvements across Verryte crates and integrate elemental shield mechanics in Wuthering Terminal.
+
+**Changes.**
+- `crates/verryte-terminal/src/grid.rs` - Added `draw_arc` and `fill_pie` radial drawing operations.
+- `crates/verryte-terminal/src/vfx.rs` - Implemented trajectory-based particle physics (`Straight`, `Spiral`, `Wave`).
+- `crates/verryte-core/src/world.rs` - Implemented concurrent ECS 5-queries (`query5`, `query_mut5`, `Query5`, `QueryMut5Guard`).
+- `crates/verryte-map/src/lib.rs` - Added edge checking `is_on_edge` and `perimeter_points`.
+- `crates/verryte-input/src/lib.rs` - Added prefix-matching input history search cycle autocomplete integration.
+- `prototype/wuthering-terminal/src/components.rs` - Declared `ElementalShield` and `ShieldType` components.
+- `prototype/wuthering-terminal/src/systems.rs` - Handled shield absorption, particle trajectory effects, float text, and reaction checks in `resolve_combat_hit`.
+- `prototype/wuthering-terminal/src/ui.rs` - Rendered shield status details on hovered and selected entities in HUD.
+- `prototype/wuthering-terminal/src/game.rs` - Serialized/deserialized shield and stunned components.
+- `prototype/wuthering-terminal/src/lib.rs` - Added comprehensive integration tests.
+
+**Reasoning.** We expanded visual, map, and text primitives across the general engine crates, enabling cleaner prototype implementations. The shield mechanics were integrated directly into the shared RPG combat simulation path (`resolve_combat_hit`) keeping gameplay observable.
+
+**Assumptions.** Assumed `Rng` sequence is time-based/seeded from world resource, so integration tests avoid exact deterministic bounds on random events by querying the returned actual damage values.
+
+**Gotchas.** Divergence of trajectory-based particles is dependent on lifetime progress; unit tests must update a non-zero number of frames to allow coordinate divergence, and wave trajectories only oscillate perpendicularly to the velocity vector.
+
+**Follow-ups.** Add shield restoration QTE skills or defensive elemental status reaction items to inventories.

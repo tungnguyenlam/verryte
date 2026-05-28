@@ -666,6 +666,40 @@ impl<T> TileGrid<T> {
         self.size.contains(point)
     }
 
+    /// Returns `true` if the point is on the outer edge (perimeter) of the grid.
+    pub fn is_on_edge(&self, point: Point) -> bool {
+        self.in_bounds(point)
+            && (point.x == 0
+                || point.y == 0
+                || point.x == self.size.width as i16 - 1
+                || point.y == self.size.height as i16 - 1)
+    }
+
+    /// Returns a list of all points on the perimeter of the grid.
+    pub fn perimeter_points(&self) -> Vec<Point> {
+        let mut points = Vec::new();
+        let w = self.size.width as i16;
+        let h = self.size.height as i16;
+        if w == 0 || h == 0 {
+            return points;
+        }
+        // Top and bottom edges
+        for x in 0..w {
+            points.push(Point::new(x, 0));
+            if h > 1 {
+                points.push(Point::new(x, h - 1));
+            }
+        }
+        // Left and right edges (excluding corners)
+        for y in 1..(h - 1) {
+            points.push(Point::new(0, y));
+            if w > 1 {
+                points.push(Point::new(w - 1, y));
+            }
+        }
+        points
+    }
+
     /// Returns `true` if the point is in bounds and its tile matches the predicate.
     ///
     /// Combines bounds checking and tile inspection in one call. Useful for
@@ -2842,6 +2876,20 @@ impl<T> SpatialHash<T> {
 mod tests {
     use super::*;
     use verryte_core::Rng;
+
+    #[test]
+    fn test_perimeter_points() {
+        let grid = TileGrid::new(3, 3, '.');
+        assert!(grid.is_on_edge(Point::new(0, 0)));
+        assert!(grid.is_on_edge(Point::new(2, 2)));
+        assert!(!grid.is_on_edge(Point::new(1, 1)));
+
+        let perim = grid.perimeter_points();
+        assert_eq!(perim.len(), 8);
+        assert!(perim.contains(&Point::new(0, 0)));
+        assert!(perim.contains(&Point::new(2, 2)));
+        assert!(!perim.contains(&Point::new(1, 1)));
+    }
 
     #[test]
     fn point_steps_by_direction() {

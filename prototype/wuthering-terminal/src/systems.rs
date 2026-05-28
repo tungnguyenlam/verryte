@@ -1,6 +1,6 @@
 use crate::components::{
-    BossPhase, CharacterClass, EchoItem, ElementalStatus, GameEvent, GameState, Outcome, Position,
-    Rooted, Stats, Team, TelegraphZone, TurnPhase,
+    BossPhase, CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState,
+    Outcome, Position, Rooted, ShieldType, Stats, Team, TelegraphZone, TurnPhase,
 };
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
@@ -781,10 +781,31 @@ pub fn resolve_combat_hit(
         }
     };
 
+    let mut shield_absorbed = 0;
+    let mut shield_broke = false;
+    let mut shield_type_opt = None;
+    let mut shield_remaining = 0;
+    if let Some(shield) = world.get_mut::<ElementalShield>(target) {
+        shield_type_opt = Some(shield.shield_type);
+        if shield.amount >= damage {
+            shield.amount -= damage;
+            shield_absorbed = damage;
+            shield_remaining = shield.amount;
+        } else {
+            shield_absorbed = shield.amount;
+            shield.amount = 0;
+            shield_broke = true;
+        }
+    }
+    if shield_broke {
+        world.remove::<ElementalShield>(target);
+    }
+
+    let actual_damage = damage - shield_absorbed;
     let mut defeated = false;
     let mut final_hp = 0;
     if let Some(stats) = world.get_mut::<Stats>(target) {
-        stats.hp -= damage;
+        stats.hp -= actual_damage;
         final_hp = stats.hp;
         if stats.hp <= 0 {
             defeated = true;
@@ -809,13 +830,39 @@ pub fn resolve_combat_hit(
     };
     log(world, log_msg);
 
+    if shield_absorbed > 0 {
+        let shield_name = match shield_type_opt.unwrap() {
+            ShieldType::Ice => "[fg:80D0FF]Ice Shield[/fg]",
+            ShieldType::Lightning => "[fg:FFD700]Lightning Shield[/fg]",
+            ShieldType::Nature => "[fg:50DC64]Nature Shield[/fg]",
+            ShieldType::Physical => "[fg:CCCCCC]Physical Shield[/fg]",
+        };
+        if shield_broke {
+            log(
+                world,
+                format!(
+                    "{}'s {} broke! It absorbed {} damage.",
+                    target_name, shield_name, shield_absorbed
+                ),
+            );
+        } else {
+            log(
+                world,
+                format!(
+                    "{}'s {} absorbed {} damage! (Shield HP: {})",
+                    target_name, shield_name, shield_absorbed, shield_remaining
+                ),
+            );
+        }
+    }
+
     let (tcx, tcy) = get_tile_center_pixels(world, pos);
     let float_text = if is_crit {
-        format!("CRIT! -{}", damage)
+        format!("CRIT! -{}", actual_damage)
     } else if is_block {
-        format!("BLOCK! -{}", damage)
+        format!("BLOCK! -{}", actual_damage)
     } else {
-        format!("-{}", damage)
+        format!("-{}", actual_damage)
     };
 
     let float_color = if is_crit {
@@ -846,6 +893,47 @@ pub fn resolve_combat_hit(
                 is_crit,
                 verryte_terminal::vfx::EasingMode::QuadOut,
             ));
+
+        if shield_absorbed > 0 {
+            let shield_color = match shield_type_opt.unwrap() {
+                ShieldType::Ice => Color(100, 200, 255),
+                ShieldType::Lightning => Color(255, 230, 50),
+                ShieldType::Nature => Color(50, 220, 100),
+                ShieldType::Physical => Color(160, 160, 160),
+            };
+            vfx.floating_texts
+                .push(verryte_terminal::vfx::FloatingText::new_eased(
+                    tcx + 2.0,
+                    tcy - 1.0,
+                    &format!("SHIELD -{}", shield_absorbed),
+                    shield_color,
+                    false,
+                    verryte_terminal::vfx::EasingMode::QuadOut,
+                ));
+
+            // Custom spiral particle trajectory for shield hits!
+            let mut shield_particles = Vec::new();
+            for i in 0..10 {
+                let angle = (i as f32 / 10.0) * std::f32::consts::TAU;
+                shield_particles.push(verryte_terminal::vfx::Particle {
+                    x: tcx,
+                    y: tcy,
+                    vx: angle.cos() * 1.5,
+                    vy: angle.sin() * 0.7,
+                    glyph: '✦',
+                    fg: shield_color,
+                    bg: Color::BLACK,
+                    lifetime: 0.5,
+                    max_lifetime: 0.5,
+                    attrs: verryte_terminal::CellAttrs::NONE.bold(),
+                    trajectory: verryte_terminal::vfx::Trajectory::Spiral {
+                        speed: 2.0,
+                        radius: 1.5,
+                    },
+                });
+            }
+            vfx.particles.extend(shield_particles);
+        }
 
         let flash_color = if is_crit {
             Color(255, 215, 0)
@@ -881,7 +969,7 @@ pub fn resolve_combat_hit(
             ));
     }
 
-    (damage, defeated)
+    (actual_damage, defeated)
 }
 
 pub fn handle_defeat(

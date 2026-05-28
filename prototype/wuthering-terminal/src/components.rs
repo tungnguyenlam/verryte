@@ -190,3 +190,18 @@ pub struct ReplayState {
 pub struct Inventory {
     pub items: Vec<verryte_core::Entity>,
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ShieldType {
+    Ice,
+    Lightning,
+    Nature,
+    Physical,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ElementalShield {
+    pub shield_type: ShieldType,
+    pub amount: i32,
+    pub max_amount: i32,
+}

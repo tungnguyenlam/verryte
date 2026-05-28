@@ -28,6 +28,6 @@ pub use layout::{Alignment, BorderStyle, Constraint, Layout, Rect};
 pub use math::easing;
 pub use palette::ColorPalette;
 pub use sprite::{Frame, ResolutionTier, Sprite, SpriteSheet};
-pub use vfx::{EasingMode, Flash, VfxEmitter};
+pub use vfx::{EasingMode, Flash, Particle, Trajectory, VfxEmitter};
 pub use viewport::TileViewport;
 pub use widgets::{MenuView, MessageLogView, PerformanceOverlay, ProgressBar};

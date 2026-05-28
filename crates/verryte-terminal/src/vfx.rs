@@ -5,6 +5,23 @@
 
 use crate::{Cell, CellAttrs, Color, Grid, Rect};
 
+// ── Trajectory ────────────────────────────────────────────────────────────────
+
+/// The movement trajectory pattern for a particle.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Trajectory {
+    Straight,
+    Spiral { speed: f32, radius: f32 },
+    Wave { frequency: f32, amplitude: f32 },
+}
+
+impl Default for Trajectory {
+    fn default() -> Self {
+        Self::Straight
+    }
+}
+
 // ── Particle ──────────────────────────────────────────────────────────────────
 
 /// A single particle with position, velocity, color, and lifetime.
@@ -21,9 +38,16 @@ pub struct Particle {
     pub lifetime: f32,
     pub max_lifetime: f32,
     pub attrs: CellAttrs,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub trajectory: Trajectory,
 }
 
 impl Particle {
+    pub fn with_trajectory(mut self, trajectory: Trajectory) -> Self {
+        self.trajectory = trajectory;
+        self
+    }
+
     /// Returns `true` if this particle is still alive.
     pub fn alive(&self) -> bool {
         self.lifetime > 0.0
@@ -85,6 +109,7 @@ impl VfxEmitter {
                 lifetime,
                 max_lifetime: lifetime,
                 attrs: CellAttrs::NONE.bold(),
+                trajectory: Trajectory::Straight,
             });
         }
         particles
@@ -116,6 +141,7 @@ pub fn emit_burst(cx: f32, cy: f32, count: usize, color: Color, glyphs: &[char])
             lifetime: 0.8 + (i as f32 * 0.13) % 0.5,
             max_lifetime: 0.8 + (i as f32 * 0.13) % 0.5,
             attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -144,6 +170,7 @@ pub fn emit_fire(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
             lifetime: 0.6 + (i as f32 * 0.17) % 0.6,
             max_lifetime: 0.6 + (i as f32 * 0.17) % 0.6,
             attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -173,6 +200,7 @@ pub fn emit_ice(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
             lifetime: 1.0 + (i as f32 * 0.19) % 0.8,
             max_lifetime: 1.0 + (i as f32 * 0.19) % 0.8,
             attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -205,6 +233,7 @@ pub fn emit_lightning(cx: f32, cy: f32, target_x: f32, target_y: f32) -> Vec<Par
             lifetime: 0.3 + (i as f32 * 0.05),
             max_lifetime: 0.3 + (i as f32 * 0.05),
             attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
         });
     }
     // Spark burst at target
@@ -221,6 +250,7 @@ pub fn emit_lightning(cx: f32, cy: f32, target_x: f32, target_y: f32) -> Vec<Par
             lifetime: 0.4,
             max_lifetime: 0.4,
             attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -244,6 +274,7 @@ pub fn emit_slash(cx: f32, cy: f32, direction: f32) -> Vec<Particle> {
             lifetime: 0.3 + t * 0.2,
             max_lifetime: 0.3 + t * 0.2,
             attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -272,6 +303,7 @@ pub fn emit_heal(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
             lifetime: 1.2 + (i as f32 * 0.11) % 0.5,
             max_lifetime: 1.2 + (i as f32 * 0.11) % 0.5,
             attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -301,6 +333,7 @@ pub fn emit_bloom(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
             lifetime: 0.8 + (i as f32 * 0.13) % 0.6,
             max_lifetime: 0.8 + (i as f32 * 0.13) % 0.6,
             attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -330,6 +363,7 @@ pub fn emit_shatter(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
             lifetime: 0.5 + (i as f32 * 0.09) % 0.4,
             max_lifetime: 0.5 + (i as f32 * 0.09) % 0.4,
             attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
         });
     }
     particles
@@ -630,9 +664,36 @@ impl VfxSystem {
 
     pub fn update(&mut self, dt: f32) {
         for p in &mut self.particles {
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.vy += 0.5 * dt;
+            let progress = (1.0 - p.alpha_ratio()).clamp(0.0, 1.0);
+            match p.trajectory {
+                Trajectory::Straight => {
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 0.5 * dt;
+                }
+                Trajectory::Spiral { speed, radius } => {
+                    let angle = progress * speed * std::f32::consts::TAU;
+                    let r = progress * radius;
+                    p.x += p.vx * dt + angle.cos() * r * dt;
+                    p.y += p.vy * dt + angle.sin() * r * 0.5 * dt;
+                }
+                Trajectory::Wave {
+                    frequency,
+                    amplitude,
+                } => {
+                    let wave = (progress * frequency * std::f32::consts::TAU).sin() * amplitude;
+                    let speed = (p.vx * p.vx + p.vy * p.vy).sqrt();
+                    if speed > 0.0 {
+                        let px = -p.vy / speed;
+                        let py = p.vx / speed;
+                        p.x += p.vx * dt + px * wave * dt;
+                        p.y += p.vy * dt + py * wave * dt;
+                    } else {
+                        p.x += p.vx * dt;
+                        p.y += (p.vy + wave) * dt;
+                    }
+                }
+            }
             p.lifetime -= dt;
         }
         self.particles.retain(|p| p.alive());
@@ -845,4 +906,80 @@ impl Default for VfxSystem {
 /// Blend two colors with the given alpha (0.0 = base, 1.0 = overlay).
 pub fn blend_color(base: Color, overlay: Color, alpha: f32) -> Color {
     base.blend_alpha(overlay, alpha)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CellAttrs;
+
+    #[test]
+    fn test_particle_trajectories() {
+        let mut vfx = VfxSystem::new();
+        // Create standard straight particle
+        vfx.particles.push(Particle {
+            x: 0.0,
+            y: 0.0,
+            vx: 1.0,
+            vy: 0.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
+        });
+
+        // Create spiral particle
+        vfx.particles.push(Particle {
+            x: 0.0,
+            y: 0.0,
+            vx: 1.0,
+            vy: 0.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Spiral {
+                speed: 1.0,
+                radius: 2.0,
+            },
+        });
+
+        // Create wave particle
+        vfx.particles.push(Particle {
+            x: 0.0,
+            y: 0.0,
+            vx: 1.0,
+            vy: 0.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Wave {
+                frequency: 2.0,
+                amplitude: 3.0,
+            },
+        });
+
+        // Run update multiple times so progress > 0.0 and trajectories diverge
+        vfx.update(0.1);
+        vfx.update(0.1);
+        vfx.update(0.1);
+
+        assert_eq!(vfx.particles.len(), 3);
+        // The positions should be different due to different trajectories
+        let p_straight = &vfx.particles[0];
+        let p_spiral = &vfx.particles[1];
+        let p_wave = &vfx.particles[2];
+
+        assert!(p_straight.x > 0.0);
+        assert_ne!(p_straight.x, p_spiral.x);
+        assert_ne!(p_straight.y, p_wave.y);
+    }
 }

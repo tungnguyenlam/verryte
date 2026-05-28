@@ -3484,6 +3484,10 @@ impl Game {
                     .copied(),
                 rooted: self.world.get::<crate::components::Rooted>(e).copied(),
                 stunned: self.world.get::<crate::components::Stunned>(e).copied(),
+                shield: self
+                    .world
+                    .get::<crate::components::ElementalShield>(e)
+                    .copied(),
             });
         }
 
@@ -3568,6 +3572,12 @@ impl Game {
             if let Some(r) = se.rooted {
                 builder = builder.with(r);
             }
+            if let Some(st) = se.stunned {
+                builder = builder.with(st);
+            }
+            if let Some(sh) = se.shield {
+                builder = builder.with(sh);
+            }
             // Note: In a real engine, we'd want to preserve the entity ID exactly,
             // but verryte-core's builder always spawns a new ID.
             // For this prototype, we'll assume relative order or just accept new IDs.
@@ -3642,6 +3652,10 @@ impl Game {
                 .world
                 .get::<crate::components::Stunned>(entity)
                 .copied();
+            let shield = self
+                .world
+                .get::<crate::components::ElementalShield>(entity)
+                .copied();
 
             entities.push(SavedEntity {
                 entity,
@@ -3653,6 +3667,7 @@ impl Game {
                 elemental_status,
                 rooted,
                 stunned,
+                shield,
             });
         }
 
@@ -3729,6 +3744,12 @@ impl Game {
             }
             if let Some(rooted) = saved.rooted {
                 self.world.insert(saved.entity, rooted);
+            }
+            if let Some(stunned) = saved.stunned {
+                self.world.insert(saved.entity, stunned);
+            }
+            if let Some(shield) = saved.shield {
+                self.world.insert(saved.entity, shield);
             }
         }
 

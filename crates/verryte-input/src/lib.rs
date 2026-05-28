@@ -2042,6 +2042,18 @@ impl TextInput {
         self.dirty = true;
     }
 
+    /// Cycle through autocomplete matches for the word before the cursor, including text input history as candidates.
+    pub fn cycle_autocomplete_with_history(&mut self, dictionary: &[&str]) {
+        let history: Vec<String> = self.history.clone();
+        let mut combined = dictionary.to_vec();
+        for h in &history {
+            if !combined.contains(&h.as_str()) {
+                combined.push(h.as_str());
+            }
+        }
+        self.cycle_autocomplete(&combined);
+    }
+
     /// Cycle through autocomplete matches for the word before the cursor.
     pub fn cycle_autocomplete(&mut self, dictionary: &[&str]) {
         if let Some(ref matches) = self.autocomplete_matches {
@@ -3677,6 +3689,19 @@ mod tests {
         // Now if we hit tab/autocomplete again with "inspectr", no match.
         input.cycle_autocomplete(&dict);
         assert_eq!(input.text(), "run inspectr");
+    }
+
+    #[test]
+    fn test_autocomplete_with_history() {
+        let mut input = TextInput::new();
+        input.set_text("super_cool_command".to_owned());
+        input.handle_key(Key::Enter); // Pushes to history
+
+        // Now clear and try prefix matching "super"
+        input.set_text("su".to_owned());
+        let dict = vec!["something_else"];
+        input.cycle_autocomplete_with_history(&dict);
+        assert_eq!(input.text(), "super_cool_command");
     }
 
     #[test]
