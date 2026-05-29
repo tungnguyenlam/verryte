@@ -1,0 +1,178 @@
+use crate::Point;
+
+/// A Dijkstra Map (also known as a distance field) for pathfinding, chasing, and fleeing.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DijkstraMap {
+    pub width: u16,
+    pub height: u16,
+    pub distances: Vec<Option<u32>>,
+}
+
+impl DijkstraMap {
+    /// Create a new empty Dijkstra map with the given dimensions.
+    pub fn new(width: u16, height: u16) -> Self {
+        Self {
+            width,
+            height,
+            distances: vec![None; (width as usize) * (height as usize)],
+        }
+    }
+
+    /// Compute distances from sources.
+    ///
+    /// `sources` are the targets/goals to chase (distance 0).
+    /// `passable` determines if a coordinate is walkable.
+    /// `diagonal` allows 8-way traversal if true, otherwise 4-way.
+    pub fn compute<F>(
+        width: u16,
+        height: u16,
+        sources: &[Point],
+        mut passable: F,
+        diagonal: bool,
+    ) -> Self
+    where
+        F: FnMut(Point) -> bool,
+    {
+        let mut map = Self::new(width, height);
+        let mut queue = std::collections::VecDeque::new();
+
+        for &source in sources {
+            if source.x >= 0 && source.x < width as i16 && source.y >= 0 && source.y < height as i16
+            {
+                let idx = (source.y as usize) * (width as usize) + (source.x as usize);
+                map.distances[idx] = Some(0);
+                queue.push_back((source, 0));
+            }
+        }
+
+        while let Some((point, dist)) = queue.pop_front() {
+            let next_dist = dist + 1;
+            let neighbors = if diagonal {
+                point.neighbors8().to_vec()
+            } else {
+                point.neighbors4().to_vec()
+            };
+
+            for neighbor in neighbors {
+                if neighbor.x >= 0
+                    && neighbor.x < width as i16
+                    && neighbor.y >= 0
+                    && neighbor.y < height as i16
+                    && passable(neighbor)
+                {
+                    let idx = (neighbor.y as usize) * (width as usize) + (neighbor.x as usize);
+                    if map.distances[idx].is_none() {
+                        map.distances[idx] = Some(next_dist);
+                        queue.push_back((neighbor, next_dist));
+                    }
+                }
+            }
+        }
+
+        map
+    }
+
+    /// Get distance at a point. Returns None if out of bounds or unreachable.
+    pub fn get(&self, point: Point) -> Option<u32> {
+        if point.x >= 0
+            && point.x < self.width as i16
+            && point.y >= 0
+            && point.y < self.height as i16
+        {
+            self.distances[(point.y as usize) * (self.width as usize) + (point.x as usize)]
+        } else {
+            None
+        }
+    }
+
+    /// Returns the neighbor point that has the lowest distance (toward sources).
+    ///
+    /// Returns None if all neighbors are unreachable or out of bounds.
+    pub fn chase_direction(&self, from: Point, diagonal: bool) -> Option<Point> {
+        let neighbors = if diagonal {
+            from.neighbors8().to_vec()
+        } else {
+            from.neighbors4().to_vec()
+        };
+
+        let mut best_point = None;
+        let mut best_dist = u32::MAX;
+
+        for n in neighbors {
+            if let Some(dist) = self.get(n) {
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_point = Some(n);
+                }
+            }
+        }
+
+        best_point
+    }
+
+    /// Returns the neighbor point that has the highest distance (away from sources).
+    ///
+    /// Returns None if all neighbors are unreachable or out of bounds.
+    pub fn flee_direction(&self, from: Point, diagonal: bool) -> Option<Point> {
+        let neighbors = if diagonal {
+            from.neighbors8().to_vec()
+        } else {
+            from.neighbors4().to_vec()
+        };
+
+        let mut best_point = None;
+        let mut best_dist = 0;
+        let mut found_any = false;
+
+        for n in neighbors {
+            if let Some(dist) = self.get(n) {
+                if dist > best_dist || (!found_any && dist >= best_dist) {
+                    best_dist = dist;
+                    best_point = Some(n);
+                    found_any = true;
+                }
+            }
+        }
+
+        best_point
+    }
+
+    /// Returns a path from the starting point to the nearest source.
+    ///
+    /// The path includes the starting point and the target source.
+    /// Returns an empty vector if the starting point is unreachable or already at a source.
+    pub fn path_to(&self, from: Point, diagonal: bool) -> Vec<Point> {
+        let mut path = Vec::new();
+        let mut current = from;
+
+        if self.get(current).is_none() {
+            return path;
+        }
+
+        path.push(current);
+
+        while let Some(dist) = self.get(current) {
+            if dist == 0 {
+                break;
+            }
+
+            if let Some(next) = self.chase_direction(current, diagonal) {
+                if next == current {
+                    break;
+                }
+                path.push(next);
+                current = next;
+            } else {
+                break;
+            }
+
+            // Safety break for cycles (though Dijkstra shouldn't have them)
+            if path.len() > (self.width as usize) * (self.height as usize) {
+                break;
+            }
+        }
+
+        path
+    }
+}

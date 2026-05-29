@@ -437,4 +437,246 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn translate_key_press_event() {
+        use crossterm::event::{KeyEvent, KeyEventKind as CtKind, KeyModifiers};
+
+        let evt = TermEvent::Key(KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::NONE,
+            kind: CtKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::Key { key, kind } => {
+                assert_eq!(key, Key::Char('a'));
+                assert_eq!(kind, verryte_input::KeyEventKind::Press);
+            }
+            _ => panic!("expected Key event"),
+        }
+    }
+
+    #[test]
+    fn translate_key_repeat_event() {
+        use crossterm::event::{KeyEvent, KeyEventKind as CtKind, KeyModifiers};
+
+        let evt = TermEvent::Key(KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::NONE,
+            kind: CtKind::Repeat,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::Key { kind, .. } => {
+                assert_eq!(kind, verryte_input::KeyEventKind::Repeat);
+            }
+            _ => panic!("expected Key event"),
+        }
+    }
+
+    #[test]
+    fn translate_key_release_event() {
+        use crossterm::event::{KeyEvent, KeyEventKind as CtKind, KeyModifiers};
+
+        let evt = TermEvent::Key(KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+            kind: CtKind::Release,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::Key { key, kind } => {
+                assert_eq!(key, Key::Esc);
+                assert_eq!(kind, verryte_input::KeyEventKind::Release);
+            }
+            _ => panic!("expected Key event"),
+        }
+    }
+
+    #[test]
+    fn translate_mouse_down_left() {
+        use crossterm::event::{MouseButton as CtMouseButton, MouseEvent, MouseEventKind};
+
+        let evt = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(CtMouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::Mouse {
+                x,
+                y,
+                button,
+                pressed,
+            } => {
+                assert_eq!(x, 10);
+                assert_eq!(y, 5);
+                assert_eq!(button, InputMouseButton::Left);
+                assert!(pressed);
+            }
+            _ => panic!("expected Mouse event"),
+        }
+    }
+
+    #[test]
+    fn translate_mouse_up_right() {
+        use crossterm::event::{MouseButton as CtMouseButton, MouseEvent, MouseEventKind};
+
+        let evt = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(CtMouseButton::Right),
+            column: 3,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::Mouse {
+                x,
+                y,
+                button,
+                pressed,
+            } => {
+                assert_eq!(x, 3);
+                assert_eq!(y, 7);
+                assert_eq!(button, InputMouseButton::Right);
+                assert!(!pressed);
+            }
+            _ => panic!("expected Mouse event"),
+        }
+    }
+
+    #[test]
+    fn translate_mouse_middle_button() {
+        use crossterm::event::{MouseButton as CtMouseButton, MouseEvent, MouseEventKind};
+
+        let evt = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(CtMouseButton::Middle),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::Mouse { button, .. } => {
+                assert_eq!(button, InputMouseButton::Middle);
+            }
+            _ => panic!("expected Mouse event"),
+        }
+    }
+
+    #[test]
+    fn translate_mouse_scroll_up() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+
+        let evt = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 12,
+            row: 8,
+            modifiers: KeyModifiers::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::MouseScroll { x, y, direction } => {
+                assert_eq!(x, 12);
+                assert_eq!(y, 8);
+                assert_eq!(direction, ScrollDirection::Up);
+            }
+            _ => panic!("expected MouseScroll event"),
+        }
+    }
+
+    #[test]
+    fn translate_mouse_scroll_down() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+
+        let evt = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 5,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::MouseScroll { direction, .. } => {
+                assert_eq!(direction, ScrollDirection::Down);
+            }
+            _ => panic!("expected MouseScroll event"),
+        }
+    }
+
+    #[test]
+    fn translate_mouse_scroll_left_and_right() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+
+        let left = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollLeft,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        match translate_event(left).unwrap() {
+            InputEvent::MouseScroll { direction, .. } => {
+                assert_eq!(direction, ScrollDirection::Left);
+            }
+            _ => panic!("expected ScrollLeft"),
+        }
+
+        let right = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollRight,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        match translate_event(right).unwrap() {
+            InputEvent::MouseScroll { direction, .. } => {
+                assert_eq!(direction, ScrollDirection::Right);
+            }
+            _ => panic!("expected ScrollRight"),
+        }
+    }
+
+    #[test]
+    fn translate_resize_event() {
+        let evt = TermEvent::Resize(120, 40);
+        let result = translate_event(evt).unwrap();
+        match result {
+            InputEvent::Resize { width, height } => {
+                assert_eq!(width, 120);
+                assert_eq!(height, 40);
+            }
+            _ => panic!("expected Resize event"),
+        }
+    }
+
+    #[test]
+    fn translate_mouse_drag_returns_none() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+
+        let evt = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(translate_event(evt).is_none());
+    }
+
+    #[test]
+    fn translate_mouse_move_returns_none() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+
+        let evt = TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(translate_event(evt).is_none());
+    }
 }

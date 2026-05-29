@@ -2246,3 +2246,51 @@ Both were fixed by adjusting test data and parameters.
 
 **Follow-ups.** The existing clippy warnings from prior sessions remain
 unchanged. A dedicated clippy-fix pass would be the natural next step.
+
+## 2026-05-29 - autonomous engine run: modularize verryte-map, add TTY translate tests, fix dead code
+
+**Goal.** Complete 3 meaningful improvements in one sustained autonomous run:
+modularize the verryte-map monolith, add translate_event test coverage to
+verryte-tty, and remove dead code from the wuthering-terminal action parser.
+
+**Changes.**
+- `crates/verryte-map/src/` - **[MAJOR REFACTOR]** Split the 5207-line monolithic
+  `lib.rs` into 12 focused modules: `point.rs` (Point, Point3), `rect.rs` (Rect),
+  `line.rs` (line_between, LineIter), `direction.rs` (Direction, Direction8),
+  `size.rs` (Size), `grid.rs` (TileGrid + cast_light), `bounds.rs` (Bounds),
+  `error.rs` (GridError), `spatial_hash.rs` (SpatialHash), `visibility.rs`
+  (Visibility, VisibilityMap), `dijkstra.rs` (DijkstraMap), `grid3.rs`
+  (TileGrid3). The new `lib.rs` is a 40-line module declaration and re-export hub.
+  All 134 existing tests pass unchanged.
+- `crates/verryte-tty/src/lib.rs` - added 12 `translate_event` unit tests covering
+  key press/repeat/release events, mouse down/up for all 3 buttons, scroll in all
+  4 directions, resize events, and drag/move events that return None. Total TTY
+  tests: 10 -> 22.
+- `prototype/wuthering-terminal/src/action.rs:172` - removed unreachable dead code:
+  a second `inspect` check after an early return that could never execute.
+
+**Reasoning.** The verryte-map monolith was the largest single file in the
+codebase (5207 lines, 39% tests). Splitting it into focused modules improves
+maintainability, makes the type hierarchy visible, and enables future
+contributors to work on individual types without navigating 5000+ lines. The
+module split preserves all public APIs via re-exports, so downstream code is
+unaffected. The TTY translate_event tests fill a genuine coverage gap: only
+map_key was tested, leaving the full event translation pipeline unverified.
+The dead code in action.rs was a logic error where `inspect` was checked twice
+with the second check being unreachable.
+
+**Assumptions.** Module re-exports in lib.rs preserve full backward compatibility.
+The test module uses `mod tests { mod tests { ... } }` nesting which works
+because Rust resolves `tests::tests::*` paths correctly. The dirty formatting
+changes in wuthering-terminal (from a prior session) are preserved as-is per
+the AGENTS.md rule about unrelated user changes.
+
+**Gotchas.** Each extracted module needed explicit `use crate::TypeName` imports
+since types are no longer in the same file. The test module's `use super::*;`
+was changed to `use crate::*;` since the tests are now a sibling module, not
+a child of the original lib.rs scope. The `use verryte_core::Rng;` import
+needed deduplication after the sed-based extraction.
+
+**Follow-ups.** Consider modularizing verryte-input (4180-line monolith) next.
+The TileGrid impl block in grid.rs (2218 lines) could be further split into
+pathfinding, generation, and query sub-modules.

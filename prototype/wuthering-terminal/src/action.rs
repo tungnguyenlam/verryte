@@ -169,9 +169,6 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
             return Some(Action::UseItem(idx.saturating_sub(1)));
         }
     }
-    if let Some(point) = inspect {
-        return Some(Action::Inspect(point));
-    }
     None
 }
 
