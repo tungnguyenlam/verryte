@@ -2186,3 +2186,63 @@ reformat the variant's fields onto separate lines, which triggered a formatting
 diff.
 
 **Follow-ups.** All 14 clippy warnings are now resolved. The workspace is clean.
+
+## 2026-05-29 - autonomous engine run: comprehensive test coverage for terminal modules
+
+**Goal.** Complete 6 meaningful improvements in one sustained autonomous run,
+adding comprehensive test coverage to 6 terminal modules that previously had
+zero or minimal tests.
+
+**Changes.**
+- `crates/verryte-terminal/src/vfx.rs` - added 17 unit tests covering:
+  Particle alive/alpha_ratio, VfxEmitter emit count and properties,
+  ScreenShake active/offset/easing/decay, Flash full_screen/region/alpha/eased,
+  FloatingText alive/alpha/eased, AoeRing alive/alpha, SpatialHighlight
+  alive/glyph, VfxSystem update (dead removal), VfxSystem shake offset
+  accumulation, VfxSystem render (particles/text/rings/highlights), VfxSystem
+  render_flash, all emitter presets (burst/fire/ice/lightning/slash/heal/bloom/shatter),
+  blend_color delegation, floating text eased movement, and particle gravity.
+- `crates/verryte-terminal/src/camera.rs` - added 11 unit tests covering:
+  Camera new defaults, with_smooth, look_at smooth/instant, zoom_to smooth/instant,
+  shake decay, top_left/viewport_rect at zoom 1.0 and 2.0, clamp_to_bounds
+  wide map and small viewport edge cases.
+- `crates/verryte-terminal/src/dialogue.rs` - added 12 unit tests covering:
+  DialogueState new, with_choices, update typing/finished/no_choices/with_choices,
+  skip_typing, next/prev_choice wrapping, empty choices noop, DialogueBox render
+  empty rect/basic/with_choices/with_portrait, theme application.
+- `crates/verryte-terminal/src/grid.rs` - added 8 unit tests covering:
+  apply_filter modification, apply_blur color averaging, apply_blur zero radius
+  noop, apply_tint blending, apply_tint zero alpha noop, adjust_hsv hue shift,
+  viewport clipping, viewport beyond grid bounds.
+- `crates/verryte-terminal/src/layer.rs` - added 8 unit tests covering:
+  Layer new, composite ordering, composite skips invisible, Layers add/get,
+  add replaces by name, remove, get_mut, composite via Layers, iter sorted.
+- `crates/verryte-terminal/src/widgets.rs` - added 16 unit tests covering:
+  ProgressBar new/builder/render/empty_rect, MenuView new/navigation/render/
+  empty_rect, MessageLogView new/builder/render/empty_rect, Tooltip new/builder/
+  render/clamps_to_grid, PerformanceOverlay render/empty_rect.
+
+**Reasoning.** The VFX, Camera, Dialogue, Grid post-processing, Layer, and
+Widget modules had zero or minimal test coverage despite being core rendering
+and UI primitives. The VFX module previously had only 1 test (trajectory
+divergence), covering none of ScreenShake, Flash, FloatingText, AoeRing,
+SpatialHighlight, or VfxSystem::render. The Camera had 1 test covering basic
+zoom/shake/clamp but not smooth interpolation or viewport rect calculation.
+The Dialogue module had zero tests. Grid post-processing methods (blur, tint,
+HSV adjustment) had zero tests. Layer and Widgets had zero tests. These modules
+are all part of the terminal rendering path that games rely on for visual
+presentation.
+
+**Assumptions.** Blur test creates a contrasting grid (white center, red
+neighbors) so blurring actually changes values. Dialogue typing test uses small
+dt to avoid completing all chars. VfxSystem render tests verify no-panic rather
+than pixel-perfect output, since visual correctness is better validated by
+interactive testing.
+
+**Gotchas.** The blur test initially failed because all cells had the same
+default color, so blurring was a no-op. The dialogue typing test initially
+completed all characters in one update step, making `is_typing()` return false.
+Both were fixed by adjusting test data and parameters.
+
+**Follow-ups.** The existing clippy warnings from prior sessions remain
+unchanged. A dedicated clippy-fix pass would be the natural next step.

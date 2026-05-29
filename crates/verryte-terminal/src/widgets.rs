@@ -424,3 +424,165 @@ impl Tooltip {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CellAttrs;
+
+    #[test]
+    fn test_progress_bar_new() {
+        let bar = ProgressBar::new(Rect::new(0, 0, 10, 1));
+        assert_eq!(bar.value, 0.0);
+        assert_eq!(bar.filled_char, '█');
+        assert_eq!(bar.empty_char, '░');
+    }
+
+    #[test]
+    fn test_progress_bar_builder() {
+        let bar = ProgressBar::new(Rect::new(0, 0, 10, 1))
+            .with_value(0.5)
+            .with_colors(Color::RED, Color::BLUE)
+            .with_chars('#', '-');
+        assert_eq!(bar.value, 0.5);
+        assert_eq!(bar.filled_color, Color::RED);
+        assert_eq!(bar.filled_char, '#');
+    }
+
+    #[test]
+    fn test_progress_bar_render() {
+        let bar = ProgressBar::new(Rect::new(0, 0, 10, 1)).with_value(0.5);
+        let mut grid = Grid::new(10, 1);
+        bar.render(&mut grid);
+        // 5 filled, 5 empty
+        assert_eq!(grid.get(0, 0).unwrap().glyph, '█');
+        assert_eq!(grid.get(4, 0).unwrap().glyph, '█');
+        assert_eq!(grid.get(5, 0).unwrap().glyph, '░');
+    }
+
+    #[test]
+    fn test_progress_bar_render_empty_rect() {
+        let bar = ProgressBar::new(Rect::new(0, 0, 0, 0));
+        let mut grid = Grid::new(5, 5);
+        bar.render(&mut grid);
+    }
+
+    #[test]
+    fn test_menu_view_new() {
+        let menu = MenuView::new(
+            Rect::new(0, 0, 10, 5),
+            vec!["A".into(), "B".into(), "C".into()],
+        );
+        assert_eq!(menu.selected_index, 0);
+        assert_eq!(menu.options.len(), 3);
+    }
+
+    #[test]
+    fn test_menu_view_navigation() {
+        let mut menu = MenuView::new(Rect::new(0, 0, 10, 5), vec!["A".into(), "B".into()]);
+        menu.next();
+        assert_eq!(menu.selected_index, 1);
+        menu.next();
+        assert_eq!(menu.selected_index, 0); // wraps
+        menu.prev();
+        assert_eq!(menu.selected_index, 1); // wraps
+    }
+
+    #[test]
+    fn test_menu_view_render() {
+        let menu = MenuView::new(
+            Rect::new(0, 0, 15, 5),
+            vec!["Option1".into(), "Option2".into()],
+        )
+        .with_border(BorderStyle::Rounded, Color::WHITE);
+        let mut grid = Grid::new(15, 5);
+        menu.render(&mut grid);
+    }
+
+    #[test]
+    fn test_menu_view_render_empty_rect() {
+        let menu = MenuView::new(Rect::new(0, 0, 0, 0), vec!["A".into()]);
+        let mut grid = Grid::new(5, 5);
+        menu.render(&mut grid);
+    }
+
+    #[test]
+    fn test_message_log_view_new() {
+        let view = MessageLogView::new(Rect::new(0, 0, 20, 5));
+        assert_eq!(view.fg, Color::WHITE);
+        assert_eq!(view.border, BorderStyle::None);
+    }
+
+    #[test]
+    fn test_message_log_view_builder() {
+        let view = MessageLogView::new(Rect::new(0, 0, 20, 5))
+            .with_border(BorderStyle::Rounded, Color::YELLOW)
+            .with_title("Log")
+            .with_colors(Color::GREEN, Color::BLACK);
+        assert_eq!(view.border, BorderStyle::Rounded);
+        assert_eq!(view.title, Some("Log".to_string()));
+    }
+
+    #[test]
+    fn test_message_log_view_render() {
+        let view = MessageLogView::new(Rect::new(0, 0, 20, 5));
+        let mut grid = Grid::new(20, 5);
+        let msgs = vec!["Hello".into(), "World".into()];
+        view.render(&mut grid, &msgs);
+    }
+
+    #[test]
+    fn test_message_log_view_render_empty_rect() {
+        let view = MessageLogView::new(Rect::new(0, 0, 0, 0));
+        let mut grid = Grid::new(5, 5);
+        view.render(&mut grid, &["msg".into()]);
+    }
+
+    #[test]
+    fn test_tooltip_new() {
+        let tip = Tooltip::new("Hello");
+        assert_eq!(tip.text, "Hello");
+        assert_eq!(tip.max_width, 30);
+    }
+
+    #[test]
+    fn test_tooltip_builder() {
+        let tip = Tooltip::new("test")
+            .with_colors(Color::RED, Color::BLACK)
+            .with_max_width(20);
+        assert_eq!(tip.fg, Color::RED);
+        assert_eq!(tip.max_width, 20);
+    }
+
+    #[test]
+    fn test_tooltip_render() {
+        let tip = Tooltip::new("Info text");
+        let mut grid = Grid::new(30, 10);
+        tip.render(&mut grid, 5, 5);
+    }
+
+    #[test]
+    fn test_tooltip_render_clamps_to_grid() {
+        let tip = Tooltip::new("Long text that goes off screen");
+        let mut grid = Grid::new(10, 5);
+        tip.render(&mut grid, 8, 3);
+    }
+
+    #[test]
+    fn test_performance_overlay_render() {
+        let overlay = PerformanceOverlay::new(Rect::new(0, 0, 20, 5));
+        let mut grid = Grid::new(20, 5);
+        let mut diag = verryte_core::diagnostics::Diagnostics::new();
+        diag.record("system_a", std::time::Duration::from_millis(5));
+        diag.record("system_b", std::time::Duration::from_millis(20));
+        overlay.render(&mut grid, &diag);
+    }
+
+    #[test]
+    fn test_performance_overlay_render_empty_rect() {
+        let overlay = PerformanceOverlay::new(Rect::new(0, 0, 0, 0));
+        let mut grid = Grid::new(5, 5);
+        let diag = verryte_core::diagnostics::Diagnostics::new();
+        overlay.render(&mut grid, &diag);
+    }
+}

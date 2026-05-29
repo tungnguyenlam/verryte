@@ -85,3 +85,113 @@ impl Layers {
         sorted.into_iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Cell;
+
+    #[test]
+    fn test_layer_new() {
+        let grid = Grid::new(5, 5);
+        let layer = Layer::new("bg", 0, grid.clone());
+        assert_eq!(layer.name, "bg");
+        assert_eq!(layer.order, 0);
+        assert!(layer.visible);
+    }
+
+    #[test]
+    fn test_layer_composite_ordering() {
+        let mut bg = Grid::new(3, 3);
+        bg.put(0, 0, Cell::new('B'));
+        let mut fg = Grid::new(3, 3);
+        fg.put(0, 0, Cell::new('F'));
+
+        let layers = vec![Layer::new("fg", 10, fg), Layer::new("bg", 0, bg)];
+        let mut target = Grid::new(3, 3);
+        Layer::composite(&layers, &mut target);
+        // Higher order (fg) should be on top
+        assert_eq!(target.get(0, 0).unwrap().glyph, 'F');
+    }
+
+    #[test]
+    fn test_layer_composite_skips_invisible() {
+        let mut bg = Grid::new(3, 3);
+        bg.put(0, 0, Cell::new('B'));
+        let mut fg = Grid::new(3, 3);
+        fg.put(0, 0, Cell::new('F'));
+
+        let mut fg_layer = Layer::new("fg", 10, fg);
+        fg_layer.visible = false;
+
+        let layers = vec![fg_layer, Layer::new("bg", 0, bg)];
+        let mut target = Grid::new(3, 3);
+        Layer::composite(&layers, &mut target);
+        assert_eq!(target.get(0, 0).unwrap().glyph, 'B');
+    }
+
+    #[test]
+    fn test_layers_add_and_get() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("a", 0, Grid::new(2, 2)));
+        layers.add(Layer::new("b", 1, Grid::new(2, 2)));
+        assert_eq!(layers.len(), 2);
+        assert!(layers.get("a").is_some());
+        assert!(layers.get("b").is_some());
+        assert!(layers.get("c").is_none());
+    }
+
+    #[test]
+    fn test_layers_add_replaces_by_name() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("x", 0, Grid::new(2, 2)));
+        layers.add(Layer::new("x", 1, Grid::new(3, 3)));
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers.get("x").unwrap().order, 1);
+    }
+
+    #[test]
+    fn test_layers_remove() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("a", 0, Grid::new(2, 2)));
+        assert!(layers.remove("a"));
+        assert!(!layers.remove("a"));
+        assert!(layers.is_empty());
+    }
+
+    #[test]
+    fn test_layers_get_mut() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("a", 0, Grid::new(2, 2)));
+        if let Some(layer) = layers.get_mut("a") {
+            layer.visible = false;
+        }
+        assert!(!layers.get("a").unwrap().visible);
+    }
+
+    #[test]
+    fn test_layers_composite() {
+        let mut bg = Grid::new(3, 3);
+        bg.put(0, 0, Cell::new('A'));
+        let mut fg = Grid::new(3, 3);
+        fg.put(0, 0, Cell::new('Z'));
+
+        let mut layers = Layers::new();
+        layers.add(Layer::new("bg", 0, bg));
+        layers.add(Layer::new("fg", 10, fg));
+
+        let mut target = Grid::new(3, 3);
+        layers.composite(&mut target);
+        assert_eq!(target.get(0, 0).unwrap().glyph, 'Z');
+    }
+
+    #[test]
+    fn test_layers_iter_sorted() {
+        let mut layers = Layers::new();
+        layers.add(Layer::new("c", 20, Grid::new(1, 1)));
+        layers.add(Layer::new("a", 0, Grid::new(1, 1)));
+        layers.add(Layer::new("b", 10, Grid::new(1, 1)));
+        let names: Vec<_> = layers.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+}

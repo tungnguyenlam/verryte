@@ -161,6 +161,126 @@ mod tests {
     use verryte_core::Rng;
 
     #[test]
+    fn test_camera_new_defaults() {
+        let cam = Camera::new(0.0, 0.0);
+        assert_eq!(cam.center_x, 0.0);
+        assert_eq!(cam.center_y, 0.0);
+        assert_eq!(cam.zoom, 1.0);
+        assert!(!cam.smooth);
+        assert_eq!(cam.target_x, 0.0);
+        assert_eq!(cam.target_y, 0.0);
+        assert_eq!(cam.lerp_factor, 0.1);
+    }
+
+    #[test]
+    fn test_camera_with_smooth() {
+        let cam = Camera::new(5.0, 5.0).with_smooth(0.2);
+        assert!(cam.smooth);
+        assert_eq!(cam.lerp_factor, 0.2);
+    }
+
+    #[test]
+    fn test_camera_look_at_smooth() {
+        let mut cam = Camera::new(0.0, 0.0).with_smooth(0.1);
+        cam.look_at(10.0, 10.0);
+        assert_eq!(cam.center_x, 0.0);
+        assert_eq!(cam.target_x, 10.0);
+
+        let mut rng = Rng::seed(1);
+        cam.tick(&mut rng);
+        assert!(cam.center_x > 0.0);
+        assert!(cam.center_x < 10.0);
+    }
+
+    #[test]
+    fn test_camera_look_at_instant() {
+        let mut cam = Camera::new(0.0, 0.0);
+        cam.look_at(10.0, 10.0);
+        assert_eq!(cam.center_x, 10.0);
+        assert_eq!(cam.center_y, 10.0);
+    }
+
+    #[test]
+    fn test_camera_zoom_to_smooth() {
+        let mut cam = Camera::new(0.0, 0.0).with_smooth(0.5);
+        cam.zoom_to(2.0);
+        assert_eq!(cam.zoom, 1.0);
+        assert_eq!(cam.target_zoom, 2.0);
+
+        let mut rng = Rng::seed(1);
+        cam.tick(&mut rng);
+        assert!(cam.zoom > 1.0);
+        assert!(cam.zoom < 2.0);
+    }
+
+    #[test]
+    fn test_camera_zoom_to_instant() {
+        let mut cam = Camera::new(0.0, 0.0);
+        cam.zoom_to(3.0);
+        assert_eq!(cam.zoom, 3.0);
+    }
+
+    #[test]
+    fn test_camera_shake_decay() {
+        let mut cam = Camera::new(0.0, 0.0);
+        cam.shake(10.0);
+        let mut rng = Rng::seed(42);
+
+        cam.tick(&mut rng);
+        assert!(cam.shake_intensity < 10.0);
+        assert!(cam.shake_intensity > 0.0);
+
+        for _ in 0..100 {
+            cam.tick(&mut rng);
+        }
+        assert_eq!(cam.shake_intensity, 0.0);
+        assert_eq!(cam.shake_offset_x, 0.0);
+    }
+
+    #[test]
+    fn test_camera_top_left_and_viewport_rect() {
+        let cam = Camera::new(10.0, 10.0);
+        let (x, y) = cam.top_left(20, 20);
+        assert_eq!(x, 0);
+        assert_eq!(y, 0);
+
+        let rect = cam.viewport_rect(20, 20);
+        assert_eq!(rect.x, 0);
+        assert_eq!(rect.y, 0);
+        assert_eq!(rect.width, 20);
+        assert_eq!(rect.height, 20);
+    }
+
+    #[test]
+    fn test_camera_viewport_rect_zoomed() {
+        let mut cam = Camera::new(10.0, 10.0);
+        cam.set_zoom(2.0);
+        let rect = cam.viewport_rect(20, 20);
+        assert_eq!(rect.width, 10);
+        assert_eq!(rect.height, 10);
+    }
+
+    #[test]
+    fn test_camera_clamp_to_bounds_wide_map() {
+        let mut cam = Camera::new(50.0, 50.0);
+        cam.clamp_to_bounds(0.0, 0.0, 100.0, 100.0, 20, 20);
+        assert_eq!(cam.center_x, 50.0);
+        assert_eq!(cam.center_y, 50.0);
+
+        cam.look_at(200.0, 200.0);
+        cam.clamp_to_bounds(0.0, 0.0, 100.0, 100.0, 20, 20);
+        assert!(cam.center_x <= 100.0);
+    }
+
+    #[test]
+    fn test_camera_clamp_small_viewport() {
+        let mut cam = Camera::new(5.0, 5.0);
+        // Viewport wider than map: should center
+        cam.clamp_to_bounds(0.0, 0.0, 5.0, 5.0, 10, 10);
+        assert_eq!(cam.center_x, 2.5);
+    }
+
+    #[test]
     fn test_camera_zoom_shake_clamp() {
         let mut camera = Camera::new(10.0, 10.0);
         assert_eq!(camera.zoom, 1.0);

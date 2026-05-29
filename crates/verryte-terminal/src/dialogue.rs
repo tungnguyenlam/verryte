@@ -231,3 +231,133 @@ impl DialogueState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dialogue_state_new() {
+        let state = DialogueState::new("Title", "Hello world");
+        assert_eq!(state.title, "Title");
+        assert_eq!(state.text, "Hello world");
+        assert!(state.choices.is_empty());
+        assert_eq!(state.selected_choice, 0);
+        assert_eq!(state.visible_chars, 0.0);
+        assert!(!state.finished);
+        assert!(state.chosen.is_none());
+    }
+
+    #[test]
+    fn test_dialogue_state_with_choices() {
+        let state = DialogueState::new("T", "text").with_choices(vec!["Yes".into(), "No".into()]);
+        assert_eq!(state.choices.len(), 2);
+    }
+
+    #[test]
+    fn test_dialogue_state_update_typing() {
+        let mut state = DialogueState::new("T", "abcdef");
+        let chars = state.update(0.1, 3.0); // 3 chars/sec * 0.1 sec = 0.3 chars
+        assert_eq!(chars, 0); // not enough for a full char
+        assert!(state.is_typing());
+    }
+
+    #[test]
+    fn test_dialogue_state_update_finished_no_choices() {
+        let mut state = DialogueState::new("T", "ab");
+        state.update(1.0, 100.0);
+        assert!(!state.is_typing());
+        assert!(state.finished);
+    }
+
+    #[test]
+    fn test_dialogue_state_update_finished_with_choices() {
+        let mut state = DialogueState::new("T", "ab").with_choices(vec!["A".into(), "B".into()]);
+        state.update(1.0, 100.0);
+        assert!(!state.is_typing());
+        assert!(!state.finished);
+    }
+
+    #[test]
+    fn test_dialogue_state_skip_typing() {
+        let mut state = DialogueState::new("T", "long text here");
+        state.skip_typing();
+        assert!(!state.is_typing());
+        assert!(state.finished);
+    }
+
+    #[test]
+    fn test_dialogue_state_skip_with_choices() {
+        let mut state = DialogueState::new("T", "text").with_choices(vec!["A".into()]);
+        state.skip_typing();
+        assert!(!state.is_typing());
+        assert!(!state.finished);
+    }
+
+    #[test]
+    fn test_dialogue_state_next_prev_choice() {
+        let mut state =
+            DialogueState::new("T", "text").with_choices(vec!["A".into(), "B".into(), "C".into()]);
+        assert_eq!(state.selected_choice, 0);
+        state.next_choice();
+        assert_eq!(state.selected_choice, 1);
+        state.next_choice();
+        assert_eq!(state.selected_choice, 2);
+        state.next_choice();
+        assert_eq!(state.selected_choice, 0);
+        state.prev_choice();
+        assert_eq!(state.selected_choice, 2);
+    }
+
+    #[test]
+    fn test_dialogue_state_empty_choices_noop() {
+        let mut state = DialogueState::new("T", "text");
+        state.next_choice();
+        state.prev_choice();
+        assert_eq!(state.selected_choice, 0);
+    }
+
+    #[test]
+    fn test_dialogue_box_render_empty_rect() {
+        let b = DialogueBox::new(Rect::new(0, 0, 0, 0));
+        let mut grid = Grid::new(20, 20);
+        b.render(&mut grid, "T", "Text", 0, None, &[], None);
+    }
+
+    #[test]
+    fn test_dialogue_box_render_basic() {
+        let b = DialogueBox::new(Rect::new(2, 2, 16, 8));
+        let mut grid = Grid::new(20, 20);
+        b.render(&mut grid, "Title", "Hello", 5, None, &[], None);
+    }
+
+    #[test]
+    fn test_dialogue_box_render_with_choices() {
+        let b = DialogueBox::new(Rect::new(2, 2, 20, 12));
+        let mut grid = Grid::new(30, 20);
+        let choices = vec!["Yes".into(), "No".into()];
+        b.render(&mut grid, "Q", "Question?", 100, None, &choices, Some(0));
+    }
+
+    #[test]
+    fn test_dialogue_box_render_with_portrait() {
+        let b = DialogueBox::new(Rect::new(2, 2, 20, 10));
+        let mut grid = Grid::new(30, 20);
+        let portrait = Grid::new(6, 6);
+        b.render(&mut grid, "Title", "Text", 4, Some(&portrait), &[], None);
+    }
+
+    #[test]
+    fn test_dialogue_box_themes() {
+        for theme in [
+            DialogueTheme::Arcane,
+            DialogueTheme::Forest,
+            DialogueTheme::Blood,
+            DialogueTheme::Frost,
+            DialogueTheme::Dungeon,
+        ] {
+            let b = DialogueBox::new(Rect::new(0, 0, 10, 5)).with_theme(theme);
+            assert_ne!(b.border_color, Color::BLACK);
+        }
+    }
+}

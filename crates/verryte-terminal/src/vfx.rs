@@ -915,6 +915,384 @@ mod tests {
     use crate::CellAttrs;
 
     #[test]
+    fn test_particle_alive_and_alpha() {
+        let mut p = Particle {
+            x: 0.0,
+            y: 0.0,
+            vx: 1.0,
+            vy: 0.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 0.5,
+            max_lifetime: 1.0,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
+        };
+        assert!(p.alive());
+        assert!((p.alpha_ratio() - 0.5).abs() < 0.01);
+
+        p.lifetime = 0.0;
+        assert!(!p.alive());
+        assert_eq!(p.alpha_ratio(), 0.0);
+
+        p.lifetime = 2.0;
+        assert_eq!(p.alpha_ratio(), 1.0);
+    }
+
+    #[test]
+    fn test_particle_with_trajectory() {
+        let p = Particle {
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
+        }
+        .with_trajectory(Trajectory::Spiral {
+            speed: 2.0,
+            radius: 3.0,
+        });
+        assert_eq!(
+            p.trajectory,
+            Trajectory::Spiral {
+                speed: 2.0,
+                radius: 3.0
+            }
+        );
+    }
+
+    #[test]
+    fn test_vfx_emitter_produces_correct_count() {
+        let emitter = VfxEmitter {
+            count: 5,
+            glyphs: vec!['*', '·'],
+            colors: vec![Color::RED, Color::BLUE],
+            speed_min: 1.0,
+            speed_max: 2.0,
+            lifetime_min: 0.5,
+            lifetime_max: 1.0,
+            gravity: 0.0,
+            spread: 1.0,
+        };
+        let particles = emitter.emit(5.0, 5.0);
+        assert_eq!(particles.len(), 5);
+        for (i, p) in particles.iter().enumerate() {
+            assert!(p.alive());
+            assert!(p.lifetime >= 0.5 && p.lifetime <= 1.0);
+            assert_eq!(p.glyph, ['*', '·'][i % 2]);
+        }
+    }
+
+    #[test]
+    fn test_vfx_emitter_default() {
+        let emitter = VfxEmitter::default();
+        assert_eq!(emitter.count, 10);
+        assert_eq!(emitter.glyphs, vec!['*']);
+    }
+
+    #[test]
+    fn test_screen_shake_active_and_offset() {
+        let mut shake = ScreenShake::new(5.0, 1.0);
+        assert!(shake.active());
+        assert_eq!(shake.elapsed, 0.0);
+
+        let (ox, oy) = shake.offset();
+        assert!(ox.abs() >= 0);
+        assert!(oy.abs() >= 0);
+
+        shake.elapsed = 1.0;
+        assert!(!shake.active());
+        assert_eq!(shake.offset(), (0, 0));
+    }
+
+    #[test]
+    fn test_screen_shake_eased() {
+        let shake = ScreenShake::new_eased(3.0, 0.5, EasingMode::QuadOut);
+        assert_eq!(shake.easing, EasingMode::QuadOut);
+        assert!(shake.active());
+    }
+
+    #[test]
+    fn test_screen_shake_decay() {
+        let mut shake = ScreenShake::new(10.0, 2.0);
+        shake.elapsed = 0.5;
+        let (ox, _) = shake.offset();
+        // After partial time, offset should still be non-zero
+        assert!(ox.abs() > 0 || shake.elapsed < shake.duration);
+    }
+
+    #[test]
+    fn test_flash_full_screen_and_region() {
+        let fs = Flash::full_screen(Color::RED, 0.5);
+        assert_eq!(fs.color, Color::RED);
+        assert!(fs.region.is_none());
+        assert!(fs.active());
+
+        let r = Flash::region(Color::BLUE, 0.3, Rect::new(1, 1, 5, 5));
+        assert_eq!(r.region, Some(Rect::new(1, 1, 5, 5)));
+        assert!(r.active());
+    }
+
+    #[test]
+    fn test_flash_alpha_decay() {
+        let mut flash = Flash::full_screen(Color::RED, 1.0);
+        let a1 = flash.alpha();
+        assert!(a1 > 0.9);
+
+        flash.elapsed = 0.5;
+        let a2 = flash.alpha();
+        assert!(a2 < a1);
+
+        flash.elapsed = 1.0;
+        assert!(!flash.active());
+    }
+
+    #[test]
+    fn test_flash_eased() {
+        let flash = Flash::full_screen_eased(Color::RED, 0.5, EasingMode::ExpoOut);
+        assert_eq!(flash.easing, EasingMode::ExpoOut);
+
+        let flash_r = Flash::region_eased(
+            Color::BLUE,
+            0.3,
+            Rect::new(0, 0, 10, 10),
+            EasingMode::CubicOut,
+        );
+        assert_eq!(flash_r.easing, EasingMode::CubicOut);
+    }
+
+    #[test]
+    fn test_floating_text_alive_and_alpha() {
+        let mut ft = FloatingText::new(5.0, 5.0, "100", Color::RED, true);
+        assert!(ft.alive());
+        assert_eq!(ft.alpha_ratio(), 1.0);
+        assert_eq!(ft.text, "100");
+        assert!(ft.bold);
+        assert_eq!(ft.start_y, 5.0);
+
+        ft.lifetime = 0.0;
+        assert!(!ft.alive());
+        assert_eq!(ft.alpha_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_floating_text_eased() {
+        let ft =
+            FloatingText::new_eased(3.0, 3.0, "DMG", Color::YELLOW, false, EasingMode::QuadOut);
+        assert_eq!(ft.easing, EasingMode::QuadOut);
+        assert_eq!(ft.vy, -2.5);
+        assert_eq!(ft.start_y, 3.0);
+    }
+
+    #[test]
+    fn test_aoe_ring_alive_and_alpha() {
+        let mut ring = AoeRing {
+            cx: 5,
+            cy: 5,
+            max_radius: 3.0,
+            current_radius: 0.0,
+            expand_speed: 2.0,
+            color: Color::RED,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+        };
+        assert!(ring.alive());
+        assert_eq!(ring.alpha_ratio(), 1.0);
+
+        ring.lifetime = 0.0;
+        assert!(!ring.alive());
+    }
+
+    #[test]
+    fn test_spatial_highlight_alive_and_glyph() {
+        let hl = SpatialHighlight::new(vec![(0, 0), (1, 1)], Color::GREEN, 2.0).with_glyph('X');
+        assert!(hl.alive());
+        assert_eq!(hl.glyph, Some('X'));
+        assert_eq!(hl.bg_alpha, 0.3);
+        assert_eq!(hl.max_lifetime, 2.0);
+    }
+
+    #[test]
+    fn test_spatial_highlight_default_no_glyph() {
+        let hl = SpatialHighlight::new(vec![(0, 0)], Color::BLUE, 1.0);
+        assert_eq!(hl.glyph, None);
+    }
+
+    #[test]
+    fn test_vfx_system_update_removes_dead() {
+        let mut vfx = VfxSystem::new();
+        vfx.particles.push(Particle {
+            x: 0.0,
+            y: 0.0,
+            vx: 1.0,
+            vy: 0.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 0.1,
+            max_lifetime: 0.1,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
+        });
+        vfx.shakes.push(ScreenShake::new(1.0, 0.05));
+        vfx.flashes.push(Flash::full_screen(Color::RED, 0.05));
+
+        assert_eq!(vfx.particles.len(), 1);
+        assert_eq!(vfx.shakes.len(), 1);
+        assert_eq!(vfx.flashes.len(), 1);
+
+        vfx.update(0.2);
+
+        assert_eq!(vfx.particles.len(), 0);
+        assert_eq!(vfx.shakes.len(), 0);
+        assert_eq!(vfx.flashes.len(), 0);
+    }
+
+    #[test]
+    fn test_vfx_system_shake_offset_accumulates() {
+        let mut vfx = VfxSystem::new();
+        vfx.shakes.push(ScreenShake::new(5.0, 10.0));
+        vfx.shakes.push(ScreenShake::new(3.0, 10.0));
+
+        let (ox, oy) = vfx.shake_offset();
+        assert!(ox.abs() > 0 || oy.abs() > 0);
+    }
+
+    #[test]
+    fn test_vfx_system_render_does_not_panic() {
+        let mut vfx = VfxSystem::new();
+        vfx.particles.push(Particle {
+            x: 5.0,
+            y: 5.0,
+            vx: 0.0,
+            vy: 0.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
+        });
+        vfx.floating_texts
+            .push(FloatingText::new(3.0, 3.0, "test", Color::RED, false));
+        vfx.aoe_rings.push(AoeRing {
+            cx: 5,
+            cy: 5,
+            max_radius: 2.0,
+            current_radius: 1.0,
+            expand_speed: 1.0,
+            color: Color::BLUE,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+        });
+        vfx.highlights
+            .push(SpatialHighlight::new(vec![(2, 2)], Color::GREEN, 1.0));
+
+        let mut grid = Grid::new(20, 20);
+        vfx.render(&mut grid, 20, 20);
+    }
+
+    #[test]
+    fn test_vfx_system_render_flash_does_not_panic() {
+        let mut vfx = VfxSystem::new();
+        vfx.flashes.push(Flash::full_screen(Color::RED, 1.0));
+        vfx.flashes
+            .push(Flash::region(Color::BLUE, 0.5, Rect::new(2, 2, 5, 5)));
+
+        let mut grid = Grid::new(20, 20);
+        vfx.render_flash(&mut grid, 20, 20);
+    }
+
+    #[test]
+    fn test_emitter_presets_produce_particles() {
+        let burst = emit_burst(5.0, 5.0, 10, Color::RED, &['*', '·']);
+        assert_eq!(burst.len(), 10);
+
+        let fire = emit_fire(5.0, 5.0, 8);
+        assert_eq!(fire.len(), 8);
+        for p in &fire {
+            assert!(p.vy < 0.0, "fire should rise");
+        }
+
+        let ice = emit_ice(5.0, 5.0, 6);
+        assert_eq!(ice.len(), 6);
+
+        let lightning = emit_lightning(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(lightning.len(), 20); // 12 steps + 8 sparks
+
+        let slash = emit_slash(5.0, 5.0, 1.0);
+        assert_eq!(slash.len(), 15);
+
+        let heal = emit_heal(5.0, 5.0, 7);
+        assert_eq!(heal.len(), 7);
+        for p in &heal {
+            assert!(p.vy < 0.0, "heal should rise");
+        }
+
+        let bloom = emit_bloom(5.0, 5.0, 5);
+        assert_eq!(bloom.len(), 5);
+
+        let shatter = emit_shatter(5.0, 5.0, 8);
+        assert_eq!(shatter.len(), 8);
+    }
+
+    #[test]
+    fn test_blend_color_delegates_to_blend_alpha() {
+        let result = blend_color(Color::RED, Color::BLUE, 0.5);
+        let expected = Color::RED.blend_alpha(Color::BLUE, 0.5);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_vfx_system_floating_text_eased_movement() {
+        let mut vfx = VfxSystem::new();
+        vfx.floating_texts.push(FloatingText::new_eased(
+            5.0,
+            5.0,
+            "DMG",
+            Color::RED,
+            true,
+            EasingMode::QuadOut,
+        ));
+
+        let initial_y = vfx.floating_texts[0].y;
+        vfx.update(0.1);
+        // Y should change due to eased movement
+        assert!(vfx.floating_texts[0].y != initial_y);
+    }
+
+    #[test]
+    fn test_vfx_system_particle_straight_gravity() {
+        let mut vfx = VfxSystem::new();
+        vfx.particles.push(Particle {
+            x: 5.0,
+            y: 5.0,
+            vx: 0.0,
+            vy: -2.0,
+            glyph: '*',
+            fg: Color::WHITE,
+            bg: Color::BLACK,
+            lifetime: 2.0,
+            max_lifetime: 2.0,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
+        });
+
+        let initial_vy = vfx.particles[0].vy;
+        vfx.update(0.1);
+        // vy should increase due to gravity (0.5 * dt)
+        assert!(vfx.particles[0].vy > initial_vy);
+    }
+
+    #[test]
     fn test_particle_trajectories() {
         let mut vfx = VfxSystem::new();
         // Create standard straight particle

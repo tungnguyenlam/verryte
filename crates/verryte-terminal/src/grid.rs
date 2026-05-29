@@ -2002,4 +2002,111 @@ mod tests {
         let grid4 = Grid::new(3, 3);
         assert!(!grid4.is_empty());
     }
+
+    #[test]
+    fn apply_filter_modifies_cells_in_rect() {
+        let mut grid = Grid::new(4, 4);
+        grid.put(
+            1,
+            1,
+            Cell::new('A').with_fg(Color::RED).with_bg(Color::BLACK),
+        );
+        grid.apply_filter(Rect::new(0, 0, 2, 2), |cell| {
+            cell.glyph = 'X';
+        });
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'X');
+        assert_eq!(grid.get(2, 2).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn apply_blur_averages_colors() {
+        let mut grid = Grid::new(5, 5);
+        // Fill all cells with red
+        for y in 0..5 {
+            for x in 0..5 {
+                grid.put(x, y, Cell::new(' ').with_fg(Color::RED));
+            }
+        }
+        // Center is white
+        grid.put(2, 2, Cell::new(' ').with_fg(Color::WHITE));
+        grid.apply_blur(Rect::new(0, 0, 5, 5), 1);
+        // After blur, center should no longer be pure white
+        let blurred_fg = grid.get(2, 2).unwrap().fg;
+        assert_ne!(blurred_fg, Color::WHITE);
+    }
+
+    #[test]
+    fn apply_blur_zero_radius_noop() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(1, 1, Cell::new('X').with_fg(Color::RED));
+        let original = *grid.get(1, 1).unwrap();
+        grid.apply_blur(Rect::new(0, 0, 3, 3), 0);
+        assert_eq!(grid.get(1, 1).unwrap().glyph, original.glyph);
+    }
+
+    #[test]
+    fn apply_tint_blends_color() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(
+            1,
+            1,
+            Cell::new(' ').with_fg(Color::WHITE).with_bg(Color::BLACK),
+        );
+        grid.apply_tint(
+            Rect::new(0, 0, 3, 3),
+            Color::RED,
+            0.5,
+            crate::color::BlendMode::Normal,
+        );
+        let cell = grid.get(1, 1).unwrap();
+        // With Normal blend at 0.5 alpha, red should partially show
+        assert!(cell.fg.0 > 0);
+    }
+
+    #[test]
+    fn apply_tint_zero_alpha_noop() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(1, 1, Cell::new('X').with_fg(Color::WHITE));
+        let original_fg = grid.get(1, 1).unwrap().fg;
+        grid.apply_tint(
+            Rect::new(0, 0, 3, 3),
+            Color::RED,
+            0.0,
+            crate::color::BlendMode::Normal,
+        );
+        assert_eq!(grid.get(1, 1).unwrap().fg, original_fg);
+    }
+
+    #[test]
+    fn adjust_hsv_shifts_colors() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(
+            1,
+            1,
+            Cell::new(' ').with_fg(Color::GREEN).with_bg(Color::BLACK),
+        );
+        let original_fg = grid.get(1, 1).unwrap().fg;
+        grid.adjust_hsv(Rect::new(0, 0, 3, 3), 30.0, 1.0, 1.0);
+        let new_fg = grid.get(1, 1).unwrap().fg;
+        // Shifting hue should change the color
+        assert_ne!(original_fg, new_fg);
+    }
+
+    #[test]
+    fn viewport_clips_to_grid_bounds() {
+        let mut grid = Grid::new(10, 10);
+        grid.put(5, 5, Cell::new('X'));
+        let view = grid.viewport(Rect::new(3, 3, 4, 4));
+        assert_eq!(view.width(), 4);
+        assert_eq!(view.height(), 4);
+        assert_eq!(view.get(2, 2).unwrap().glyph, 'X');
+    }
+
+    #[test]
+    fn viewport_clips_beyond_grid() {
+        let grid = Grid::new(5, 5);
+        let view = grid.viewport(Rect::new(3, 3, 10, 10));
+        assert!(view.width() <= 5);
+        assert!(view.height() <= 5);
+    }
 }
