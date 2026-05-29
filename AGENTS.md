@@ -20,8 +20,9 @@ project context, not runtime code.
 - `crates/verryte-core` - ECS-style entities, component/resource storage,
   events, queries, and schedules. Keep it terminal- and input-agnostic.
 - `crates/verryte-input` - neutral input events, action bindings, command
-  parsing, action queues, sourced actions, and replay traces. This crate protects
-  the shared control path.
+  parsing, action queues, sourced actions, and replay traces. Modularized
+  into `key`, `action`, `bindings`, `trace`, `router`, `text_input`, and
+  `replay` sub-modules. This crate protects the shared control path.
 - `crates/verryte-map` - reusable grid, geometry, distance, visibility,
   reachability, and pathfinding primitives.
 - `crates/verryte-terminal` - terminal cell, color, grid, clipping, viewport,

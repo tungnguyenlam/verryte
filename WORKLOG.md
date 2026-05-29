@@ -2294,3 +2294,64 @@ needed deduplication after the sed-based extraction.
 **Follow-ups.** Consider modularizing verryte-input (4180-line monolith) next.
 The TileGrid impl block in grid.rs (2218 lines) could be further split into
 pathfinding, generation, and query sub-modules.
+
+## 2026-05-29 - autonomous engine run: modularize verryte-input, add Rect::contains_rect, add tests for VisibilityMap/ActionBuffer/Grid3
+
+**Goal.** Complete 5+ meaningful improvements in one sustained autonomous run,
+focusing on maintainability, API completeness, and test coverage.
+
+**Changes.**
+- `crates/verryte-input/src/` - **[MAJOR REFACTOR]** Split the 4180-line monolithic
+  `lib.rs` into 7 focused modules: `key.rs` (Key, MouseButton, ScrollDirection,
+  MouseTrigger, KeyEventKind, InputEvent, RepeatConfig), `action.rs` (ActionSource,
+  QueuedAction, ActionRecord, ActionHistory, ActionBuffer), `trace.rs` (ActionTrace),
+  `bindings.rs` (Bindings, CommandBindings, CommandParseError), `router.rs`
+  (InputRouter, BindingsGuard), `text_input.rs` (TextInput), and `replay.rs`
+  (ActionReplayer, ReplayRunner, replay_trace). The new `lib.rs` is a 40-line
+  module declaration and re-export hub. All 172 existing tests pass unchanged.
+- `crates/verryte-map/src/rect.rs` - added `Rect::contains_rect(other)` checking
+  if one rect fully contains another. Complements the existing `contains(x, y)`
+  point containment. Tests at :44 covering inside, equal, outside, partial overlap,
+  empty self, and empty other.
+- `crates/verryte-map/src/visibility.rs` - added 12 unit tests covering:
+  new_visibility_map_all_hidden, set_visible_marks_tile, get_returns_hidden_for_oob,
+  clear_visible_demotes_to_explored, is_explored_false_for_hidden,
+  compute_fov_marks_center_visible, compute_fov_marks_tiles_within_radius,
+  compute_fov_respects_radius, compute_fov_opaque_blocks_vision,
+  compute_fov_demotes_previous_visible, compute_fov_bounds_clipping.
+- `crates/verryte-map/src/grid3.rs` - added 9 unit tests covering:
+  grid3_new_dimensions, grid3_get_returns_fill, grid3_get_out_of_bounds_returns_none,
+  grid3_set_and_get, grid3_set_out_of_bounds_returns_false, grid3_get_mut_and_modify,
+  grid3_layer_access, grid3_layer_mut, grid3_layers_are_independent.
+- `crates/verryte-input/src/action.rs` - added 13 unit tests covering ActionBuffer
+  (cooldown lifecycle, independent timers, clear, defaults), QueuedAction, ActionRecord
+  with metadata, and ActionHistory push/len/is_empty/clear.
+- `README.md` - documented verryte-input modularization and Rect::contains_rect.
+- `AGENTS.md` - updated verryte-input workspace map entry with modularization note.
+
+**Reasoning.** The verryte-input monolith was the largest single file in the
+codebase (4180 lines, 44% tests). Splitting it into focused modules improves
+maintainability, makes the type hierarchy visible, and enables future contributors
+to work on individual types without navigating 4000+ lines. The module split
+preserves all public APIs via re-exports, so downstream code is unaffected.
+`Rect::contains_rect` fills a genuine API gap identified in prior worklog follow-ups.
+VisibilityMap and TileGrid3 had zero test coverage despite being non-trivial types;
+the new tests verify core FOV behavior (radius, opacity, exploration tracking) and
+3D grid operations (layer independence, bounds checking, mutation).
+
+**Assumptions.** Module re-exports in lib.rs preserve full backward compatibility.
+VisibilityMap tests verify structural properties (center visible, radius clamping,
+opacity blocking) rather than exact tile counts since shadowcasting output varies
+by implementation. TileGrid3 tests assume layers are independent and that
+Point3::to_2d() correctly projects to 2D coordinates.
+
+**Gotchas.** The `replay.rs` module references `ActionTrace.steps()` (a public
+method) rather than the private `steps` field, requiring method calls instead of
+field access. The `text_input.rs` module uses Unicode arrow characters (U+2190,
+U+2192) for word-jump key matching, matching the original implementation.
+
+**Follow-ups.** The `verryte-audio` crate has only 2 tests (registry smoke).
+Consider adding tests for volume/pan controls and AudioEvent handling. The
+`verryte-input/src/trace.rs` module could benefit from its own unit tests for
+string serialization roundtrips, though the lib.rs integration tests already
+cover this path.

@@ -41,4 +41,58 @@ impl Rect {
     pub fn is_empty(&self) -> bool {
         self.width == 0 || self.height == 0
     }
+
+    /// Returns `true` if `self` fully contains `other`.
+    pub fn contains_rect(&self, other: &Rect) -> bool {
+        self.x <= other.x
+            && self.y <= other.y
+            && self.x + self.width as i16 >= other.x + other.width as i16
+            && self.y + self.height as i16 >= other.y + other.height as i16
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rect_contains_rect_inside() {
+        let outer = Rect::new(0, 0, 10, 10);
+        let inner = Rect::new(2, 3, 4, 5);
+        assert!(outer.contains_rect(&inner));
+    }
+
+    #[test]
+    fn rect_contains_rect_equal() {
+        let r = Rect::new(1, 2, 5, 5);
+        assert!(r.contains_rect(&r));
+    }
+
+    #[test]
+    fn rect_contains_rect_outside() {
+        let outer = Rect::new(0, 0, 5, 5);
+        let other = Rect::new(3, 3, 5, 5);
+        assert!(!outer.contains_rect(&other));
+    }
+
+    #[test]
+    fn rect_contains_rect_partial_overlap() {
+        let outer = Rect::new(0, 0, 5, 5);
+        let other = Rect::new(4, 4, 5, 5);
+        assert!(!outer.contains_rect(&other));
+    }
+
+    #[test]
+    fn rect_contains_rect_empty_self() {
+        let outer = Rect::new(0, 0, 0, 0);
+        let other = Rect::new(0, 0, 5, 5);
+        assert!(!outer.contains_rect(&other));
+    }
+
+    #[test]
+    fn rect_contains_rect_empty_other() {
+        let outer = Rect::new(0, 0, 5, 5);
+        let other = Rect::new(2, 2, 0, 0);
+        assert!(outer.contains_rect(&other));
+    }
 }

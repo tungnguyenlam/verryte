@@ -171,3 +171,123 @@ impl VisibilityMap {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_visibility_map_all_hidden() {
+        let vm = VisibilityMap::new(5, 5);
+        for y in 0..5 {
+            for x in 0..5 {
+                assert_eq!(vm.get(Point::new(x, y)), Visibility::Hidden);
+            }
+        }
+    }
+
+    #[test]
+    fn set_visible_marks_tile() {
+        let mut vm = VisibilityMap::new(5, 5);
+        vm.set_visible(Point::new(2, 2));
+        assert!(vm.is_visible(Point::new(2, 2)));
+        assert!(!vm.is_visible(Point::new(0, 0)));
+    }
+
+    #[test]
+    fn get_returns_hidden_for_out_of_bounds() {
+        let vm = VisibilityMap::new(3, 3);
+        assert_eq!(vm.get(Point::new(10, 10)), Visibility::Hidden);
+        assert_eq!(vm.get(Point::new(-1, 0)), Visibility::Hidden);
+    }
+
+    #[test]
+    fn clear_visible_demotes_to_explored() {
+        let mut vm = VisibilityMap::new(5, 5);
+        vm.set_visible(Point::new(1, 1));
+        vm.set_visible(Point::new(3, 3));
+        assert!(vm.is_visible(Point::new(1, 1)));
+
+        vm.clear_visible();
+
+        assert!(!vm.is_visible(Point::new(1, 1)));
+        assert!(!vm.is_visible(Point::new(3, 3)));
+        // Now explored
+        assert!(vm.is_explored(Point::new(1, 1)));
+        assert!(vm.is_explored(Point::new(3, 3)));
+        // Never-set tile remains hidden
+        assert!(!vm.is_explored(Point::new(0, 0)));
+    }
+
+    #[test]
+    fn is_explored_false_for_hidden() {
+        let vm = VisibilityMap::new(3, 3);
+        assert!(!vm.is_explored(Point::new(1, 1)));
+    }
+
+    #[test]
+    fn compute_fov_marks_center_visible() {
+        let mut vm = VisibilityMap::new(10, 10);
+        vm.compute_fov(Point::new(5, 5), 3, |_| false);
+        assert!(vm.is_visible(Point::new(5, 5)));
+    }
+
+    #[test]
+    fn compute_fov_marks_tiles_within_radius() {
+        let mut vm = VisibilityMap::new(10, 10);
+        vm.compute_fov(Point::new(5, 5), 3, |_| false);
+        // Tiles within radius 3 should be visible (at least some)
+        assert!(vm.is_visible(Point::new(5, 5)));
+        assert!(vm.is_visible(Point::new(6, 5)));
+        assert!(vm.is_visible(Point::new(5, 6)));
+    }
+
+    #[test]
+    fn compute_fov_respects_radius() {
+        let mut vm = VisibilityMap::new(20, 20);
+        vm.compute_fov(Point::new(10, 10), 2, |_| false);
+        // Very far tile should not be visible with small radius
+        assert!(!vm.is_visible(Point::new(0, 0)));
+        assert!(!vm.is_visible(Point::new(19, 19)));
+    }
+
+    #[test]
+    fn compute_fov_opaque_blocks_vision() {
+        let mut vm = VisibilityMap::new(10, 10);
+        // Place a wall at (6, 5)
+        vm.compute_fov(Point::new(4, 5), 5, |p| p == Point::new(6, 5));
+        // Center should be visible
+        assert!(vm.is_visible(Point::new(4, 5)));
+        // Tile just before wall should be visible
+        assert!(vm.is_visible(Point::new(5, 5)));
+        // Wall itself should be visible
+        assert!(vm.is_visible(Point::new(6, 5)));
+        // Tile behind wall should NOT be visible (shadowed)
+        assert!(!vm.is_visible(Point::new(7, 5)));
+    }
+
+    #[test]
+    fn compute_fov_demotes_previous_visible() {
+        let mut vm = VisibilityMap::new(10, 10);
+        // First FOV
+        vm.compute_fov(Point::new(5, 5), 3, |_| false);
+        assert!(vm.is_visible(Point::new(5, 6)));
+
+        // Second FOV from different position
+        vm.compute_fov(Point::new(2, 2), 3, |_| false);
+        // Old position's tiles should no longer be visible
+        assert!(!vm.is_visible(Point::new(5, 6)));
+        // But should be explored
+        assert!(vm.is_explored(Point::new(5, 6)));
+    }
+
+    #[test]
+    fn compute_fov_bounds_clipping() {
+        let mut vm = VisibilityMap::new(5, 5);
+        // FOV at corner - should not panic and should clip to grid
+        vm.compute_fov(Point::new(0, 0), 10, |_| false);
+        assert!(vm.is_visible(Point::new(0, 0)));
+        // Out-of-bounds tiles should remain hidden
+        assert_eq!(vm.get(Point::new(10, 10)), Visibility::Hidden);
+    }
+}

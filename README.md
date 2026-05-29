@@ -46,15 +46,17 @@ those pieces.
   translation (`handle_with`) for position-aware inputs,
   `Bindings::merge` for layering keymaps,
   `CommandBindings::merge` for layering command sets,
-  `Bindings::iter_keys` / `iter_mouse` and `CommandBindings::iter_names` /
-  `iter_glyphs` for binding inspection,
+  `Bindings::iter_keys` / `iter_mouse` / `iter_scroll` and
+  `CommandBindings::iter_names` / `iter_glyphs` for binding inspection,
   `Bindings::clear` / `CommandBindings::clear` for removing all bindings,
   `InputRouter::total_actions_queued()` for lifetime action metrics,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
-  movement, insertion, deletion, max length, dirty tracking, and Ctrl shortcut
-  editing (A/E/B/F/U/W/K), and
+  movement, insertion, deletion, max length, dirty tracking, undo/redo,
+  autocomplete cycling, and Ctrl shortcut editing (A/E/B/F/U/W/K/Z/Y), and
   `ActionSource` with `Display`/`FromStr` for serialization and debugging.
   `Key`, `MouseButton`, and `ScrollDirection` have `Display` for logging.
+  Modularized into focused sub-modules (`key`, `action`, `bindings`,
+  `trace`, `router`, `text_input`, `replay`) for maintainability.
   Optional `serde` feature enables `Serialize`/`Deserialize` on `Key`,
   `MouseButton`, `ScrollDirection`, `MouseTrigger`, `InputEvent`,
   `ActionSource`, and `QueuedAction<A>`.
@@ -76,7 +78,8 @@ those pieces.
   `TileGrid::points_matching`, and `TileGrid::density` for map analysis,
   `TileGrid::bounds` and
   `TileGrid::bounding_box_of` with `Bounds` (with `Display`) / `Bounds::clamp_point` plus
-  `Bounds::intersects` / `Bounds::intersection` for spatial framing, `SpatialHash<T>`
+  `Bounds::intersects` / `Bounds::intersection` for spatial framing,
+  `Rect::contains_rect` for full containment checks, `SpatialHash<T>`
   for efficient proximity queries on grid-based
   entities, cellular automata cave
   generation

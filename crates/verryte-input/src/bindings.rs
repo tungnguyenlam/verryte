@@ -1,0 +1,438 @@
+//! Keyboard/mouse/scroll bindings and command bindings.
+
+use std::collections::HashMap;
+
+use crate::key::{InputEvent, Key, KeyEventKind, MouseButton, MouseTrigger, ScrollDirection};
+
+/// A keyboard-to-action map. Generic over the game's action type so the engine
+/// never has to know what actions exist.
+#[derive(Clone)]
+pub struct Bindings<A: Clone> {
+    by_key: HashMap<Key, A>,
+    by_mouse: HashMap<MouseTrigger, A>,
+    by_scroll: HashMap<ScrollDirection, A>,
+}
+
+impl<A: Clone> Bindings<A> {
+    pub fn new() -> Self {
+        Self {
+            by_key: HashMap::new(),
+            by_mouse: HashMap::new(),
+            by_scroll: HashMap::new(),
+        }
+    }
+
+    /// Bind a key to an action. If the key was already bound, the new action
+    /// wins; the previous action is returned.
+    pub fn bind(&mut self, key: Key, action: A) -> Option<A> {
+        self.by_key.insert(key, action)
+    }
+
+    pub fn unbind(&mut self, key: Key) -> Option<A> {
+        self.by_key.remove(&key)
+    }
+
+    /// Bind a mouse button transition to an action.
+    ///
+    /// This is deliberately position-neutral. It is useful for commands like
+    /// scan, wait, or confirm. Cell-targeted actions can be layered on later
+    /// without creating a separate control path.
+    pub fn bind_mouse(&mut self, button: MouseButton, pressed: bool, action: A) -> Option<A> {
+        self.by_mouse
+            .insert(MouseTrigger::new(button, pressed), action)
+    }
+
+    pub fn unbind_mouse(&mut self, button: MouseButton, pressed: bool) -> Option<A> {
+        self.by_mouse.remove(&MouseTrigger::new(button, pressed))
+    }
+
+    /// Bind a scroll direction to an action.
+    pub fn bind_scroll(&mut self, direction: ScrollDirection, action: A) -> Option<A> {
+        self.by_scroll.insert(direction, action)
+    }
+
+    pub fn unbind_scroll(&mut self, direction: ScrollDirection) -> Option<A> {
+        self.by_scroll.remove(&direction)
+    }
+
+    pub fn translate(&self, key: Key) -> Option<A> {
+        self.by_key.get(&key).cloned()
+    }
+
+    pub fn translate_mouse(&self, button: MouseButton, pressed: bool) -> Option<A> {
+        self.by_mouse
+            .get(&MouseTrigger::new(button, pressed))
+            .cloned()
+    }
+
+    pub fn translate_scroll(&self, direction: ScrollDirection) -> Option<A> {
+        self.by_scroll.get(&direction).cloned()
+    }
+
+    pub fn translate_event(&self, event: InputEvent) -> Option<A> {
+        match event {
+            InputEvent::Key { key, kind } => {
+                if matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                    self.translate(key)
+                } else {
+                    None
+                }
+            }
+            InputEvent::Mouse {
+                button, pressed, ..
+            } => self.translate_mouse(button, pressed),
+            InputEvent::MouseScroll { direction, .. } => self.translate_scroll(direction),
+            InputEvent::Tick | InputEvent::Resize { .. } => None,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_key.len() + self.by_mouse.len() + self.by_scroll.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_key.is_empty() && self.by_mouse.is_empty() && self.by_scroll.is_empty()
+    }
+
+    /// Iterate over all key bindings as `(Key, &A)` pairs.
+    pub fn iter_keys(&self) -> impl Iterator<Item = (Key, &A)> {
+        self.by_key.iter().map(|(&k, a)| (k, a))
+    }
+
+    /// Iterate over all mouse bindings as `((MouseButton, bool), &A)` pairs.
+    /// The bool is the `pressed` flag.
+    pub fn iter_mouse(&self) -> impl Iterator<Item = ((MouseButton, bool), &A)> {
+        self.by_mouse
+            .iter()
+            .map(|(t, a)| ((t.button, t.pressed), a))
+    }
+
+    /// Iterate over all scroll bindings as `(ScrollDirection, &A)` pairs.
+    pub fn iter_scroll(&self) -> impl Iterator<Item = (ScrollDirection, &A)> {
+        self.by_scroll.iter().map(|(&dir, a)| (dir, a))
+    }
+
+    /// Merge `other` bindings into `self`. Bindings in `other` overwrite
+    /// existing bindings in `self` for the same key, mouse trigger, or scroll.
+    ///
+    /// Useful for layering input contexts: start with base game bindings,
+    /// then merge context-specific bindings (menus, dialogs, etc.) on top.
+    pub fn merge(&mut self, other: Bindings<A>) {
+        for (key, action) in other.by_key {
+            self.by_key.insert(key, action);
+        }
+        for (trigger, action) in other.by_mouse {
+            self.by_mouse.insert(trigger, action);
+        }
+        for (direction, action) in other.by_scroll {
+            self.by_scroll.insert(direction, action);
+        }
+    }
+
+    /// Remove all key, mouse, and scroll bindings.
+    pub fn clear(&mut self) {
+        self.by_key.clear();
+        self.by_mouse.clear();
+        self.by_scroll.clear();
+    }
+}
+
+impl<A: Clone> Default for Bindings<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<A: Clone + serde::Serialize> serde::Serialize for Bindings<A> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Bindings", 3)?;
+
+        let keys: Vec<(&Key, &A)> = self.by_key.iter().collect();
+        let mouse: Vec<(&MouseTrigger, &A)> = self.by_mouse.iter().collect();
+        let scroll: Vec<(&ScrollDirection, &A)> = self.by_scroll.iter().collect();
+
+        state.serialize_field("by_key", &keys)?;
+        state.serialize_field("by_mouse", &mouse)?;
+        state.serialize_field("by_scroll", &scroll)?;
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, A: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for Bindings<A> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct BindingsHelper<A> {
+            by_key: Vec<(Key, A)>,
+            by_mouse: Vec<(MouseTrigger, A)>,
+            by_scroll: Vec<(ScrollDirection, A)>,
+        }
+
+        let helper = BindingsHelper::deserialize(deserializer)?;
+        Ok(Bindings {
+            by_key: helper.by_key.into_iter().collect(),
+            by_mouse: helper.by_mouse.into_iter().collect(),
+            by_scroll: helper.by_scroll.into_iter().collect(),
+        })
+    }
+}
+
+/// Script/agent command bindings for a game's action vocabulary.
+///
+/// `Bindings` maps neutral terminal events to actions. `CommandBindings` maps
+/// textual commands to the same actions, so a harness can parse input like
+/// `"north pickup east"` or compact glyph scripts like `"ne,."` and inject the
+/// resulting actions into [`InputRouter`](super::InputRouter).
+#[derive(Clone)]
+pub struct CommandBindings<A: Clone> {
+    by_name: HashMap<String, A>,
+    by_glyph: HashMap<char, A>,
+}
+
+impl<A: Clone> CommandBindings<A> {
+    pub fn new() -> Self {
+        Self {
+            by_name: HashMap::new(),
+            by_glyph: HashMap::new(),
+        }
+    }
+
+    /// Bind a case-sensitive command name to an action.
+    pub fn bind_name<S: Into<String>>(&mut self, name: S, action: A) -> Option<A> {
+        self.by_name.insert(name.into(), action)
+    }
+
+    /// Bind a single compact script glyph to an action.
+    pub fn bind_glyph(&mut self, glyph: char, action: A) -> Option<A> {
+        self.by_glyph.insert(glyph, action)
+    }
+
+    pub fn translate_name(&self, name: &str) -> Option<A> {
+        self.by_name.get(name).cloned()
+    }
+
+    pub fn translate_glyph(&self, glyph: char) -> Option<A> {
+        self.by_glyph.get(&glyph).cloned()
+    }
+
+    /// Parse whitespace-separated command names into actions.
+    pub fn parse_words(&self, script: &str) -> Result<Vec<A>, CommandParseError> {
+        let mut out = Vec::new();
+        for word in script.split_whitespace() {
+            let action = self
+                .translate_name(word)
+                .ok_or_else(|| CommandParseError::UnknownCommand(word.to_owned()))?;
+            out.push(action);
+        }
+        Ok(out)
+    }
+
+    /// Parse a compact glyph script into actions, ignoring whitespace.
+    pub fn parse_glyphs(&self, script: &str) -> Result<Vec<A>, CommandParseError> {
+        let mut out = Vec::new();
+        for (index, glyph) in script.chars().enumerate() {
+            if glyph.is_whitespace() {
+                continue;
+            }
+            let action = self
+                .translate_glyph(glyph)
+                .ok_or(CommandParseError::UnknownGlyph { glyph, index })?;
+            out.push(action);
+        }
+        Ok(out)
+    }
+
+    /// Parse a script that may mix command words and compact glyph runs.
+    ///
+    /// Each non-whitespace token first tries to resolve as a named command. If
+    /// no name matches, the token is parsed as one or more glyph commands. This
+    /// lets harnesses accept both `"east pickup"` and `"e,"` without choosing
+    /// a separate code path. Unbound `,` and `;` act as separators, and `#`
+    /// starts an inline comment that continues until newline.
+    pub fn parse_script(&self, script: &str) -> Result<Vec<A>, CommandParseError> {
+        self.parse_script_with(script, |_| None)
+    }
+
+    /// Parse a mixed script and allow custom token resolution before glyph
+    /// fallback.
+    ///
+    /// This keeps dynamic command forms (for example `scan:3`) on the same
+    /// parsing path as regular command names and glyph runs.
+    pub fn parse_script_with<F>(
+        &self,
+        script: &str,
+        mut resolve_token: F,
+    ) -> Result<Vec<A>, CommandParseError>
+    where
+        F: FnMut(&str) -> Option<A>,
+    {
+        let mut out = Vec::new();
+        let is_separator =
+            |ch: char| (ch == ',' || ch == ';') && self.translate_glyph(ch).is_none();
+        let chars: Vec<(usize, usize, char)> = script
+            .char_indices()
+            .enumerate()
+            .map(|(char_index, (byte_index, ch))| (char_index, byte_index, ch))
+            .collect();
+
+        let mut i = 0;
+        while i < chars.len() {
+            let (_, _, ch) = chars[i];
+            if ch.is_whitespace() || is_separator(ch) {
+                i += 1;
+                continue;
+            }
+            if ch == '#' {
+                i += 1;
+                while i < chars.len() && chars[i].2 != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+
+            let (char_start, byte_start, _) = chars[i];
+            i += 1;
+            while i < chars.len() {
+                let next = chars[i].2;
+                if next.is_whitespace() || is_separator(next) || next == '#' {
+                    break;
+                }
+                i += 1;
+            }
+            let byte_end = if i < chars.len() {
+                chars[i].1
+            } else {
+                script.len()
+            };
+            let token = &script[byte_start..byte_end];
+
+            if let Some(action) = self.translate_name(token) {
+                out.push(action);
+            } else if let Some(action) = resolve_token(token) {
+                out.push(action);
+            } else {
+                for (offset, glyph) in token.chars().enumerate() {
+                    let action =
+                        self.translate_glyph(glyph)
+                            .ok_or(CommandParseError::UnknownGlyph {
+                                glyph,
+                                index: char_start + offset,
+                            })?;
+                    out.push(action);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn name_count(&self) -> usize {
+        self.by_name.len()
+    }
+
+    pub fn glyph_count(&self) -> usize {
+        self.by_glyph.len()
+    }
+
+    /// Iterate over all name bindings as `(&str, &A)` pairs.
+    pub fn iter_names(&self) -> impl Iterator<Item = (&str, &A)> {
+        self.by_name.iter().map(|(k, a)| (k.as_str(), a))
+    }
+
+    /// Iterate over all glyph bindings as `(char, &A)` pairs.
+    pub fn iter_glyphs(&self) -> impl Iterator<Item = (char, &A)> {
+        self.by_glyph.iter().map(|(&k, a)| (k, a))
+    }
+
+    /// Merge `other` command bindings into `self`. Bindings in `other`
+    /// overwrite existing bindings in `self` for the same name or glyph.
+    ///
+    /// Useful for layering command sets: base game commands, then
+    /// context-specific commands (debug, admin, mod) on top.
+    pub fn merge(&mut self, other: CommandBindings<A>) {
+        for (name, action) in other.by_name {
+            self.by_name.insert(name, action);
+        }
+        for (glyph, action) in other.by_glyph {
+            self.by_glyph.insert(glyph, action);
+        }
+    }
+
+    /// Remove all name and glyph command bindings.
+    pub fn clear(&mut self) {
+        self.by_name.clear();
+        self.by_glyph.clear();
+    }
+}
+
+impl<A: Clone> Default for CommandBindings<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<A: Clone + serde::Serialize> serde::Serialize for CommandBindings<A> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CommandBindings", 2)?;
+
+        let names: Vec<(&String, &A)> = self.by_name.iter().collect();
+        let glyphs: Vec<(&char, &A)> = self.by_glyph.iter().collect();
+
+        state.serialize_field("by_name", &names)?;
+        state.serialize_field("by_glyph", &glyphs)?;
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, A: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for CommandBindings<A> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct CommandBindingsHelper<A> {
+            by_name: Vec<(String, A)>,
+            by_glyph: Vec<(char, A)>,
+        }
+
+        let helper = CommandBindingsHelper::deserialize(deserializer)?;
+        Ok(CommandBindings {
+            by_name: helper.by_name.into_iter().collect(),
+            by_glyph: helper.by_glyph.into_iter().collect(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandParseError {
+    UnknownCommand(String),
+    UnknownGlyph { glyph: char, index: usize },
+}
+
+impl std::fmt::Display for CommandParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandParseError::UnknownCommand(command) => {
+                write!(f, "unknown command {command:?}")
+            }
+            CommandParseError::UnknownGlyph { glyph, index } => {
+                write!(f, "unknown action glyph {glyph:?} at character {index}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CommandParseError {}

@@ -56,3 +56,83 @@ impl<T: Clone> TileGrid3<T> {
         self.layers.get_mut(z as usize)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid3_new_dimensions() {
+        let grid = TileGrid3::new(4, 5, 3, 0u8);
+        assert_eq!(grid.width(), 4);
+        assert_eq!(grid.height(), 5);
+        assert_eq!(grid.depth(), 3);
+    }
+
+    #[test]
+    fn grid3_get_returns_fill() {
+        let grid = TileGrid3::new(3, 3, 2, 42u8);
+        assert_eq!(grid.get(Point3::new(0, 0, 0)), Some(&42));
+        assert_eq!(grid.get(Point3::new(2, 1, 1)), Some(&42));
+    }
+
+    #[test]
+    fn grid3_get_out_of_bounds_returns_none() {
+        let grid = TileGrid3::new(3, 3, 2, 0u8);
+        assert_eq!(grid.get(Point3::new(5, 5, 0)), None);
+        assert_eq!(grid.get(Point3::new(0, 0, 5)), None);
+    }
+
+    #[test]
+    fn grid3_set_and_get() {
+        let mut grid = TileGrid3::new(3, 3, 2, 0u8);
+        assert!(grid.set(Point3::new(1, 2, 0), 99));
+        assert_eq!(grid.get(Point3::new(1, 2, 0)), Some(&99));
+        // Other layer unchanged
+        assert_eq!(grid.get(Point3::new(1, 2, 1)), Some(&0));
+    }
+
+    #[test]
+    fn grid3_set_out_of_bounds_returns_false() {
+        let mut grid = TileGrid3::new(3, 3, 2, 0u8);
+        assert!(!grid.set(Point3::new(10, 10, 0), 1));
+        assert!(!grid.set(Point3::new(0, 0, 10), 1));
+    }
+
+    #[test]
+    fn grid3_get_mut_and_modify() {
+        let mut grid = TileGrid3::new(3, 3, 2, 0u8);
+        if let Some(tile) = grid.get_mut(Point3::new(1, 1, 0)) {
+            *tile = 55;
+        }
+        assert_eq!(grid.get(Point3::new(1, 1, 0)), Some(&55));
+    }
+
+    #[test]
+    fn grid3_layer_access() {
+        let grid = TileGrid3::new(3, 3, 3, 7u8);
+        assert!(grid.layer(0).is_some());
+        assert!(grid.layer(2).is_some());
+        assert!(grid.layer(3).is_none());
+    }
+
+    #[test]
+    fn grid3_layer_mut() {
+        let mut grid = TileGrid3::new(3, 3, 2, 0u8);
+        if let Some(layer) = grid.layer_mut(0) {
+            layer.set(crate::Point::new(1, 1), 88);
+        }
+        assert_eq!(grid.get(Point3::new(1, 1, 0)), Some(&88));
+    }
+
+    #[test]
+    fn grid3_layers_are_independent() {
+        let mut grid = TileGrid3::new(3, 3, 3, 0u8);
+        grid.set(Point3::new(0, 0, 0), 1);
+        grid.set(Point3::new(0, 0, 1), 2);
+        grid.set(Point3::new(0, 0, 2), 3);
+        assert_eq!(grid.get(Point3::new(0, 0, 0)), Some(&1));
+        assert_eq!(grid.get(Point3::new(0, 0, 1)), Some(&2));
+        assert_eq!(grid.get(Point3::new(0, 0, 2)), Some(&3));
+    }
+}
