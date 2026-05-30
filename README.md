@@ -116,9 +116,11 @@ those pieces.
   `image_to_grid` converts PNG images to half-block terminal grids, and
   `image_to_grid_with_chroma_key` adds transparency support for sprite loading.
   The `vfx` module provides a reusable visual effects system: particles
-  (fire, ice, lightning, slash, heal, burst), screen shake, flash overlays,
-  floating damage text, and AoE ring indicators — all rendered directly into
-  a `Grid` with emitter presets (`emit_fire`, `emit_ice`, `emit_lightning`, etc.).
+  (fire, ice, lightning, slash, heal, burst, bloom, shatter), screen shake,
+  flash overlays, floating damage text, and AoE ring indicators — all rendered
+  directly into a `Grid` with emitter presets. All VFX types (`ScreenShake`,
+  `FloatingText`, `AoeRing`, `VfxSystem`, `blend_color`, emit functions) are
+  re-exported at the crate root for convenience.
 - `crates/verryte-tty` - TTY frontend using crossterm: alternate screen,
   input polling with full modifier key passthrough (Ctrl, Alt, Shift produce
   `Key::Modified` events), Grid rendering with ANSI colors and cell attributes

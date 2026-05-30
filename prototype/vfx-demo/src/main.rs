@@ -4,7 +4,7 @@ use verryte_terminal::vfx::{
     emit_burst, emit_fire, emit_heal, emit_ice, emit_lightning, emit_slash, AoeRing, Flash,
     FloatingText, ScreenShake, VfxSystem,
 };
-use verryte_terminal::{Cell, Color, Grid, Rect};
+use verryte_terminal::{image_to_grid_with_chroma_key, Cell, Color, Grid, Rect};
 use verryte_tty::verryte_input::{InputEvent, Key};
 use verryte_tty::{poll_event, terminal_size};
 
@@ -23,46 +23,9 @@ fn load_sprite(path: &str, target_w: u32, target_h: u32) -> Grid {
         .decode()
         .unwrap_or_else(|e| panic!("failed to decode {}: {}", path, e));
     let resized = img.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
-    let mut grid = verryte_terminal::image_to_grid(&resized);
-
-    // Chroma-key: set near-white pixels to transparent.
-    // Only keep cells where at least one of fg/bg has meaningful color.
-    for y in 0..grid.height() {
-        for x in 0..grid.width() {
-            let cell = grid.get(x, y).copied().unwrap_or(Cell::EMPTY);
-            let fg_white = cell.fg.0 > 220 && cell.fg.1 > 220 && cell.fg.2 > 220;
-            let bg_white = cell.bg.0 > 220 && cell.bg.1 > 220 && cell.bg.2 > 220;
-            if fg_white && bg_white {
-                grid.put(x, y, Cell::EMPTY);
-            } else if fg_white {
-                // Top pixel is background — show only bottom pixel
-                grid.put(
-                    x,
-                    y,
-                    Cell {
-                        glyph: '▄',
-                        fg: cell.bg,
-                        bg: Color::BLACK,
-                        attrs: cell.attrs,
-                    },
-                );
-            } else if bg_white {
-                // Bottom pixel is background — show only top pixel
-                grid.put(
-                    x,
-                    y,
-                    Cell {
-                        glyph: '▀',
-                        fg: cell.fg,
-                        bg: Color::BLACK,
-                        attrs: cell.attrs,
-                    },
-                );
-            }
-        }
-    }
-
-    grid
+    // Use engine's chroma-key function with white key and tolerance 36
+    // (equivalent to the original >220 per-channel threshold)
+    image_to_grid_with_chroma_key(&resized, Color(255, 255, 255), 36)
 }
 
 fn tint_grid_white(grid: &Grid) -> Grid {

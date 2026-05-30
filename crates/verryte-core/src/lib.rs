@@ -76,3 +76,60 @@ impl AudioEvent {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_event_play_sets_name() {
+        let ev = AudioEvent::play("hit");
+        assert_eq!(ev.name, "hit");
+        assert!(!ev.looped);
+        assert!(ev.volume.is_none());
+        assert!(ev.pan.is_none());
+    }
+
+    #[test]
+    fn audio_event_loop_music_sets_loop_flag() {
+        let ev = AudioEvent::loop_music("theme");
+        assert_eq!(ev.name, "theme");
+        assert!(ev.looped);
+    }
+
+    #[test]
+    fn audio_event_with_volume() {
+        let ev = AudioEvent::play("sfx").with_volume(0.5);
+        assert_eq!(ev.volume, Some(0.5));
+    }
+
+    #[test]
+    fn audio_event_with_pan() {
+        let ev = AudioEvent::play("sfx").with_pan(-1.0);
+        assert_eq!(ev.pan, Some(-1.0));
+    }
+
+    #[test]
+    fn audio_event_builder_chain() {
+        let ev = AudioEvent::loop_music("ambient")
+            .with_volume(0.8)
+            .with_pan(0.3);
+        assert_eq!(ev.name, "ambient");
+        assert!(ev.looped);
+        assert_eq!(ev.volume, Some(0.8));
+        assert_eq!(ev.pan, Some(0.3));
+    }
+
+    #[test]
+    fn audio_event_clone_eq() {
+        let a = AudioEvent::play("clank").with_volume(1.0);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn audio_event_from_string_name() {
+        let ev = AudioEvent::play(String::from("long_name"));
+        assert_eq!(ev.name, "long_name");
+    }
+}

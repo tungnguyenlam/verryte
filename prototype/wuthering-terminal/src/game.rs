@@ -119,7 +119,10 @@ impl Game {
             .spawn_item("Cleanse Remedy", crate::components::ItemEffect::Cleanse);
         let aegis = game.world.spawn_item(
             "Aegis Elixir",
-            crate::components::ItemEffect::RestoreShield(crate::components::ShieldType::Physical, 30),
+            crate::components::ItemEffect::RestoreShield(
+                crate::components::ShieldType::Physical,
+                30,
+            ),
         );
 
         if let Some(kael) = game
@@ -172,13 +175,13 @@ impl Game {
     pub fn vfx(&self) -> &verryte_terminal::vfx::VfxSystem {
         self.world
             .resource::<verryte_terminal::vfx::VfxSystem>()
-            .unwrap()
+            .expect("VfxSystem resource must be registered")
     }
 
     pub fn vfx_mut(&mut self) -> &mut verryte_terminal::vfx::VfxSystem {
         self.world
             .resource_mut::<verryte_terminal::vfx::VfxSystem>()
-            .unwrap()
+            .expect("VfxSystem resource must be registered")
     }
 
     pub fn log(&mut self, msg: impl Into<String>) {
@@ -2654,7 +2657,10 @@ impl Game {
                                         self.world.remove::<crate::components::Stunned>(entity);
                                         self.log("All negative statuses cleansed!");
                                     }
-                                    crate::components::ItemEffect::RestoreShield(shield_type, amount) => {
+                                    crate::components::ItemEffect::RestoreShield(
+                                        shield_type,
+                                        amount,
+                                    ) => {
                                         self.world.insert(
                                             entity,
                                             crate::components::ElementalShield {
@@ -2670,9 +2676,9 @@ impl Game {
                                         let (tcx, tcy) = self.get_tile_center_pixels(
                                             *self.world.get::<Position>(entity).unwrap(),
                                         );
-                                        self.vfx_mut().particles.extend(
-                                            verryte_terminal::vfx::emit_ice(tcx, tcy, 15),
-                                        );
+                                        self.vfx_mut()
+                                            .particles
+                                            .extend(verryte_terminal::vfx::emit_ice(tcx, tcy, 15));
                                     }
                                 }
 

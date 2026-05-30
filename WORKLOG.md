@@ -2355,3 +2355,57 @@ Consider adding tests for volume/pan controls and AudioEvent handling. The
 `verryte-input/src/trace.rs` module could benefit from its own unit tests for
 string serialization roundtrips, though the lib.rs integration tests already
 cover this path.
+
+## 2026-05-30 - autonomous engine run: clippy cleanup, audio tests, VFX dedup, re-exports, error messages
+
+**Goal.** Complete a minimum of 5 meaningful improvements in one sustained
+autonomous run, focusing on code quality, test coverage, deduplication, and API
+completeness.
+
+**Changes.**
+- `crates/verryte-terminal/src/widgets.rs:431` - removed unused `use crate::CellAttrs`
+  import that triggered a clippy warning.
+- `crates/verryte-map/src/tests.rs` - removed inner `mod tests { }` wrapper that
+  triggered clippy's `module_inception` warning. Tests now live at the top level
+  of the `#[cfg(test)]` module.
+- `crates/verryte-core/src/lib.rs` - added 7 unit tests for `AudioEvent` builder
+  methods: `play`, `loop_music`, `with_volume`, `with_pan`, builder chaining,
+  clone/eq, and `From<String>` name handling.
+- `crates/verryte-audio/src/lib.rs` - added 8 unit tests covering
+  `AudioRegistry` (overwrite, multiple entries, empty data) and `audio_system`
+  (no-player early return, event draining without player, missing event channel).
+- `prototype/vfx-demo/src/main.rs:16` - replaced 50-line manual chroma-key
+  post-processing loop with a single call to `image_to_grid_with_chroma_key`,
+  eliminating code duplication with the engine.
+- `crates/verryte-terminal/src/lib.rs:31` - expanded VFX re-exports at crate root
+  to include `ScreenShake`, `FloatingText`, `AoeRing`, `SpatialHighlight`,
+  `VfxSystem`, `blend_color`, and all emit functions. Consumers no longer need
+  the `vfx::` prefix for the most-used types.
+- `prototype/wuthering-terminal/src/systems.rs` - replaced 6 critical `unwrap()`
+  calls with `expect("... resource must be registered")` in system entry points
+  (`visibility_system`, `enemy_ai_system`, `turn_management`, `handle_defeat`).
+  These are called every frame and previously produced cryptic panic messages.
+- `prototype/wuthering-terminal/src/game.rs:175-185` - replaced `unwrap()` with
+  `expect()` in `vfx()` and `vfx_mut()` accessor methods.
+
+**Reasoning.** These improvements address genuine gaps identified through
+systematic codebase exploration. Clippy warnings were the lowest-hanging fruit:
+2 warnings across 2 crates, both trivial to fix. AudioEvent had zero test
+coverage despite being a public API used by all prototypes. The vfx-demo's
+manual chroma-key loop duplicated 50 lines of logic that the engine already
+provides as a single function. VFX re-exports were incomplete — consumers
+had to use `verryte_terminal::vfx::ScreenShake` instead of just
+`verryte_terminal::ScreenShake`. The `unwrap()` → `expect()` conversion
+improves debuggability for the most frequently called system entry points.
+
+**Assumptions.** The chroma-key tolerance of 36 in vfx-demo matches the
+original `> 220 per-channel` threshold for near-white backgrounds (255 - 220 = 35,
+using `<` comparison means tolerance of 36 captures 220 and above).
+
+**Gotchas.** The `audio_system` tests needed explicit `use verryte_core::Events`
+import because `Events` is used inside the function via fully-qualified paths
+but not imported at the crate root.
+
+**Follow-ups.** The remaining ~30 `unwrap()` calls in `systems.rs` and `game.rs`
+could be converted to `expect()` in a future pass. The `vfx-demo` could also
+benefit from extracting `tint_grid_white()` into a reusable engine utility.

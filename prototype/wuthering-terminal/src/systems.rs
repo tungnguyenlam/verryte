@@ -16,8 +16,14 @@ pub fn visibility_system(world: &mut World) {
         .map(|(_, pos, _)| **pos)
         .collect();
 
-    let map_tiles = world.resource::<TacticalMap>().unwrap().tiles.clone();
-    let visibility = world.resource_mut::<verryte_map::VisibilityMap>().unwrap();
+    let map_tiles = world
+        .resource::<TacticalMap>()
+        .expect("TacticalMap resource must be registered")
+        .tiles
+        .clone();
+    let visibility = world
+        .resource_mut::<verryte_map::VisibilityMap>()
+        .expect("VisibilityMap resource must be registered");
 
     visibility.clear_visible();
 
@@ -33,7 +39,9 @@ pub fn visibility_system(world: &mut World) {
 
 pub fn enemy_ai_system(world: &mut World) {
     let (phase, outcome) = {
-        let state = world.resource::<GameState>().unwrap();
+        let state = world
+            .resource::<GameState>()
+            .expect("GameState resource must be registered");
         (state.phase, state.outcome)
     };
     if phase != TurnPhase::Enemy || outcome != Outcome::Playing {
@@ -265,7 +273,10 @@ pub fn enemy_ai_system(world: &mut World) {
                             }
                         }
                         if !player_exists {
-                            world.resource_mut::<GameState>().unwrap().outcome = Outcome::Defeat;
+                            world
+                                .resource_mut::<GameState>()
+                                .expect("GameState resource must be registered")
+                                .outcome = Outcome::Defeat;
                             log(world, "Defeat! All player characters defeated.");
                             return;
                         }
@@ -368,7 +379,10 @@ pub fn turn_management_system(world: &mut World) {
         return;
     }
 
-    let current_phase = world.resource::<GameState>().unwrap().phase;
+    let current_phase = world
+        .resource::<GameState>()
+        .expect("GameState resource must be registered")
+        .phase;
     match current_phase {
         TurnPhase::Player => {
             // Player -> Enemy
@@ -980,7 +994,10 @@ pub fn handle_defeat(
     pos: Position,
 ) {
     if class == CharacterClass::Boss {
-        let phase = world.resource::<GameState>().unwrap().boss_phase;
+        let phase = world
+            .resource::<GameState>()
+            .expect("GameState resource must be registered")
+            .boss_phase;
         if phase == BossPhase::Phase1 {
             if let Some(stats) = world.get_mut::<Stats>(entity) {
                 stats.max_hp = 500;
@@ -1083,7 +1100,10 @@ pub fn handle_defeat(
         .any(|(_, team)| *team == Team::Enemy);
     let echo_exists = world.query::<EchoItem>().into_iter().next().is_some();
     if !enemy_exists && !echo_exists {
-        world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+        world
+            .resource_mut::<GameState>()
+            .expect("GameState resource must be registered")
+            .outcome = Outcome::Victory;
         log(
             world,
             "[fg:32CD32][b]Victory![/] All enemies defeated.[/fg]",

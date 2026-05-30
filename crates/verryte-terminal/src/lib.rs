@@ -28,6 +28,10 @@ pub use layout::{Alignment, BorderStyle, Constraint, Layout, Rect};
 pub use math::easing;
 pub use palette::ColorPalette;
 pub use sprite::{Frame, ResolutionTier, Sprite, SpriteSheet};
-pub use vfx::{EasingMode, Flash, Particle, Trajectory, VfxEmitter};
+pub use vfx::{
+    blend_color, emit_bloom, emit_burst, emit_fire, emit_heal, emit_ice, emit_lightning,
+    emit_shatter, emit_slash, AoeRing, EasingMode, Flash, FloatingText, Particle, ScreenShake,
+    SpatialHighlight, Trajectory, VfxEmitter, VfxSystem,
+};
 pub use viewport::TileViewport;
 pub use widgets::{MenuView, MessageLogView, PerformanceOverlay, ProgressBar};

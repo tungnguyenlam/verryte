@@ -193,6 +193,7 @@ pub fn audio_system(world: &mut verryte_core::World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use verryte_core::Events;
 
     #[test]
     fn test_audio_registry() {
@@ -208,5 +209,63 @@ mod tests {
         let mut registry = AudioRegistry::new();
         registry.register("laser", vec![0; 100]);
         assert_eq!(registry.get("laser").unwrap().len(), 100);
+    }
+
+    #[test]
+    fn test_registry_overwrite() {
+        let mut registry = AudioRegistry::new();
+        registry.register("sfx", vec![1]);
+        registry.register("sfx", vec![2, 3]);
+        assert_eq!(registry.get("sfx"), Some(&vec![2, 3]));
+    }
+
+    #[test]
+    fn test_registry_multiple_entries() {
+        let mut registry = AudioRegistry::new();
+        registry.register("a", vec![1]);
+        registry.register("b", vec![2]);
+        registry.register("c", vec![3]);
+        assert!(registry.get("a").is_some());
+        assert!(registry.get("b").is_some());
+        assert!(registry.get("c").is_some());
+        assert!(registry.get("d").is_none());
+    }
+
+    #[test]
+    fn test_registry_empty_data() {
+        let mut registry = AudioRegistry::new();
+        registry.register("empty", vec![]);
+        assert_eq!(registry.get("empty"), Some(&vec![]));
+    }
+
+    #[test]
+    fn test_audio_system_no_player_does_not_panic() {
+        let mut world = verryte_core::World::new();
+        world.insert_resource(Events::<verryte_core::AudioEvent>::new());
+        // No AudioPlayer resource — should return early without panic
+        audio_system(&mut world);
+    }
+
+    #[test]
+    fn test_audio_system_drains_events_without_player() {
+        let mut world = verryte_core::World::new();
+        let mut events = Events::<verryte_core::AudioEvent>::new();
+        events.send(verryte_core::AudioEvent::play("test"));
+        events.send(verryte_core::AudioEvent::play("test2"));
+        world.insert_resource(events);
+        // Drain events even without player
+        audio_system(&mut world);
+        // Events should be consumed (take empties the queue)
+        let remaining = world
+            .resource::<Events<verryte_core::AudioEvent>>()
+            .expect("Events resource should exist");
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn test_audio_system_no_event_channel_does_not_panic() {
+        let mut world = verryte_core::World::new();
+        // No Events<AudioEvent> resource — should return early
+        audio_system(&mut world);
     }
 }

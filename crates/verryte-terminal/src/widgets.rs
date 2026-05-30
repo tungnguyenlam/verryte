@@ -428,7 +428,6 @@ impl Tooltip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CellAttrs;
 
     #[test]
     fn test_progress_bar_new() {

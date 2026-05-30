@@ -762,7 +762,10 @@ mod tests {
         let mut game = Game::new();
 
         // Find Warrior
-        let warrior = game.world.query::<CharacterClass>().iter()
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .iter()
             .find(|(_, class)| **class == CharacterClass::Warrior)
             .map(|(e, _)| *e)
             .unwrap();
@@ -782,7 +785,10 @@ mod tests {
 
         // Verify shield applied
         {
-            let shield = game.world.get::<crate::components::ElementalShield>(warrior).unwrap();
+            let shield = game
+                .world
+                .get::<crate::components::ElementalShield>(warrior)
+                .unwrap();
             assert_eq!(shield.shield_type, crate::components::ShieldType::Physical);
             assert_eq!(shield.amount, 30);
             assert_eq!(shield.max_amount, 30);
@@ -790,7 +796,10 @@ mod tests {
 
         // Verify item consumed (starts with 3, uses 1, leaves 2)
         {
-            let inv = game.world.get::<crate::components::Inventory>(warrior).unwrap();
+            let inv = game
+                .world
+                .get::<crate::components::Inventory>(warrior)
+                .unwrap();
             assert_eq!(inv.items.len(), 2);
         }
     }
