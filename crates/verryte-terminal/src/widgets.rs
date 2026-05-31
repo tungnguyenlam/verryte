@@ -2,6 +2,81 @@ use crate::color::Color;
 use crate::grid::{Cell, Grid};
 use crate::layout::{BorderStyle, Rect};
 
+/// A generic container widget with a background, optional border, and title.
+///
+/// Use `Panel` to group other widgets or provide a consistent background
+/// for a UI section.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Panel {
+    pub rect: Rect,
+    pub bg: Color,
+    pub border: BorderStyle,
+    pub border_color: Color,
+    pub title: Option<String>,
+    pub title_color: Color,
+}
+
+impl Panel {
+    pub fn new(rect: Rect) -> Self {
+        Self {
+            rect,
+            bg: Color::BLACK,
+            border: BorderStyle::None,
+            border_color: Color::GREY,
+            title: None,
+            title_color: Color::WHITE,
+        }
+    }
+
+    pub fn with_bg(mut self, bg: Color) -> Self {
+        self.bg = bg;
+        self
+    }
+
+    pub fn with_border(mut self, style: BorderStyle, color: Color) -> Self {
+        self.border = style;
+        self.border_color = color;
+        self
+    }
+
+    pub fn with_title<S: Into<String>>(mut self, title: S, color: Color) -> Self {
+        self.title = Some(title.into());
+        self.title_color = color;
+        self
+    }
+
+    /// Returns the inner rect (the area inside the border, if any).
+    pub fn inner_rect(&self) -> Rect {
+        if self.border != BorderStyle::None {
+            self.rect.inset(1, 1)
+        } else {
+            self.rect
+        }
+    }
+
+    pub fn render(&self, grid: &mut Grid) {
+        if self.rect.is_empty() {
+            return;
+        }
+
+        grid.fill_rect(self.rect, Cell::new(' ').with_bg(self.bg));
+
+        if self.border != BorderStyle::None {
+            grid.draw_border_styled(self.rect, self.border, self.border_color, self.bg);
+            if let Some(ref title) = self.title {
+                grid.draw_title(
+                    self.rect,
+                    title,
+                    self.border_color,
+                    self.bg,
+                    self.title_color,
+                );
+            }
+        }
+    }
+}
+
 /// A UI widget for rendering a scrollable list of messages.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -520,6 +595,35 @@ impl Tooltip {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_panel_new() {
+        let panel = Panel::new(Rect::new(0, 0, 10, 5));
+        assert_eq!(panel.rect, Rect::new(0, 0, 10, 5));
+        assert_eq!(panel.bg, Color::BLACK);
+        assert_eq!(panel.border, BorderStyle::None);
+    }
+
+    #[test]
+    fn test_panel_builder() {
+        let panel = Panel::new(Rect::new(0, 0, 10, 5))
+            .with_bg(Color::RED)
+            .with_border(BorderStyle::Single, Color::WHITE)
+            .with_title("Test", Color::YELLOW);
+        assert_eq!(panel.bg, Color::RED);
+        assert_eq!(panel.border, BorderStyle::Single);
+        assert_eq!(panel.title, Some("Test".to_string()));
+        assert_eq!(panel.title_color, Color::YELLOW);
+    }
+
+    #[test]
+    fn test_panel_inner_rect() {
+        let p1 = Panel::new(Rect::new(0, 0, 10, 10));
+        assert_eq!(p1.inner_rect(), Rect::new(0, 0, 10, 10));
+
+        let p2 = Panel::new(Rect::new(0, 0, 10, 10)).with_border(BorderStyle::Single, Color::WHITE);
+        assert_eq!(p2.inner_rect(), Rect::new(1, 1, 8, 8));
+    }
 
     #[test]
     fn test_progress_bar_new() {

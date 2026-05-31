@@ -195,6 +195,7 @@ impl<'de, A: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for Bindin
 pub struct CommandBindings<A: Clone> {
     by_name: HashMap<String, A>,
     by_glyph: HashMap<char, A>,
+    aliases: HashMap<String, String>,
 }
 
 impl<A: Clone> CommandBindings<A> {
@@ -202,6 +203,7 @@ impl<A: Clone> CommandBindings<A> {
         Self {
             by_name: HashMap::new(),
             by_glyph: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -210,13 +212,25 @@ impl<A: Clone> CommandBindings<A> {
         self.by_name.insert(name.into(), action)
     }
 
+    /// Bind an alias to an existing command name.
+    ///
+    /// If the alias was already bound, the new target wins; the previous target
+    /// is returned.
+    pub fn bind_alias<S: Into<String>>(&mut self, alias: S, target: S) -> Option<String> {
+        self.aliases.insert(alias.into(), target.into())
+    }
+
     /// Bind a single compact script glyph to an action.
     pub fn bind_glyph(&mut self, glyph: char, action: A) -> Option<A> {
         self.by_glyph.insert(glyph, action)
     }
 
     pub fn translate_name(&self, name: &str) -> Option<A> {
-        self.by_name.get(name).cloned()
+        if let Some(target) = self.aliases.get(name) {
+            self.by_name.get(target).cloned()
+        } else {
+            self.by_name.get(name).cloned()
+        }
     }
 
     pub fn translate_glyph(&self, glyph: char) -> Option<A> {
@@ -363,12 +377,16 @@ impl<A: Clone> CommandBindings<A> {
         for (glyph, action) in other.by_glyph {
             self.by_glyph.insert(glyph, action);
         }
+        for (alias, target) in other.aliases {
+            self.aliases.insert(alias, target);
+        }
     }
 
-    /// Remove all name and glyph command bindings.
+    /// Remove all name, glyph, and alias command bindings.
     pub fn clear(&mut self) {
         self.by_name.clear();
         self.by_glyph.clear();
+        self.aliases.clear();
     }
 }
 
@@ -385,13 +403,15 @@ impl<A: Clone + serde::Serialize> serde::Serialize for CommandBindings<A> {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("CommandBindings", 2)?;
+        let mut state = serializer.serialize_struct("CommandBindings", 3)?;
 
         let names: Vec<(&String, &A)> = self.by_name.iter().collect();
         let glyphs: Vec<(&char, &A)> = self.by_glyph.iter().collect();
+        let aliases: Vec<(&String, &String)> = self.aliases.iter().collect();
 
         state.serialize_field("by_name", &names)?;
         state.serialize_field("by_glyph", &glyphs)?;
+        state.serialize_field("aliases", &aliases)?;
         state.end()
     }
 }
@@ -406,12 +426,15 @@ impl<'de, A: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for Comman
         struct CommandBindingsHelper<A> {
             by_name: Vec<(String, A)>,
             by_glyph: Vec<(char, A)>,
+            #[serde(default)]
+            aliases: Vec<(String, String)>,
         }
 
         let helper = CommandBindingsHelper::deserialize(deserializer)?;
         Ok(CommandBindings {
             by_name: helper.by_name.into_iter().collect(),
             by_glyph: helper.by_glyph.into_iter().collect(),
+            aliases: helper.aliases.into_iter().collect(),
         })
     }
 }

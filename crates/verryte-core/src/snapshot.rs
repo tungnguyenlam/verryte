@@ -21,6 +21,93 @@ pub struct EntitySnapshot {
     pub components: HashMap<String, serde_json::Value>,
 }
 
+/// Represents the difference between two [`WorldSnapshot`]s.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct WorldDiff {
+    pub added_entities: Vec<Entity>,
+    pub removed_entities: Vec<Entity>,
+    pub changed_entities: HashMap<Entity, EntityDiff>,
+    pub added_resources: Vec<String>,
+    pub removed_resources: Vec<String>,
+    pub changed_resources: Vec<String>,
+}
+
+/// Represents the difference in components for a single entity.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct EntityDiff {
+    pub added_components: Vec<String>,
+    pub removed_components: Vec<String>,
+    pub changed_components: Vec<String>,
+}
+
+impl WorldSnapshot {
+    pub fn diff(&self, other: &WorldSnapshot) -> WorldDiff {
+        let mut diff = WorldDiff::default();
+
+        let self_entities: HashMap<Entity, &EntitySnapshot> =
+            self.entities.iter().map(|e| (e.entity, e)).collect();
+        let other_entities: HashMap<Entity, &EntitySnapshot> =
+            other.entities.iter().map(|e| (e.entity, e)).collect();
+
+        // Entities in other but not in self are "added" (relative to self)
+        for &entity in other_entities.keys() {
+            if !self_entities.contains_key(&entity) {
+                diff.added_entities.push(entity);
+            }
+        }
+
+        // Entities in self but not in other are "removed"
+        for &entity in self_entities.keys() {
+            if !other_entities.contains_key(&entity) {
+                diff.removed_entities.push(entity);
+            } else {
+                // Entity exists in both, check for component changes
+                let s_ent = self_entities[&entity];
+                let o_ent = other_entities[&entity];
+                let mut e_diff = EntityDiff::default();
+
+                for name in o_ent.components.keys() {
+                    if !s_ent.components.contains_key(name) {
+                        e_diff.added_components.push(name.clone());
+                    } else if s_ent.components[name] != o_ent.components[name] {
+                        e_diff.changed_components.push(name.clone());
+                    }
+                }
+
+                for name in s_ent.components.keys() {
+                    if !o_ent.components.contains_key(name) {
+                        e_diff.removed_components.push(name.clone());
+                    }
+                }
+
+                if !e_diff.added_components.is_empty()
+                    || !e_diff.removed_components.is_empty()
+                    || !e_diff.changed_components.is_empty()
+                {
+                    diff.changed_entities.insert(entity, e_diff);
+                }
+            }
+        }
+
+        // Resources
+        for name in other.resources.keys() {
+            if !self.resources.contains_key(name) {
+                diff.added_resources.push(name.clone());
+            } else if self.resources[name] != other.resources[name] {
+                diff.changed_resources.push(name.clone());
+            }
+        }
+
+        for name in self.resources.keys() {
+            if !other.resources.contains_key(name) {
+                diff.removed_resources.push(name.clone());
+            }
+        }
+
+        diff
+    }
+}
+
 pub trait ComponentRegistration: Send + Sync {
     fn serialize(&self, world: &World, entity: Entity) -> Option<serde_json::Value>;
     fn deserialize(

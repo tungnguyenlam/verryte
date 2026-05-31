@@ -17,26 +17,35 @@ use std::collections::HashMap;
 
 use crate::entity::Entity;
 
-trait Column: Any + Send + Sync {
+trait Column: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn clear_index(&mut self, index: usize);
+    fn has_index(&self, index: usize) -> bool;
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
     fn shrink_to_fit(&mut self);
 }
 
 struct TypedColumn<T: 'static + Send + Sync> {
     slots: Vec<Option<(u32, T)>>,
+    added_ticks: Vec<u64>,
+    changed_ticks: Vec<u64>,
 }
 
 impl<T: 'static + Send + Sync> TypedColumn<T> {
     fn new() -> Self {
-        Self { slots: Vec::new() }
+        Self {
+            slots: Vec::new(),
+            added_ticks: Vec::new(),
+            changed_ticks: Vec::new(),
+        }
     }
 
     fn ensure(&mut self, index: usize) {
         if index >= self.slots.len() {
             self.slots.resize_with(index + 1, || None);
+            self.added_ticks.resize(index + 1, 0);
+            self.changed_ticks.resize(index + 1, 0);
         }
     }
 }
@@ -51,7 +60,12 @@ impl<T: 'static + Send + Sync> Column for TypedColumn<T> {
     fn clear_index(&mut self, index: usize) {
         if let Some(slot) = self.slots.get_mut(index) {
             *slot = None;
+            self.added_ticks[index] = 0;
+            self.changed_ticks[index] = 0;
         }
+    }
+    fn has_index(&self, index: usize) -> bool {
+        self.slots.get(index).and_then(|s| s.as_ref()).is_some()
     }
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
@@ -59,8 +73,12 @@ impl<T: 'static + Send + Sync> Column for TypedColumn<T> {
     fn shrink_to_fit(&mut self) {
         while self.slots.last().is_none() {
             self.slots.pop();
+            self.added_ticks.pop();
+            self.changed_ticks.pop();
         }
         self.slots.shrink_to_fit();
+        self.added_ticks.shrink_to_fit();
+        self.changed_ticks.shrink_to_fit();
     }
 }
 
@@ -148,7 +166,10 @@ pub struct World {
     alive: Vec<bool>,
     free: Vec<u32>,
     columns: HashMap<TypeId, Box<dyn Column>>,
+    column_names: HashMap<TypeId, &'static str>,
     resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    resource_ticks: HashMap<TypeId, u64>,
+    change_tick: u64,
 }
 
 impl World {
@@ -158,8 +179,24 @@ impl World {
             alive: Vec::new(),
             free: Vec::new(),
             columns: HashMap::new(),
+            column_names: HashMap::new(),
             resources: HashMap::new(),
+            resource_ticks: HashMap::new(),
+            change_tick: 1,
         }
+    }
+
+    /// Increments the world's internal change tick and returns the new value.
+    ///
+    /// The change tick is used for tracking when components or resources are modified.
+    pub fn increment_tick(&mut self) -> u64 {
+        self.change_tick += 1;
+        self.change_tick
+    }
+
+    /// Returns the current global change tick.
+    pub fn read_tick(&self) -> u64 {
+        self.change_tick
     }
 
     /// Pre-allocate entity ID slots for bulk spawning.
@@ -413,9 +450,14 @@ impl World {
         if !self.is_alive(entity) {
             return None;
         }
+        let type_id = TypeId::of::<T>();
+        self.column_names
+            .entry(type_id)
+            .or_insert_with(|| std::any::type_name::<T>());
+
         let column = self
             .columns
-            .entry(TypeId::of::<T>())
+            .entry(type_id)
             .or_insert_with(|| Box::new(TypedColumn::<T>::new()));
         let typed = column
             .as_any_mut()
@@ -425,6 +467,8 @@ impl World {
         typed.ensure(idx);
         let prev = typed.slots[idx].take();
         typed.slots[idx] = Some((entity.generation, value));
+        typed.added_ticks[idx] = self.change_tick;
+        typed.changed_ticks[idx] = self.change_tick;
         prev.map(|(_, v)| v)
     }
 
@@ -442,12 +486,76 @@ impl World {
     pub fn get_mut<T: 'static + Send + Sync>(&mut self, entity: Entity) -> Option<&mut T> {
         let column = self.columns.get_mut(&TypeId::of::<T>())?;
         let typed = column.as_any_mut().downcast_mut::<TypedColumn<T>>()?;
-        let slot = typed.slots.get_mut(entity.index as usize)?.as_mut()?;
+        let idx = entity.index as usize;
+        let slot = typed.slots.get_mut(idx)?.as_mut()?;
         if slot.0 == entity.generation {
+            typed.changed_ticks[idx] = self.change_tick;
             Some(&mut slot.1)
         } else {
             None
         }
+    }
+
+    /// Returns the (added_tick, changed_tick) for a component.
+    pub fn component_ticks<T: 'static + Send + Sync>(&self, entity: Entity) -> Option<(u64, u64)> {
+        let column = self.columns.get(&TypeId::of::<T>())?;
+        let typed = column.as_any().downcast_ref::<TypedColumn<T>>()?;
+        let idx = entity.index as usize;
+        let slot = typed.slots.get(idx)?.as_ref()?;
+        if slot.0 == entity.generation {
+            Some((typed.added_ticks[idx], typed.changed_ticks[idx]))
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the component was added since `last_tick`.
+    pub fn is_added<T: 'static + Send + Sync>(&self, entity: Entity, last_tick: u64) -> bool {
+        self.component_ticks::<T>(entity)
+            .map(|(added, _)| added > last_tick)
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` if the component was changed since `last_tick`.
+    pub fn is_changed<T: 'static + Send + Sync>(&self, entity: Entity, last_tick: u64) -> bool {
+        self.component_ticks::<T>(entity)
+            .map(|(_, changed)| changed > last_tick)
+            .unwrap_or(false)
+    }
+
+    /// Returns a human-readable summary of all entities and their component types.
+    pub fn inspect_entities(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("World ({} entities):\n", self.entity_count()));
+
+        for i in 0..self.generations.len() {
+            if !self.alive[i] {
+                continue;
+            }
+            let entity = Entity {
+                index: i as u32,
+                generation: self.generations[i],
+            };
+            out.push_str(&format!("  Entity {}:", entity));
+
+            let mut components = Vec::new();
+            for (type_id, col) in &self.columns {
+                if col.has_index(i) {
+                    if let Some(name) = self.column_names.get(type_id) {
+                        components.push(*name);
+                    }
+                }
+            }
+            components.sort();
+            for (j, name) in components.iter().enumerate() {
+                if j > 0 {
+                    out.push(',');
+                }
+                out.push_str(&format!(" {}", name));
+            }
+            out.push('\n');
+        }
+        out
     }
 
     pub fn get2<A, B>(&self, entity: Entity) -> Option<(&A, &B)>
@@ -1631,7 +1739,9 @@ impl World {
 
     /// Install a resource of type `R`. Returns the previous value if present.
     pub fn insert_resource<R: 'static + Send + Sync>(&mut self, resource: R) -> Option<R> {
-        let prev = self.resources.insert(TypeId::of::<R>(), Box::new(resource));
+        let type_id = TypeId::of::<R>();
+        let prev = self.resources.insert(type_id, Box::new(resource));
+        self.resource_ticks.insert(type_id, self.change_tick);
         prev.and_then(|boxed| boxed.downcast::<R>().ok().map(|b| *b))
     }
 
@@ -1646,14 +1756,16 @@ impl World {
         R: 'static + Send + Sync,
         F: FnOnce() -> R,
     {
-        match self.resources.entry(TypeId::of::<R>()) {
+        let type_id = TypeId::of::<R>();
+        match self.resources.entry(type_id) {
             Entry::Vacant(entry) => {
                 entry.insert(Box::new(f()));
+                self.resource_ticks.insert(type_id, self.change_tick);
             }
             Entry::Occupied(_) => {}
         }
         self.resources
-            .get_mut(&TypeId::of::<R>())
+            .get_mut(&type_id)
             .and_then(|boxed| boxed.downcast_mut::<R>())
             .expect("resource entry missing or wrong type")
     }
@@ -1667,9 +1779,27 @@ impl World {
     }
 
     pub fn resource_mut<R: 'static + Send + Sync>(&mut self) -> Option<&mut R> {
-        self.resources
-            .get_mut(&TypeId::of::<R>())?
-            .downcast_mut::<R>()
+        let type_id = TypeId::of::<R>();
+        if self.resources.contains_key(&type_id) {
+            self.resource_ticks.insert(type_id, self.change_tick);
+        }
+        self.resources.get_mut(&type_id)?.downcast_mut::<R>()
+    }
+
+    /// Returns the change tick when the resource of type `R` was last modified.
+    ///
+    /// Returns `None` if the resource does not exist.
+    pub fn resource_tick<R: 'static + Send + Sync>(&self) -> Option<u64> {
+        self.resource_ticks.get(&TypeId::of::<R>()).copied()
+    }
+
+    /// Returns `true` if the resource of type `R` has been modified since `last_tick`.
+    ///
+    /// If the resource does not exist, returns `false`.
+    pub fn is_resource_dirty<R: 'static + Send + Sync>(&self, last_tick: u64) -> bool {
+        self.resource_tick::<R>()
+            .map(|tick| tick > last_tick)
+            .unwrap_or(false)
     }
 
     /// Get a shared reference to a resource. Panics if the resource is missing.

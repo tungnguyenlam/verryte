@@ -76,23 +76,20 @@ impl<T> SpatialHash<T> {
 
     /// Query all entities within `radius` (Manhattan distance) of `center`.
     pub fn query<'a>(&'a self, center: Point, radius: u16) -> impl Iterator<Item = &'a T> + 'a {
-        let radius = radius as i16;
-        let cell_radius = (radius / self.cell_size) + 1;
+        let radius_i16 = radius as i16;
+        let cell_radius = (radius_i16 / self.cell_size) + 1;
         let (cx, cy) = self.cell_key(center);
 
-        let mut results = Vec::new();
-        for dx in -cell_radius..=cell_radius {
-            for dy in -cell_radius..=cell_radius {
-                if let Some(entries) = self.cells.get(&(cx + dx, cy + dy)) {
-                    for (point, value) in entries {
-                        if point.manhattan_distance(center) <= radius as u16 {
-                            results.push(value);
-                        }
-                    }
-                }
-            }
-        }
-        results.into_iter()
+        (-cell_radius..=cell_radius).flat_map(move |dx| {
+            (-cell_radius..=cell_radius).flat_map(move |dy| {
+                self.cells
+                    .get(&(cx + dx, cy + dy))
+                    .into_iter()
+                    .flat_map(|entries| entries.iter())
+                    .filter(move |(point, _)| point.manhattan_distance(center) <= radius)
+                    .map(|(_, value)| value)
+            })
+        })
     }
 
     /// Query all entities within `radius` (Chebyshev distance) of `center`.
@@ -101,23 +98,20 @@ impl<T> SpatialHash<T> {
         center: Point,
         radius: u16,
     ) -> impl Iterator<Item = &'a T> + 'a {
-        let radius = radius as i16;
-        let cell_radius = (radius / self.cell_size) + 1;
+        let radius_i16 = radius as i16;
+        let cell_radius = (radius_i16 / self.cell_size) + 1;
         let (cx, cy) = self.cell_key(center);
 
-        let mut results = Vec::new();
-        for dx in -cell_radius..=cell_radius {
-            for dy in -cell_radius..=cell_radius {
-                if let Some(entries) = self.cells.get(&(cx + dx, cy + dy)) {
-                    for (point, value) in entries {
-                        if point.chebyshev_distance(center) <= radius as u16 {
-                            results.push(value);
-                        }
-                    }
-                }
-            }
-        }
-        results.into_iter()
+        (-cell_radius..=cell_radius).flat_map(move |dx| {
+            (-cell_radius..=cell_radius).flat_map(move |dy| {
+                self.cells
+                    .get(&(cx + dx, cy + dy))
+                    .into_iter()
+                    .flat_map(|entries| entries.iter())
+                    .filter(move |(point, _)| point.chebyshev_distance(center) <= radius)
+                    .map(|(_, value)| value)
+            })
+        })
     }
 
     /// Query all entities within `radius` (Euclidean distance) of `center`.
@@ -129,19 +123,16 @@ impl<T> SpatialHash<T> {
         let cell_radius = (radius / self.cell_size as f32).ceil() as i16 + 1;
         let (cx, cy) = self.cell_key(center);
 
-        let mut results = Vec::new();
-        for dx in -cell_radius..=cell_radius {
-            for dy in -cell_radius..=cell_radius {
-                if let Some(entries) = self.cells.get(&(cx + dx, cy + dy)) {
-                    for (point, value) in entries {
-                        if point.euclidean_distance(center) <= radius {
-                            results.push(value);
-                        }
-                    }
-                }
-            }
-        }
-        results.into_iter()
+        (-cell_radius..=cell_radius).flat_map(move |dx| {
+            (-cell_radius..=cell_radius).flat_map(move |dy| {
+                self.cells
+                    .get(&(cx + dx, cy + dy))
+                    .into_iter()
+                    .flat_map(|entries| entries.iter())
+                    .filter(move |(point, _)| point.euclidean_distance(center) <= radius)
+                    .map(|(_, value)| value)
+            })
+        })
     }
 
     /// Find the nearest entity to `center` within `radius`, using a custom

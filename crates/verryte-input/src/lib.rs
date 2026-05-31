@@ -52,9 +52,13 @@
 
 mod action;
 mod bindings;
+#[cfg(test)]
+mod bindings_ext_tests;
 mod key;
 mod replay;
 mod router;
+#[cfg(test)]
+mod router_ext_tests;
 mod text_input;
 mod trace;
 

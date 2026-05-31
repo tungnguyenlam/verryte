@@ -155,29 +155,24 @@ impl TextInput {
                         self.cursor = self.word_start_right();
                         self.dirty = true;
                     }
-                    '\x08' => {
+                    '\x08' if self.cursor > 0 => {
                         // Ctrl+Backspace: delete word left
-                        if self.cursor > 0 {
-                            self.record_state();
-                            let start = self.word_start_left();
-                            let byte_start = self.char_to_byte(start);
-                            let byte_end = self.char_to_byte(self.cursor);
-                            self.text.drain(byte_start..byte_end);
-                            self.cursor = start;
-                            self.dirty = true;
-                        }
+                        self.record_state();
+                        let start = self.word_start_left();
+                        let byte_start = self.char_to_byte(start);
+                        let byte_end = self.char_to_byte(self.cursor);
+                        self.text.drain(byte_start..byte_end);
+                        self.cursor = start;
+                        self.dirty = true;
                     }
-                    '\x7f' => {
+                    '\x7f' if self.cursor < self.text.chars().count() => {
                         // Ctrl+Delete: delete word right
-                        let len = self.text.chars().count();
-                        if self.cursor < len {
-                            self.record_state();
-                            let end = self.word_start_right();
-                            let byte_start = self.char_to_byte(self.cursor);
-                            let byte_end = self.char_to_byte(end);
-                            self.text.drain(byte_start..byte_end);
-                            self.dirty = true;
-                        }
+                        self.record_state();
+                        let end = self.word_start_right();
+                        let byte_start = self.char_to_byte(self.cursor);
+                        let byte_end = self.char_to_byte(end);
+                        self.text.drain(byte_start..byte_end);
+                        self.dirty = true;
                     }
                     _ => {}
                 }

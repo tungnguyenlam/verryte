@@ -230,6 +230,99 @@ impl Schedule {
         }
     }
 
+    /// Add a system before another named system.
+    ///
+    /// Returns `true` if the target system was found and the new system was inserted.
+    /// Stage markers are automatically updated to reflect the insertion.
+    pub fn add_before(&mut self, target_name: &str, name: &'static str, system: System) -> bool {
+        if let Some(pos) = self.systems.iter().position(|s| s.name == target_name) {
+            self.systems.insert(pos, NamedSystem::new(name, system));
+            // Update stage markers
+            for (_, marker_pos) in &mut self.stage_markers {
+                if *marker_pos >= pos {
+                    *marker_pos += 1;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Add a system after another named system.
+    ///
+    /// Returns `true` if the target system was found and the new system was inserted.
+    /// Stage markers are automatically updated to reflect the insertion.
+    pub fn add_after(&mut self, target_name: &str, name: &'static str, system: System) -> bool {
+        if let Some(pos) = self.systems.iter().position(|s| s.name == target_name) {
+            let insert_pos = pos + 1;
+            self.systems
+                .insert(insert_pos, NamedSystem::new(name, system));
+            // Update stage markers
+            for (_, marker_pos) in &mut self.stage_markers {
+                if *marker_pos >= insert_pos {
+                    *marker_pos += 1;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns a string describing the schedule, including stages and systems.
+    ///
+    /// The output is formatted for readability, e.g.:
+    /// ```text
+    /// [Stage: input]
+    ///   - handle_keyboard
+    ///   - handle_mouse
+    /// [Stage: ai]
+    ///   - monster_ai
+    /// [Unstaged]
+    ///   - render
+    /// ```
+    pub fn describe(&self) -> String {
+        let mut out = String::new();
+        let mut current_marker_idx = 0;
+
+        for (i, system) in self.systems.iter().enumerate() {
+            // Check if we just entered a new stage
+            while current_marker_idx < self.stage_markers.len()
+                && self.stage_markers[current_marker_idx].1 == i
+            {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&format!(
+                    "[Stage: {}]\n",
+                    self.stage_markers[current_marker_idx].0
+                ));
+                current_marker_idx += 1;
+            }
+
+            if out.is_empty() && i == 0 {
+                out.push_str("[Unstaged]\n");
+            }
+
+            out.push_str(&format!("  - {}\n", system.name));
+        }
+
+        // Handle case where stage markers exist but have no systems
+        while current_marker_idx < self.stage_markers.len() {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "[Stage: {}] (empty)\n",
+                self.stage_markers[current_marker_idx].0
+            ));
+            current_marker_idx += 1;
+        }
+
+        out
+    }
+
     /// Run the first system with the given name, if it exists.
     ///
     /// Returns `true` if a system was found and executed. Systems with

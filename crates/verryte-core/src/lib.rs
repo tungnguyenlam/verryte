@@ -21,9 +21,19 @@ pub mod event;
 pub mod log;
 pub mod rng;
 pub mod schedule;
+#[cfg(test)]
+mod schedule_ext_tests;
 pub mod snapshot;
+#[cfg(test)]
+mod snapshot_ext_tests;
 pub mod tag;
 pub mod world;
+#[cfg(test)]
+mod world_change_tests;
+#[cfg(test)]
+mod world_ext_tests;
+#[cfg(test)]
+mod world_inspect_tests;
 
 pub use clock::{FixedTime, GameClock};
 pub use diagnostics::{Diagnostics, SystemMetrics};

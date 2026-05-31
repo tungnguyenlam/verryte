@@ -17,9 +17,11 @@ use crate::RepeatConfig;
 pub struct InputRouter<A: Clone> {
     bindings: Bindings<A>,
     pending: VecDeque<QueuedAction<A>>,
+    delayed: Vec<DelayedAction<A>>,
     total_queued: usize,
     context_stack: Vec<Bindings<A>>,
     history: Vec<QueuedAction<A>>,
+    history_limit: Option<usize>,
     recording_path: Option<std::path::PathBuf>,
     recorded_actions: Vec<QueuedAction<A>>,
     repeat_config: RepeatConfig,
@@ -28,20 +30,47 @@ pub struct InputRouter<A: Clone> {
     last_repeat_time: f32,
 }
 
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DelayedAction<A: Clone> {
+    pub action: A,
+    pub source: ActionSource,
+    pub delay: f32,
+}
+
 impl<A: Clone> InputRouter<A> {
     pub fn new(bindings: Bindings<A>) -> Self {
         Self {
             bindings,
             pending: VecDeque::new(),
+            delayed: Vec::new(),
             total_queued: 0,
             context_stack: Vec::new(),
             history: Vec::new(),
+            history_limit: Some(1000),
             recording_path: None,
             recorded_actions: Vec::new(),
             repeat_config: RepeatConfig::default(),
             held_key: None,
             held_time: 0.0,
             last_repeat_time: 0.0,
+        }
+    }
+
+    /// Set the maximum number of actions to keep in history.
+    ///
+    /// If `None`, history grows indefinitely (not recommended for long sessions).
+    pub fn set_history_limit(&mut self, limit: Option<usize>) {
+        self.history_limit = limit;
+        self.apply_history_limit();
+    }
+
+    fn apply_history_limit(&mut self) {
+        if let Some(limit) = self.history_limit {
+            if self.history.len() > limit {
+                let to_remove = self.history.len() - limit;
+                self.history.drain(0..to_remove);
+            }
         }
     }
 
@@ -159,8 +188,9 @@ impl<A: Clone> InputRouter<A> {
     /// Advance input timers.
     ///
     /// This should be called once per frame with the elapsed time in seconds.
-    /// It handles repeating actions for held keys.
+    /// It handles repeating actions for held keys and processing delayed actions.
     pub fn tick(&mut self, dt: f32) {
+        // Handle repeating keys
         if let Some((key, source)) = self.held_key {
             self.held_time += dt;
 
@@ -174,6 +204,26 @@ impl<A: Clone> InputRouter<A> {
                         self.last_repeat_time = self.held_time;
                     }
                 }
+            }
+        }
+
+        // Handle delayed actions
+        if !self.delayed.is_empty() {
+            let mut ready = Vec::new();
+            self.delayed.retain_mut(|da| {
+                da.delay -= dt;
+                if da.delay <= 0.0 {
+                    ready.push(QueuedAction::new(da.action.clone(), da.source));
+                    false
+                } else {
+                    true
+                }
+            });
+
+            for qa in ready {
+                self.record_if_active(&qa);
+                self.pending.push_back(qa);
+                self.total_queued += 1;
             }
         }
     }
@@ -395,6 +445,20 @@ impl<A: Clone> InputRouter<A> {
         self.total_queued += 1;
     }
 
+    /// Inject an action that will be queued after a delay.
+    pub fn inject_delayed(&mut self, action: A, delay: f32) {
+        self.inject_delayed_from(action, ActionSource::Script, delay);
+    }
+
+    /// Inject an action that will be queued after a delay with explicit provenance.
+    pub fn inject_delayed_from(&mut self, action: A, source: ActionSource, delay: f32) {
+        self.delayed.push(DelayedAction {
+            action,
+            source,
+            delay,
+        });
+    }
+
     /// Inject many actions in order. Convenience for scripted runs.
     pub fn inject_all<I: IntoIterator<Item = A>>(&mut self, actions: I) {
         for action in actions {
@@ -449,6 +513,7 @@ impl<A: Clone> InputRouter<A> {
         let action = self.pending.pop_front();
         if let Some(ref act) = action {
             self.history.push(act.clone());
+            self.apply_history_limit();
             self.record_if_active(act);
         }
         action
@@ -465,6 +530,7 @@ impl<A: Clone> InputRouter<A> {
         for act in &self.pending {
             self.history.push(act.clone());
         }
+        self.apply_history_limit();
         self.pending.drain(..).map(QueuedAction::into_action)
     }
 
@@ -475,6 +541,7 @@ impl<A: Clone> InputRouter<A> {
         for act in &self.pending {
             self.history.push(act.clone());
         }
+        self.apply_history_limit();
         self.pending.drain(..)
     }
 
@@ -486,6 +553,7 @@ impl<A: Clone> InputRouter<A> {
         for act in &self.pending {
             self.history.push(act.clone());
         }
+        self.apply_history_limit();
         ActionTrace::from_steps(self.pending.drain(..))
     }
 
