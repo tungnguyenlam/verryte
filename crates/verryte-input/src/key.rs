@@ -116,8 +116,12 @@ impl std::fmt::Display for Key {
                 if *shift {
                     parts.push("Shift");
                 }
-                parts.push("");
-                write!(f, "{}{c}", parts.join("+"))
+                if parts.is_empty() {
+                    write!(f, "{c}")
+                } else {
+                    parts.push("");
+                    write!(f, "{}{c}", parts.join("+"))
+                }
             }
         }
     }

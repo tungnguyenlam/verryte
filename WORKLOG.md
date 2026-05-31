@@ -2474,3 +2474,63 @@ scroll position control. Camera::follow could be extended with a `follow_entity`
 variant that reads position from the ECS world. Diagnostics could gain a
 `sorted_by_duration()` iterator for the PerformanceOverlay to avoid sorting
 on every render frame.
+
+## 2026-05-31 - input recording, word jumps, key display, history methods, wuthering README
+
+**Goal.** Autonomous engine run: make 5+ meaningful improvements to Verryte in
+one session, focusing on input system completeness, test coverage, and docs.
+
+**Changes.**
+- `crates/verryte-input/src/router.rs` — rewrote recording stub into working
+  feature. `start_recording(path)` collects actions in memory; `stop_recording()`
+  flushes to disk as JSON (behind `serde` feature). Added `recorded_count()`.
+  Recording is woven into all action entry points (`handle_from`, `inject_from`,
+  `inject_priority_from`, `handle_batch_with_from`, `next_queued`, `drain`,
+  `drain_queued`, `drain_trace`) without requiring `Debug` on the action type.
+  The `recorded_actions` field stores clones when recording is active.
+- `crates/verryte-input/src/text_input.rs` — added Ctrl+Backspace (delete word
+  left) and Ctrl+Delete (delete word right) as `Modified` arm handlers using
+  `\x08` and `\x7f` chars matching the tty crate's `map_key` output. The
+  original `'\u{2190}'`/`'\u{2192}'` word-jump code was correct all along — the
+  test just used the wrong key char.
+- `crates/verryte-input/src/key.rs` — fixed `Key::Modified` Display edge case:
+  empty modifiers no longer produce a leading `+` (e.g., `Modified { char: 'a',
+  ctrl: false, alt: false, shift: false }` now prints `"a"` instead of `"+a"`).
+- `crates/verryte-input/src/action.rs` — added `ActionHistory` methods: `iter()`,
+  `get(index)`, `last()`, `by_source(source)`, `filter(predicate)`, and
+  `time_range()`. Added 4 tests covering iteration, source filtering, action
+  filtering, and time range.
+- `prototype/wuthering-terminal/README.md` — created missing README with
+  overview, characters, combat mechanics, controls, runners, adaptive sprites,
+  VFX, save/load, and architecture sections.
+- `README.md` — updated `verryte-input` crate description to document recording,
+  word jumps, word deletion, and `ActionHistory` methods.
+- Tests: 628 total (up from 624), all passing. Formatting clean.
+
+**Reasoning.** The recording stub was the single biggest incomplete feature in
+`verryte-input` — `start_recording`/`stop_recording` existed as dead code. The
+new implementation collects actions in-memory (requiring only `Clone`) and
+serializes on stop (requiring `serde`), keeping the public API clean. Word jumps
+in `TextInput` matched Unicode arrow chars that the tty crate actually produces
+(`'←'`/`'→'`), so the code was correct; only the test was wrong. The `Key::Modified`
+Display fix prevents confusing output in logs and debug views. `ActionHistory`
+was previously push/len/clear only — adding iteration and filtering makes it
+useful for replay analysis and agent performance tracking.
+
+**Assumptions.** I assumed all game action types derive `Debug` (they all do in
+practice), so the recording approach collecting via `Clone` and serializing via
+`serde` is cleaner than requiring `Debug` on the entire `InputRouter` impl block.
+I assumed the tty crate's `map_key` produces `'←'`/`'→'` for Ctrl+Left/Right,
+which is confirmed by the tty crate source and its tests.
+
+**Gotchas.** The initial approach of adding `A: Debug` to the `InputRouter` impl
+block broke `BindingsGuard` (which only requires `A: Clone`) and `replay.rs`
+functions. The fix was to use in-memory collection with `Clone` only, deferring
+serialization to `stop_recording`. The `QueuedAction` serde bound requires both
+`Serialize` and `DeserializeOwned` on `A`, so `stop_recording` has a tighter
+bound than `start_recording`.
+
+**Follow-ups.** The recording feature could benefit from a `save_recorded_trace()`
+method that returns an `ActionTrace` directly. The `ActionHistory` could gain
+serde support for persisting analysis results. The wuthering-terminal prototype
+could add more encounters to further stress-test the engine.

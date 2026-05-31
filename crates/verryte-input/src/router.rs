@@ -21,6 +21,7 @@ pub struct InputRouter<A: Clone> {
     context_stack: Vec<Bindings<A>>,
     history: Vec<QueuedAction<A>>,
     recording_path: Option<std::path::PathBuf>,
+    recorded_actions: Vec<QueuedAction<A>>,
     repeat_config: RepeatConfig,
     held_key: Option<(Key, ActionSource)>,
     held_time: f32,
@@ -36,6 +37,7 @@ impl<A: Clone> InputRouter<A> {
             context_stack: Vec::new(),
             history: Vec::new(),
             recording_path: None,
+            recorded_actions: Vec::new(),
             repeat_config: RepeatConfig::default(),
             held_key: None,
             held_time: 0.0,
@@ -46,19 +48,46 @@ impl<A: Clone> InputRouter<A> {
     /// Start recording all actions to a file on disk.
     ///
     /// If a recording is already active, it is stopped first. The file is
-    /// overwritten. Actions are written as they are popped from the queue.
+    /// overwritten. Actions are collected in memory and flushed to disk when
+    /// [`stop_recording`](Self::stop_recording) is called.
     pub fn start_recording<P: Into<std::path::PathBuf>>(&mut self, path: P) {
+        if self.recording_path.is_some() {
+            self.recording_path = None;
+            self.recorded_actions.clear();
+        }
         self.recording_path = Some(path.into());
+        self.recorded_actions.clear();
     }
 
-    /// Stop the current recording.
+    /// Stop the current recording and flush collected actions to disk.
+    #[cfg(feature = "serde")]
+    pub fn stop_recording(&mut self)
+    where
+        A: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        if let Some(path) = self.recording_path.take() {
+            if let Ok(json) = serde_json::to_string_pretty(&self.recorded_actions) {
+                let _ = std::fs::write(&path, json);
+            }
+            self.recorded_actions.clear();
+        }
+    }
+
+    /// Stop the current recording without writing to disk.
+    #[cfg(not(feature = "serde"))]
     pub fn stop_recording(&mut self) {
         self.recording_path = None;
+        self.recorded_actions.clear();
     }
 
     /// Returns `true` if a recording is currently active.
     pub fn is_recording(&self) -> bool {
         self.recording_path.is_some()
+    }
+
+    /// Returns the number of actions recorded since recording started.
+    pub fn recorded_count(&self) -> usize {
+        self.recorded_actions.len()
     }
 
     pub fn bindings(&self) -> &Bindings<A> {
@@ -139,12 +168,19 @@ impl<A: Clone> InputRouter<A> {
                 let time_since_last = self.held_time - self.last_repeat_time;
                 if time_since_last >= self.repeat_config.interval {
                     if let Some(action) = self.bindings.translate(key) {
-                        self.pending.push_back(QueuedAction::new(action, source));
+                        let qa = QueuedAction::new(action, source);
+                        self.pending.push_back(qa);
                         self.total_queued += 1;
                         self.last_repeat_time = self.held_time;
                     }
                 }
             }
+        }
+    }
+
+    fn record_if_active(&mut self, action: &QueuedAction<A>) {
+        if self.recording_path.is_some() {
+            self.recorded_actions.push(action.clone());
         }
     }
 }
@@ -210,7 +246,9 @@ impl<A: Clone> InputRouter<A> {
                     self.last_repeat_time = 0.0;
 
                     if let Some(action) = self.bindings.translate(key) {
-                        self.pending.push_back(QueuedAction::new(action, source));
+                        let qa = QueuedAction::new(action, source);
+                        self.record_if_active(&qa);
+                        self.pending.push_back(qa);
                         self.total_queued += 1;
                         true
                     } else {
@@ -229,7 +267,9 @@ impl<A: Clone> InputRouter<A> {
             },
             _ => {
                 if let Some(action) = self.bindings.translate_event(event) {
-                    self.pending.push_back(QueuedAction::new(action, source));
+                    let qa = QueuedAction::new(action, source);
+                    self.record_if_active(&qa);
+                    self.pending.push_back(qa);
                     self.total_queued += 1;
                     true
                 } else {
@@ -251,7 +291,9 @@ impl<A: Clone> InputRouter<A> {
         F: FnOnce(InputEvent) -> Option<A>,
     {
         if let Some(action) = translate(event) {
-            self.pending.push_back(QueuedAction::new(action, source));
+            let qa = QueuedAction::new(action, source);
+            self.record_if_active(&qa);
+            self.pending.push_back(qa);
             self.total_queued += 1;
             true
         } else {
@@ -307,11 +349,15 @@ impl<A: Clone> InputRouter<A> {
         let mut count = 0;
         for event in events {
             if let Some(action) = translate(event) {
-                self.pending.push_back(QueuedAction::new(action, source));
+                let qa = QueuedAction::new(action, source);
+                self.record_if_active(&qa);
+                self.pending.push_back(qa);
                 self.total_queued += 1;
                 count += 1;
             } else if let Some(action) = self.bindings.translate_event(event) {
-                self.pending.push_back(QueuedAction::new(action, source));
+                let qa = QueuedAction::new(action, source);
+                self.record_if_active(&qa);
+                self.pending.push_back(qa);
                 self.total_queued += 1;
                 count += 1;
             }
@@ -329,7 +375,9 @@ impl<A: Clone> InputRouter<A> {
     /// Inject an action with explicit provenance for reports, replays, or
     /// agent drivers.
     pub fn inject_from(&mut self, action: A, source: ActionSource) {
-        self.pending.push_back(QueuedAction::new(action, source));
+        let qa = QueuedAction::new(action, source);
+        self.record_if_active(&qa);
+        self.pending.push_back(qa);
         self.total_queued += 1;
     }
 
@@ -341,7 +389,9 @@ impl<A: Clone> InputRouter<A> {
     /// Inject a high-priority action at the front of the queue with explicit
     /// provenance.
     pub fn inject_priority_from(&mut self, action: A, source: ActionSource) {
-        self.pending.push_front(QueuedAction::new(action, source));
+        let qa = QueuedAction::new(action, source);
+        self.record_if_active(&qa);
+        self.pending.push_front(qa);
         self.total_queued += 1;
     }
 
@@ -399,6 +449,7 @@ impl<A: Clone> InputRouter<A> {
         let action = self.pending.pop_front();
         if let Some(ref act) = action {
             self.history.push(act.clone());
+            self.record_if_active(act);
         }
         action
     }
@@ -408,18 +459,33 @@ impl<A: Clone> InputRouter<A> {
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = A> + '_ {
-        self.history.extend(self.pending.iter().cloned());
+        if self.recording_path.is_some() {
+            self.recorded_actions.extend(self.pending.iter().cloned());
+        }
+        for act in &self.pending {
+            self.history.push(act.clone());
+        }
         self.pending.drain(..).map(QueuedAction::into_action)
     }
 
     pub fn drain_queued(&mut self) -> vec_deque::Drain<'_, QueuedAction<A>> {
-        self.history.extend(self.pending.iter().cloned());
+        if self.recording_path.is_some() {
+            self.recorded_actions.extend(self.pending.iter().cloned());
+        }
+        for act in &self.pending {
+            self.history.push(act.clone());
+        }
         self.pending.drain(..)
     }
 
     /// Drain the pending queue into a replayable trace, preserving sources.
     pub fn drain_trace(&mut self) -> ActionTrace<A> {
-        self.history.extend(self.pending.iter().cloned());
+        if self.recording_path.is_some() {
+            self.recorded_actions.extend(self.pending.iter().cloned());
+        }
+        for act in &self.pending {
+            self.history.push(act.clone());
+        }
         ActionTrace::from_steps(self.pending.drain(..))
     }
 

@@ -1485,21 +1485,79 @@ mod tests {
         input.set_text("hello brave new world".to_owned());
         assert_eq!(input.cursor(), 21); // at the end
 
-        // Ctrl-Left to jump to "world" start
+        // Ctrl+Left (←) to jump one word left
         input.handle_key(Key::Modified {
-            char: '\u{1b}',
+            char: '←',
             ctrl: true,
             alt: false,
             shift: false,
         });
-        // This is Ctrl+[, not word jump — word jumps use '←'/'→' chars
-        // The original test used these specific chars; they're handled via
-        // the match on '←'/'→' in the Modified arm.
-        // Let me use the actual key that the test expects:
-        // Actually the original code checks char == '←' and '→'
-        // Those are literal Unicode chars in the match. Let me just
-        // test a simpler path.
-        let _ = input;
+        assert_eq!(input.cursor(), 16); // "world" starts at 16
+
+        // Ctrl+Left again
+        input.handle_key(Key::Modified {
+            char: '←',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.cursor(), 12); // "new" starts at 12
+
+        // Ctrl+Right (→) to jump one word right
+        input.handle_key(Key::Modified {
+            char: '→',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.cursor(), 16); // back to "world"
+
+        // Ctrl+Right to end
+        input.handle_key(Key::Modified {
+            char: '→',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.cursor(), 21); // at the end again
+    }
+
+    #[test]
+    fn test_text_input_delete_word() {
+        let mut input = TextInput::new();
+        input.set_text("hello brave new world".to_owned());
+
+        // Ctrl+Backspace: delete "world"
+        input.handle_key(Key::Modified {
+            char: '\x08',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.text(), "hello brave new ");
+        assert_eq!(input.cursor(), 16);
+
+        // Ctrl+Backspace again: delete "new"
+        input.handle_key(Key::Modified {
+            char: '\x08',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.text(), "hello brave ");
+        assert_eq!(input.cursor(), 12);
+
+        // Ctrl+Delete: delete "brave" (word right from cursor)
+        input.set_text("hello brave new world".to_owned());
+        input.set_cursor(6); // at "brave"
+        input.handle_key(Key::Modified {
+            char: '\x7f',
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+        assert_eq!(input.text(), "hello new world");
+        assert_eq!(input.cursor(), 6);
     }
 
     #[test]
@@ -1722,6 +1780,8 @@ mod tests {
             format!("{}", Key::modified('a', true, true, false)),
             "Ctrl+Alt+a"
         );
+        // Empty modifiers should not produce a leading '+'
+        assert_eq!(format!("{}", Key::modified('a', false, false, false)), "a");
     }
 
     #[test]

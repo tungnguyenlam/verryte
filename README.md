@@ -46,16 +46,21 @@ those pieces.
   `set_bindings` and `bindings_guard`, a context stack via
   `InputRouter::push_bindings` / `pop_bindings` for nested modal input, batch
   event processing (`handle_batch`, `handle_batch_with`), custom event
-  translation (`handle_with`) for position-aware inputs,
+  translation (`handle_with` for position-aware inputs,
   `Bindings::merge` for layering keymaps,
   `CommandBindings::merge` for layering command sets,
   `Bindings::iter_keys` / `iter_mouse` / `iter_scroll` and
   `CommandBindings::iter_names` / `iter_glyphs` for binding inspection,
   `Bindings::clear` / `CommandBindings::clear` for removing all bindings,
   `InputRouter::total_actions_queued()` for lifetime action metrics,
+  `InputRouter::start_recording` / `stop_recording` for action recording to
+  disk (actions collected in memory, flushed via serde on stop),
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
   movement, insertion, deletion, max length, dirty tracking, undo/redo,
-  autocomplete cycling, and Ctrl shortcut editing (A/E/B/F/U/W/K/Z/Y), and
+  autocomplete cycling, word jumps (Ctrl+Left/Right), word deletion
+  (Ctrl+Backspace/Delete), and Ctrl shortcut editing (A/E/B/F/U/W/K/Z/Y),
+  `ActionHistory` with `iter`, `get`, `last`, `by_source`, `filter`, and
+  `time_range` for recorded action analysis, and
   `ActionSource` with `Display`/`FromStr` for serialization and debugging.
   `Key`, `MouseButton`, and `ScrollDirection` have `Display` for logging.
   Modularized into focused sub-modules (`key`, `action`, `bindings`,

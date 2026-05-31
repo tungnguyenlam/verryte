@@ -138,6 +138,44 @@ impl<A> ActionHistory<A> {
     pub fn clear(&mut self) {
         self.records.clear();
     }
+
+    /// Iterate over all records in order.
+    pub fn iter(&self) -> std::slice::Iter<'_, ActionRecord<A>> {
+        self.records.iter()
+    }
+
+    /// Get a record by index.
+    pub fn get(&self, index: usize) -> Option<&ActionRecord<A>> {
+        self.records.get(index)
+    }
+
+    /// Get the most recent record.
+    pub fn last(&self) -> Option<&ActionRecord<A>> {
+        self.records.last()
+    }
+
+    /// Filter records by source, returning matching records in order.
+    pub fn by_source(&self, source: ActionSource) -> Vec<&ActionRecord<A>> {
+        self.records.iter().filter(|r| r.source == source).collect()
+    }
+
+    /// Filter records by a predicate on the action.
+    pub fn filter<F>(&self, predicate: F) -> Vec<&ActionRecord<A>>
+    where
+        F: Fn(&A) -> bool,
+    {
+        self.records
+            .iter()
+            .filter(|r| predicate(&r.action))
+            .collect()
+    }
+
+    /// Get the time range of records (first timestamp, last timestamp).
+    pub fn time_range(&self) -> Option<(f32, f32)> {
+        let first = self.records.first()?.timestamp;
+        let last = self.records.last()?.timestamp;
+        Some((first, last))
+    }
 }
 
 /// A buffer that can throttle actions based on per-action cooldowns.
@@ -339,5 +377,66 @@ mod tests {
 
         history.clear();
         assert!(history.is_empty());
+    }
+
+    #[test]
+    fn action_history_iter_and_get() {
+        let mut history = ActionHistory::new();
+        history.push(ActionRecord::new(10, ActionSource::Terminal, 0.0));
+        history.push(ActionRecord::new(20, ActionSource::Script, 1.0));
+        history.push(ActionRecord::new(30, ActionSource::Agent, 2.0));
+
+        assert_eq!(history.iter().count(), 3);
+        assert_eq!(history.get(0).unwrap().action, 10);
+        assert_eq!(history.get(1).unwrap().action, 20);
+        assert_eq!(history.get(2).unwrap().action, 30);
+        assert!(history.get(3).is_none());
+
+        assert_eq!(history.last().unwrap().action, 30);
+    }
+
+    #[test]
+    fn action_history_by_source() {
+        let mut history = ActionHistory::new();
+        history.push(ActionRecord::new(1, ActionSource::Terminal, 0.0));
+        history.push(ActionRecord::new(2, ActionSource::Script, 0.1));
+        history.push(ActionRecord::new(3, ActionSource::Terminal, 0.2));
+        history.push(ActionRecord::new(4, ActionSource::Agent, 0.3));
+
+        let terminal: Vec<_> = history.by_source(ActionSource::Terminal);
+        assert_eq!(terminal.len(), 2);
+        assert_eq!(terminal[0].action, 1);
+        assert_eq!(terminal[1].action, 3);
+
+        let script: Vec<_> = history.by_source(ActionSource::Script);
+        assert_eq!(script.len(), 1);
+        assert_eq!(script[0].action, 2);
+    }
+
+    #[test]
+    fn action_history_filter() {
+        let mut history = ActionHistory::new();
+        history.push(ActionRecord::new(10, ActionSource::Terminal, 0.0));
+        history.push(ActionRecord::new(20, ActionSource::Script, 0.1));
+        history.push(ActionRecord::new(30, ActionSource::Terminal, 0.2));
+
+        let large: Vec<_> = history.filter(|a| *a > 15);
+        assert_eq!(large.len(), 2);
+        assert_eq!(large[0].action, 20);
+        assert_eq!(large[1].action, 30);
+    }
+
+    #[test]
+    fn action_history_time_range() {
+        let mut history = ActionHistory::new();
+        assert!(history.time_range().is_none());
+
+        history.push(ActionRecord::new(1, ActionSource::Terminal, 0.5));
+        history.push(ActionRecord::new(2, ActionSource::Script, 2.5));
+        history.push(ActionRecord::new(3, ActionSource::Agent, 1.5));
+
+        let (start, end) = history.time_range().unwrap();
+        assert_eq!(start, 0.5);
+        assert_eq!(end, 1.5);
     }
 }

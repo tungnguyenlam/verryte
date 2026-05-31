@@ -146,14 +146,38 @@ impl TextInput {
                         self.redo();
                     }
                     '\u{2190}' => {
-                        // ← word left
+                        // Ctrl+Left: word left
                         self.cursor = self.word_start_left();
                         self.dirty = true;
                     }
                     '\u{2192}' => {
-                        // → word right
+                        // Ctrl+Right: word right
                         self.cursor = self.word_start_right();
                         self.dirty = true;
+                    }
+                    '\x08' => {
+                        // Ctrl+Backspace: delete word left
+                        if self.cursor > 0 {
+                            self.record_state();
+                            let start = self.word_start_left();
+                            let byte_start = self.char_to_byte(start);
+                            let byte_end = self.char_to_byte(self.cursor);
+                            self.text.drain(byte_start..byte_end);
+                            self.cursor = start;
+                            self.dirty = true;
+                        }
+                    }
+                    '\x7f' => {
+                        // Ctrl+Delete: delete word right
+                        let len = self.text.chars().count();
+                        if self.cursor < len {
+                            self.record_state();
+                            let end = self.word_start_right();
+                            let byte_start = self.char_to_byte(self.cursor);
+                            let byte_end = self.char_to_byte(end);
+                            self.text.drain(byte_start..byte_end);
+                            self.dirty = true;
+                        }
                     }
                     _ => {}
                 }
