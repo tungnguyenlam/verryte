@@ -47,6 +47,9 @@ pub struct AudioEvent {
     pub looped: bool,
 }
 
+/// Type alias for an event channel carrying [`AudioEvent`] messages.
+pub type AudioEvents = Events<AudioEvent>;
+
 impl AudioEvent {
     pub fn play(name: impl Into<String>) -> Self {
         Self {
@@ -131,5 +134,14 @@ mod tests {
     fn audio_event_from_string_name() {
         let ev = AudioEvent::play(String::from("long_name"));
         assert_eq!(ev.name, "long_name");
+    }
+
+    #[test]
+    fn audio_events_type_alias_works() {
+        let mut events: AudioEvents = Events::new();
+        events.send(AudioEvent::play("hit"));
+        assert_eq!(events.len(), 1);
+        let ev = events.drain().next().unwrap();
+        assert_eq!(ev.name, "hit");
     }
 }

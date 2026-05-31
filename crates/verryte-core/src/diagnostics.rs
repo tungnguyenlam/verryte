@@ -12,6 +12,18 @@ pub struct SystemMetrics {
     pub last_duration: Duration,
     /// Maximum time spent in a single execution.
     pub max_duration: Duration,
+    /// Minimum time spent in a single execution (excluding the first call).
+    pub min_duration: Option<Duration>,
+}
+
+impl SystemMetrics {
+    /// Return the average duration across all recorded calls.
+    pub fn avg_duration(&self) -> Duration {
+        if self.call_count == 0 {
+            return Duration::ZERO;
+        }
+        self.total_duration / self.call_count as u32
+    }
 }
 
 /// A global resource that tracks execution speed of named systems.
@@ -38,6 +50,30 @@ impl Diagnostics {
         if duration > metrics.max_duration {
             metrics.max_duration = duration;
         }
+        match metrics.min_duration {
+            None => metrics.min_duration = Some(duration),
+            Some(current) if duration < current => metrics.min_duration = Some(duration),
+            _ => {}
+        }
+    }
+
+    /// Reset all metrics to their initial state, keeping registered system names.
+    pub fn reset(&mut self) {
+        self.systems.values_mut().for_each(|m| {
+            *m = SystemMetrics::default();
+        });
+    }
+
+    /// Remove all metrics entirely, returning the count of removed systems.
+    pub fn clear(&mut self) -> usize {
+        let count = self.systems.len();
+        self.systems.clear();
+        count
+    }
+
+    /// Remove metrics for a specific system. Returns `true` if the system existed.
+    pub fn remove_system(&mut self, system_name: &str) -> bool {
+        self.systems.remove(system_name).is_some()
     }
 }
 
@@ -86,5 +122,71 @@ mod tests {
         assert_eq!(diag.systems.len(), 2);
         assert_eq!(diag.systems.get("render").unwrap().call_count, 1);
         assert_eq!(diag.systems.get("physics").unwrap().call_count, 1);
+    }
+
+    #[test]
+    fn system_metrics_avg_duration() {
+        let mut diag = Diagnostics::new();
+        diag.record("ai", Duration::from_millis(10));
+        diag.record("ai", Duration::from_millis(20));
+        diag.record("ai", Duration::from_millis(30));
+
+        let m = diag.systems.get("ai").unwrap();
+        assert_eq!(m.avg_duration(), Duration::from_millis(20));
+    }
+
+    #[test]
+    fn system_metrics_avg_duration_zero_calls() {
+        let m = SystemMetrics::default();
+        assert_eq!(m.avg_duration(), Duration::ZERO);
+    }
+
+    #[test]
+    fn system_metrics_min_duration() {
+        let mut diag = Diagnostics::new();
+        diag.record("ai", Duration::from_millis(10));
+        diag.record("ai", Duration::from_millis(5));
+        diag.record("ai", Duration::from_millis(15));
+
+        let m = diag.systems.get("ai").unwrap();
+        assert_eq!(m.min_duration, Some(Duration::from_millis(5)));
+        assert_eq!(m.max_duration, Duration::from_millis(15));
+    }
+
+    #[test]
+    fn diagnostics_reset_preserves_systems() {
+        let mut diag = Diagnostics::new();
+        diag.record("movement", Duration::from_millis(10));
+        diag.record("ai", Duration::from_millis(5));
+
+        diag.reset();
+
+        assert_eq!(diag.systems.len(), 2);
+        let m = diag.systems.get("movement").unwrap();
+        assert_eq!(m.call_count, 0);
+        assert_eq!(m.total_duration, Duration::ZERO);
+    }
+
+    #[test]
+    fn diagnostics_clear_removes_all() {
+        let mut diag = Diagnostics::new();
+        diag.record("a", Duration::from_millis(1));
+        diag.record("b", Duration::from_millis(2));
+
+        let removed = diag.clear();
+        assert_eq!(removed, 2);
+        assert!(diag.systems.is_empty());
+    }
+
+    #[test]
+    fn diagnostics_remove_system() {
+        let mut diag = Diagnostics::new();
+        diag.record("a", Duration::from_millis(1));
+        diag.record("b", Duration::from_millis(2));
+
+        assert!(diag.remove_system("a"));
+        assert!(!diag.remove_system("c"));
+        assert_eq!(diag.systems.len(), 1);
+        assert!(diag.systems.contains_key("b"));
     }
 }

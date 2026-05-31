@@ -33,8 +33,11 @@ those pieces.
   `MessageLog::with_max`, a `Tag` marker component for entity grouping and
   filtering, `Rng` (seeded xorshift64 RNG) for reproducible randomness in
   tests, replays, and procedural generation (including `weighted_pick` for
-  weighted random selection), and `GameClock` for tracking elapsed ticks,
-  pause state, and real-time duration.
+  weighted random selection), `GameClock` for tracking elapsed ticks,
+  pause state, and real-time duration, and `Diagnostics` with `reset()`,
+  `clear()`, `remove_system()`, per-system `avg_duration()`, and `min_duration`
+  tracking for runtime performance monitoring. `AudioEvents` type alias for
+  ergonomic event channel usage.
   Optional `serde` feature enables `Serialize`/`Deserialize` on `Entity`.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse/scroll
   bindings, script command bindings, sourced queued actions, replayable
@@ -113,6 +116,10 @@ those pieces.
   `is_reverse`, `is_blink`, `is_empty`). `Color` has `Display` (`#RRGGBB`),
   `From<(u8,u8,u8)>`. `Rect` has `Display` and `From<(u16,u16,u16,u16)>`. `Grid::fill_background`
   sets the background color across all cells without changing glyphs.
+  Widgets: `MenuView` with scroll support for long option lists,
+  `VerticalProgressBar` for bottom-to-top fills, `Tooltip` for floating
+  context hints, `PerformanceOverlay`, and `MessageLogView`.
+  `Camera::follow()` for smooth entity tracking.
   `image_to_grid` converts PNG images to half-block terminal grids, and
   `image_to_grid_with_chroma_key` adds transparency support for sprite loading.
   The `vfx` module provides a reusable visual effects system: particles

@@ -2409,3 +2409,68 @@ but not imported at the crate root.
 **Follow-ups.** The remaining ~30 `unwrap()` calls in `systems.rs` and `game.rs`
 could be converted to `expect()` in a future pass. The `vfx-demo` could also
 benefit from extracting `tint_grid_white()` into a reusable engine utility.
+
+## 2026-05-31 - autonomous engine run: diagnostics API, widget scroll, camera follow, type aliases
+
+**Goal.** Deliver another autonomous engine batch with meaningful improvements to
+Diagnostics ergonomics, widget usability, camera tracking, and type convenience —
+all preserving the shared terminal/script/control path.
+
+**Changes.**
+- `crates/verryte-core/src/diagnostics.rs` - added `SystemMetrics::avg_duration()`
+  helper, `min_duration` tracking (updated `record()` to maintain it), and
+  `Diagnostics::reset()` (zeroes metrics but keeps system names),
+  `Diagnostics::clear()` (removes all systems, returns count), and
+  `Diagnostics::remove_system()` (drops metrics for a specific system).
+  Tests at :91-161 covering avg_duration, zero-call edge case, min_duration,
+  reset preservation, clear removal, and remove_system logic.
+- `crates/verryte-core/src/lib.rs` - added `pub type AudioEvents = Events<AudioEvent>;`
+  for ergonomic event channel usage. Test at :141 verifying the alias works
+  with send/drain.
+- `crates/verryte-terminal/src/camera.rs` - added `Camera::follow(target_x,
+  target_y, threshold)` that calls `look_at` and returns whether the camera
+  is within threshold distance of the target. Tests at :316-345 covering
+  instant, smooth-arrived, and smooth-not-arrived cases.
+- `crates/verryte-terminal/src/widgets.rs` - added `scroll_offset` field to
+  `MenuView` with `ensure_visible()` that keeps the selected item in the
+  visible window during `next()`/`prev()` navigation. Added
+  `VerticalProgressBar` widget that fills from bottom to top, complementing
+  the existing horizontal `ProgressBar`. Exported `Tooltip` from
+  `verryte-terminal/src/lib.rs` (was fully implemented but not re-exported).
+  7 new tests covering vertical progress bar rendering, menu scroll tracking,
+  scroll wrapping, and scrollable menu rendering.
+- `README.md` - documented Diagnostics enhancements, AudioEvents alias,
+  Camera::follow, MenuView scroll, VerticalProgressBar, and Tooltip export.
+
+**Reasoning.** Diagnostics was missing the most basic lifecycle operations
+(reset, clear, remove) that long-running games need for per-phase or per-turn
+metrics. The avg_duration helper eliminates a common manual calculation. MenuView
+scroll is essential for any game with more options than screen rows — without it,
+options beyond the visible area are unreachable. VerticalProgressBar fills a
+natural gap alongside the horizontal variant. Camera::follow provides the most
+common camera-tracking pattern (center on entity) without requiring manual
+lerp logic each frame. AudioEvents type alias reduces boilerplate for the
+audio event channel pattern. Tooltip export was a simple oversight — the widget
+was fully implemented with tests but missing from the public API.
+
+**Assumptions.** MenuView scroll uses a simple "keep selected visible" policy
+rather than centered scrolling, which is simpler and matches most terminal
+menu conventions. Camera::follow returns a boolean arrival check rather than
+exposing distance, keeping the API minimal. VerticalProgressBar fills bottom-to-top
+matching the natural "fill up" metaphor. Diagnostics::reset() preserves system
+names (zeroes metrics) rather than clearing everything, since system names are
+typically known at schedule setup time.
+
+**Gotchas.** The initial Camera::follow tests were wrong because they assumed
+`follow()` moves the center immediately in smooth mode, but `look_at()` only
+sets the target — movement happens on `tick()`. Fixed by testing target state
+and tick behavior separately. The MenuView scroll test initially expected
+scroll_offset to go to 0 when navigating backward within the visible window,
+but ensure_visible correctly keeps the offset stable when the selected item
+is still visible.
+
+**Follow-ups.** Consider adding `MenuView::scroll_to(index)` for programmatic
+scroll position control. Camera::follow could be extended with a `follow_entity`
+variant that reads position from the ECS world. Diagnostics could gain a
+`sorted_by_duration()` iterator for the PerformanceOverlay to avoid sorting
+on every render frame.

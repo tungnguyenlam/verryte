@@ -116,6 +116,15 @@ impl Camera {
         }
     }
 
+    /// Smoothly or instantly look at a target position, returning whether the
+    /// camera is now within `threshold` distance of the target.
+    pub fn follow(&mut self, target_x: f32, target_y: f32, threshold: f32) -> bool {
+        self.look_at(target_x, target_y);
+        let dx = self.center_x - target_x;
+        let dy = self.center_y - target_y;
+        (dx * dx + dy * dy).sqrt() <= threshold
+    }
+
     /// Clamp the camera's center and target position within the given boundaries.
     pub fn clamp_to_bounds(
         &mut self,
@@ -308,5 +317,42 @@ mod tests {
         camera.look_at(25.0, 25.0);
         camera.clamp_to_bounds(0.0, 0.0, 20.0, 20.0, 10, 10);
         assert_eq!(camera.center_x, 15.0);
+    }
+
+    #[test]
+    fn test_camera_follow_instant() {
+        let mut cam = Camera::new(0.0, 0.0);
+        let arrived = cam.follow(10.0, 10.0, 0.5);
+        assert!(arrived);
+        assert_eq!(cam.center_x, 10.0);
+        assert_eq!(cam.center_y, 10.0);
+    }
+
+    #[test]
+    fn test_camera_follow_smooth_arrives() {
+        let mut cam = Camera::new(0.0, 0.0).with_smooth(1.0);
+        let arrived = cam.follow(5.0, 5.0, 1.0);
+        // Smooth mode sets target but doesn't move center yet
+        assert!(!arrived);
+        assert_eq!(cam.target_x, 5.0);
+        // After tick, center should be at target with lerp_factor=1.0
+        let mut rng = Rng::seed(1);
+        cam.tick(&mut rng);
+        assert_eq!(cam.center_x, 5.0);
+    }
+
+    #[test]
+    fn test_camera_follow_smooth_not_arrived() {
+        let mut cam = Camera::new(0.0, 0.0).with_smooth(0.1);
+        let arrived = cam.follow(10.0, 10.0, 0.5);
+        // Smooth mode sets target but doesn't move center yet
+        assert!(!arrived);
+        assert_eq!(cam.target_x, 10.0);
+        assert_eq!(cam.center_x, 0.0);
+        // After tick, center should move toward target
+        let mut rng = Rng::seed(1);
+        cam.tick(&mut rng);
+        assert!(cam.center_x > 0.0);
+        assert!(cam.center_x < 10.0);
     }
 }

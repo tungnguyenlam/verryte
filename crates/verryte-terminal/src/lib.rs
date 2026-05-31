@@ -34,4 +34,6 @@ pub use vfx::{
     SpatialHighlight, Trajectory, VfxEmitter, VfxSystem,
 };
 pub use viewport::TileViewport;
-pub use widgets::{MenuView, MessageLogView, PerformanceOverlay, ProgressBar};
+pub use widgets::{
+    MenuView, MessageLogView, PerformanceOverlay, ProgressBar, Tooltip, VerticalProgressBar,
+};

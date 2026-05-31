@@ -201,13 +201,14 @@ impl PerformanceOverlay {
     }
 }
 
-/// A vertical menu widget with a selectable active item.
+/// A vertical menu widget with a selectable active item and scroll support.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MenuView {
     pub rect: Rect,
     pub options: Vec<String>,
     pub selected_index: usize,
+    pub scroll_offset: usize,
     pub normal_fg: Color,
     pub selected_fg: Color,
     pub bg: Color,
@@ -222,6 +223,7 @@ impl MenuView {
             rect,
             options,
             selected_index: 0,
+            scroll_offset: 0,
             normal_fg: Color::WHITE,
             selected_fg: Color::YELLOW,
             bg: Color::BLACK,
@@ -245,6 +247,7 @@ impl MenuView {
     pub fn next(&mut self) {
         if !self.options.is_empty() {
             self.selected_index = (self.selected_index + 1) % self.options.len();
+            self.ensure_visible();
         }
     }
 
@@ -252,6 +255,28 @@ impl MenuView {
         if !self.options.is_empty() {
             self.selected_index =
                 (self.selected_index + self.options.len() - 1) % self.options.len();
+            self.ensure_visible();
+        }
+    }
+
+    fn visible_rows(&self) -> u16 {
+        let inner = if self.border != BorderStyle::None {
+            self.rect.inset(1, 1)
+        } else {
+            self.rect
+        };
+        inner.height
+    }
+
+    fn ensure_visible(&mut self) {
+        let visible = self.visible_rows() as usize;
+        if visible == 0 {
+            return;
+        }
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.selected_index;
+        } else if self.selected_index >= self.scroll_offset + visible {
+            self.scroll_offset = self.selected_index - visible + 1;
         }
     }
 
@@ -273,20 +298,24 @@ impl MenuView {
             return;
         }
 
-        for (i, option) in self.options.iter().enumerate() {
-            let y = inner_rect.y + i as u16;
-            if y >= inner_rect.bottom() {
-                break;
-            }
+        let visible = self.visible_rows() as usize;
+        let marker_width = self.selection_marker.chars().count();
 
-            let is_selected = i == self.selected_index;
+        for (view_row, option_index) in (self.scroll_offset..self.options.len())
+            .enumerate()
+            .take(visible)
+        {
+            let y = inner_rect.y + view_row as u16;
+            let option = &self.options[option_index];
+            let is_selected = option_index == self.selected_index;
+
             let (fg, text) = if is_selected {
                 (
                     self.selected_fg,
                     format!("{}{}", self.selection_marker, option),
                 )
             } else {
-                let padding = " ".repeat(self.selection_marker.chars().count());
+                let padding = " ".repeat(marker_width);
                 (self.normal_fg, format!("{}{}", padding, option))
             };
 
@@ -357,6 +386,69 @@ impl ProgressBar {
                 self.rect.y,
                 Cell::new(ch).with_fg(fg).with_bg(self.bg),
             );
+        }
+    }
+}
+
+/// A vertical progress bar widget that fills from bottom to top.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct VerticalProgressBar {
+    pub rect: Rect,
+    pub value: f32,
+    pub filled_char: char,
+    pub empty_char: char,
+    pub filled_color: Color,
+    pub empty_color: Color,
+    pub bg: Color,
+}
+
+impl VerticalProgressBar {
+    pub fn new(rect: Rect) -> Self {
+        Self {
+            rect,
+            value: 0.0,
+            filled_char: '█',
+            empty_char: '░',
+            filled_color: Color::GREEN,
+            empty_color: Color::GREY,
+            bg: Color::BLACK,
+        }
+    }
+
+    pub fn with_value(mut self, value: f32) -> Self {
+        self.value = value;
+        self
+    }
+
+    pub fn with_colors(mut self, filled: Color, empty: Color) -> Self {
+        self.filled_color = filled;
+        self.empty_color = empty;
+        self
+    }
+
+    pub fn with_chars(mut self, filled: char, empty: char) -> Self {
+        self.filled_char = filled;
+        self.empty_char = empty;
+        self
+    }
+
+    pub fn render(&self, grid: &mut Grid) {
+        if self.rect.is_empty() {
+            return;
+        }
+
+        let height = self.rect.height;
+        let filled_height = (self.value.clamp(0.0, 1.0) * height as f32).round() as u16;
+
+        for dy in 0..height {
+            let y = self.rect.y + self.rect.height - 1 - dy;
+            let (ch, fg) = if dy < filled_height {
+                (self.filled_char, self.filled_color)
+            } else {
+                (self.empty_char, self.empty_color)
+            };
+            grid.put(self.rect.x, y, Cell::new(ch).with_fg(fg).with_bg(self.bg));
         }
     }
 }
@@ -453,7 +545,6 @@ mod tests {
         let bar = ProgressBar::new(Rect::new(0, 0, 10, 1)).with_value(0.5);
         let mut grid = Grid::new(10, 1);
         bar.render(&mut grid);
-        // 5 filled, 5 empty
         assert_eq!(grid.get(0, 0).unwrap().glyph, '█');
         assert_eq!(grid.get(4, 0).unwrap().glyph, '█');
         assert_eq!(grid.get(5, 0).unwrap().glyph, '░');
@@ -467,12 +558,38 @@ mod tests {
     }
 
     #[test]
+    fn test_vertical_progress_bar_new() {
+        let bar = VerticalProgressBar::new(Rect::new(0, 0, 1, 10));
+        assert_eq!(bar.value, 0.0);
+    }
+
+    #[test]
+    fn test_vertical_progress_bar_render() {
+        let bar = VerticalProgressBar::new(Rect::new(0, 0, 1, 10)).with_value(0.5);
+        let mut grid = Grid::new(5, 10);
+        bar.render(&mut grid);
+        // Bottom 5 cells filled (y=9 down to y=5), top 5 empty
+        assert_eq!(grid.get(0, 9).unwrap().glyph, '█');
+        assert_eq!(grid.get(0, 5).unwrap().glyph, '█');
+        assert_eq!(grid.get(0, 4).unwrap().glyph, '░');
+        assert_eq!(grid.get(0, 0).unwrap().glyph, '░');
+    }
+
+    #[test]
+    fn test_vertical_progress_bar_empty_rect() {
+        let bar = VerticalProgressBar::new(Rect::new(0, 0, 0, 0));
+        let mut grid = Grid::new(5, 5);
+        bar.render(&mut grid);
+    }
+
+    #[test]
     fn test_menu_view_new() {
         let menu = MenuView::new(
             Rect::new(0, 0, 10, 5),
             vec!["A".into(), "B".into(), "C".into()],
         );
         assert_eq!(menu.selected_index, 0);
+        assert_eq!(menu.scroll_offset, 0);
         assert_eq!(menu.options.len(), 3);
     }
 
@@ -482,9 +599,46 @@ mod tests {
         menu.next();
         assert_eq!(menu.selected_index, 1);
         menu.next();
-        assert_eq!(menu.selected_index, 0); // wraps
+        assert_eq!(menu.selected_index, 0);
         menu.prev();
-        assert_eq!(menu.selected_index, 1); // wraps
+        assert_eq!(menu.selected_index, 1);
+    }
+
+    #[test]
+    fn test_menu_view_scroll_tracking() {
+        let options: Vec<String> = (0..20).map(|i| format!("Item {}", i)).collect();
+        let mut menu = MenuView::new(Rect::new(0, 0, 15, 5), options);
+        // Visible area is 5 rows (no border). Scrolling should follow selection.
+        for _ in 0..5 {
+            menu.next();
+        }
+        assert_eq!(menu.selected_index, 5);
+        assert_eq!(menu.scroll_offset, 1);
+        // Going back to index 4: still visible in window [1..6], no scroll change
+        menu.prev();
+        assert_eq!(menu.selected_index, 4);
+        assert_eq!(menu.scroll_offset, 1);
+        // Go back 3 more to index 1: still in window
+        for _ in 0..3 {
+            menu.prev();
+        }
+        assert_eq!(menu.selected_index, 1);
+        assert_eq!(menu.scroll_offset, 1);
+        // Go back one more to index 0: below window start, scroll back
+        menu.prev();
+        assert_eq!(menu.selected_index, 0);
+        assert_eq!(menu.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_menu_view_scroll_wraps() {
+        let options: Vec<String> = (0..20).map(|i| format!("Item {}", i)).collect();
+        let mut menu = MenuView::new(Rect::new(0, 0, 15, 5), options);
+        // Jump to last item via prev (wraps around)
+        menu.prev();
+        assert_eq!(menu.selected_index, 19);
+        // Scroll should show the last 5 items
+        assert_eq!(menu.scroll_offset, 15);
     }
 
     #[test]
@@ -496,6 +650,17 @@ mod tests {
         .with_border(BorderStyle::Rounded, Color::WHITE);
         let mut grid = Grid::new(15, 5);
         menu.render(&mut grid);
+    }
+
+    #[test]
+    fn test_menu_view_render_scrollable() {
+        let options: Vec<String> = (0..20).map(|i| format!("Item {}", i)).collect();
+        let mut menu = MenuView::new(Rect::new(0, 0, 15, 5), options);
+        menu.selected_index = 10;
+        menu.scroll_offset = 6;
+        let mut grid = Grid::new(15, 5);
+        menu.render(&mut grid);
+        // Should render items 6..11, not 0..5
     }
 
     #[test]
