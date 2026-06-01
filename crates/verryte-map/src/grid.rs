@@ -1,6 +1,24 @@
 use crate::{line_between, Bounds, Direction, Direction8, GridError, LineIter, Point, Rect, Size};
 
 use std::collections::{HashMap, VecDeque};
+use std::ops::{Index, IndexMut};
+
+pub(crate) struct XorShift64 {
+    state: u64,
+}
+
+impl XorShift64 {
+    pub(crate) fn new(seed: u64) -> Self {
+        Self { state: seed | 1 }
+    }
+
+    pub(crate) fn next_u64(&mut self) -> u64 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 7;
+        self.state ^= self.state << 17;
+        self.state
+    }
+}
 
 /// A typed, fixed-size rectangular tile grid.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1297,6 +1315,50 @@ impl<T> TileGrid<T> {
         out
     }
 
+    /// Flood-fill from `start`, returning every connected point matching the
+    /// predicate. Uses BFS with 8-way connectivity (cardinal + diagonal),
+    /// so the result is ordered by Chebyshev distance from `start`.
+    pub fn flood_fill8<F>(&self, start: Point, matches: F) -> Vec<Point>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) {
+            return Vec::new();
+        }
+        let Some(tile) = self.get(start) else {
+            return Vec::new();
+        };
+        if !matches(start, tile) {
+            return Vec::new();
+        }
+
+        let mut frontier = VecDeque::new();
+        let mut seen = HashMap::new();
+        let mut out = Vec::new();
+
+        frontier.push_back(start);
+        seen.insert(start, ());
+
+        while let Some(current) = frontier.pop_front() {
+            out.push(current);
+            for neighbor in current.neighbors8() {
+                if seen.contains_key(&neighbor) {
+                    continue;
+                }
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !matches(neighbor, tile) {
+                    continue;
+                }
+                seen.insert(neighbor, ());
+                frontier.push_back(neighbor);
+            }
+        }
+
+        out
+    }
+
     /// Count the number of connected regions matching the predicate.
     ///
     /// Walks every point in the grid. Each unvisited matching point starts a
@@ -1352,20 +1414,13 @@ impl<T> TileGrid<T> {
             return;
         }
 
-        // Simple xorshift64 PRNG for reproducible walks without external deps.
-        let mut state = seed | 1; // Ensure non-zero.
-        let mut next_u64 = || {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state
-        };
+        let mut rng = XorShift64::new(seed);
 
         let mut pos = start;
         self.set(pos, floor.clone());
 
         for _ in 0..steps {
-            let dir_idx = (next_u64() as usize) % 4;
+            let dir_idx = (rng.next_u64() as usize) % 4;
             let next = pos.step(Direction::ALL[dir_idx]);
             if self.in_bounds(next) {
                 pos = next;
@@ -1392,14 +1447,7 @@ impl<T> TileGrid<T> {
             return;
         }
 
-        // Simple xorshift64 PRNG for reproducibility without external deps.
-        let mut state = seed | 1; // Ensure non-zero.
-        let mut next_u64 = || {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state
-        };
+        let mut rng = XorShift64::new(seed);
 
         let mut visited = std::collections::HashSet::new();
         let mut stack = Vec::new();
@@ -1434,7 +1482,7 @@ impl<T> TileGrid<T> {
 
             if !neighbors.is_empty() {
                 // Pick a random unvisited neighbor
-                let idx = (next_u64() as usize) % neighbors.len();
+                let idx = (rng.next_u64() as usize) % neighbors.len();
                 let (next_point, dx, dy) = neighbors[idx];
 
                 // Carve the wall between current and next_point
@@ -1479,13 +1527,8 @@ impl<T> TileGrid<T> {
             return Vec::new();
         }
 
-        let mut state = seed | 1;
-        let mut rng = || -> u64 {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state
-        };
+        let mut xorshift = XorShift64::new(seed);
+        let mut rng = || xorshift.next_u64();
 
         #[derive(Clone, Copy)]
         struct Region {
@@ -1814,13 +1857,8 @@ impl<T> TileGrid<T> {
             return 0;
         }
 
-        let mut state = seed | 1;
-        let mut rng = || -> u64 {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state
-        };
+        let mut xorshift = XorShift64::new(seed);
+        let mut rng = || xorshift.next_u64();
 
         // Initial random fill: borders stay as wall, interior uses fill_chance.
         for y in 0..h {
@@ -1903,13 +1941,8 @@ impl<T> TileGrid<T> {
         let mut partitions = vec![Rect::new(0, 0, w, h)];
         let mut leaves = Vec::new();
 
-        let mut state = seed | 1;
-        let mut rng = || -> u64 {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state
-        };
+        let mut xorshift = XorShift64::new(seed);
+        let mut rng = || xorshift.next_u64();
 
         for _ in 0..max_depth {
             let mut next_gen = Vec::new();
@@ -2241,6 +2274,22 @@ impl<T> TileGrid<T> {
             }
         }
         visited
+    }
+}
+
+impl<T> Index<Point> for TileGrid<T> {
+    type Output = T;
+
+    fn index(&self, point: Point) -> &Self::Output {
+        let idx = point.y as usize * self.width() as usize + point.x as usize;
+        &self.tiles[idx]
+    }
+}
+
+impl<T> IndexMut<Point> for TileGrid<T> {
+    fn index_mut(&mut self, point: Point) -> &mut Self::Output {
+        let idx = point.y as usize * self.width() as usize + point.x as usize;
+        &mut self.tiles[idx]
     }
 }
 

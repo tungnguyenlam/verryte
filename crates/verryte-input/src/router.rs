@@ -119,6 +119,43 @@ impl<A: Clone> InputRouter<A> {
         self.recorded_actions.len()
     }
 
+    /// Convert recorded actions into an [`ActionTrace`] without stopping the recording.
+    ///
+    /// Returns `None` if no recording is active or no actions have been recorded.
+    /// The recording continues — this is a snapshot of the current recorded actions.
+    pub fn recorded_as_trace(&self) -> Option<ActionTrace<A>>
+    where
+        A: Clone,
+    {
+        if self.recorded_actions.is_empty() {
+            return None;
+        }
+        Some(ActionTrace::from_steps(self.recorded_actions.clone()))
+    }
+
+    /// Stop recording and return the collected actions as an [`ActionTrace`].
+    ///
+    /// Unlike [`stop_recording`](Self::stop_recording), this does not write to
+    /// disk. The recording is stopped and the trace is returned for programmatic
+    /// use (replay, analysis, agent replay).
+    pub fn take_recording(&mut self) -> ActionTrace<A> {
+        self.recording_path = None;
+        let actions = std::mem::take(&mut self.recorded_actions);
+        ActionTrace::from_steps(actions)
+    }
+
+    /// Borrow the currently recorded actions without stopping the recording.
+    ///
+    /// Returns `None` if no recording is active. Useful for inspecting
+    /// what has been recorded so far without consuming or stopping.
+    pub fn recorded_actions(&self) -> Option<&[QueuedAction<A>]> {
+        if self.recording_path.is_some() {
+            Some(&self.recorded_actions)
+        } else {
+            None
+        }
+    }
+
     pub fn bindings(&self) -> &Bindings<A> {
         &self.bindings
     }

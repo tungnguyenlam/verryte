@@ -18,11 +18,16 @@ pub mod viewport;
 pub mod widgets;
 
 // Re-exports for convenience
-pub use assets::{image_to_grid, image_to_grid_with_chroma_key, VisualAsset, VisualRegistry};
+#[cfg(feature = "image")]
+pub use assets::{image_to_grid, image_to_grid_with_chroma_key};
+pub use assets::{VisualAsset, VisualRegistry};
 pub use camera::Camera;
 pub use color::{BlendMode, Color};
 pub use dialogue::{DialogueBox, DialogueState, DialogueTheme};
-pub use grid::{wrap_text, write_wrapped_text, Cell, CellAttrs, CellChange, Grid, RichTextSegment};
+pub use grid::{
+    draw_sparkline, wrap_text, write_wrapped_text, Cell, CellAttrs, CellChange, Grid,
+    RichTextSegment,
+};
 pub use layer::{Layer, Layers};
 pub use layout::{Alignment, BorderStyle, Constraint, Layout, Rect};
 pub use math::easing;
@@ -35,5 +40,5 @@ pub use vfx::{
 };
 pub use viewport::TileViewport;
 pub use widgets::{
-    MenuView, MessageLogView, PerformanceOverlay, ProgressBar, Tooltip, VerticalProgressBar,
+    MenuView, MessageLogView, Panel, PerformanceOverlay, ProgressBar, Tooltip, VerticalProgressBar,
 };

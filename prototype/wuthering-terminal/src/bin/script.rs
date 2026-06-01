@@ -83,6 +83,32 @@ fn run_repl() {
         } else if line == "q" || line == "quit" {
             println!("Quitting...");
             break;
+        } else if line == "history" {
+            let history = game
+                .world
+                .resource::<verryte_input::ActionHistory<wuthering_terminal::Action>>()
+                .unwrap();
+            println!("--- Action History ({} records) ---", history.len());
+            for (i, record) in history.iter().enumerate() {
+                println!("  {:3}: {:?} source={:?}", i, record.action, record.source);
+            }
+            if let Err(e) = history.save_to_file("history.json") {
+                println!("Error saving history: {}", e);
+            } else {
+                println!("Saved history to history.json");
+            }
+        } else if line == "load-history" {
+            match verryte_input::ActionHistory::<wuthering_terminal::Action>::load_from_file(
+                "history.json",
+            ) {
+                Ok(history) => {
+                    println!("Loaded {} records from history.json", history.len());
+                    for (i, record) in history.iter().enumerate() {
+                        println!("  {:3}: {:?} source={:?}", i, record.action, record.source);
+                    }
+                }
+                Err(e) => println!("Error loading history: {}", e),
+            }
         } else {
             match game.router.inject_script_with(
                 &default_commands(),

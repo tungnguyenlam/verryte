@@ -135,6 +135,64 @@ impl<A: Clone> Bindings<A> {
         self.by_mouse.clear();
         self.by_scroll.clear();
     }
+
+    /// Get all keys bound to a specific action.
+    pub fn get_keys_for_action(&self, action: &A) -> Vec<Key>
+    where
+        A: PartialEq,
+    {
+        let mut keys = Vec::new();
+        for (&key, val) in &self.by_key {
+            if val == action {
+                keys.push(key);
+            }
+        }
+        // Sort keys to have deterministic return values (Key doesn't implement Ord easily, but we can do a simple order or return them as they are)
+        keys
+    }
+
+    /// Get all mouse triggers bound to a specific action.
+    pub fn get_mouse_for_action(&self, action: &A) -> Vec<(MouseButton, bool)>
+    where
+        A: PartialEq,
+    {
+        let mut mouse = Vec::new();
+        for (trigger, val) in &self.by_mouse {
+            if val == action {
+                mouse.push((trigger.button, trigger.pressed));
+            }
+        }
+        mouse
+    }
+
+    /// Get all scroll directions bound to a specific action.
+    pub fn get_scroll_for_action(&self, action: &A) -> Vec<ScrollDirection>
+    where
+        A: PartialEq,
+    {
+        let mut scroll = Vec::new();
+        for (&dir, val) in &self.by_scroll {
+            if val == action {
+                scroll.push(dir);
+            }
+        }
+        scroll
+    }
+
+    /// Check if a specific key has any action bound to it.
+    pub fn is_key_bound(&self, key: Key) -> bool {
+        self.by_key.contains_key(&key)
+    }
+
+    /// Check if a specific action is bound to any input trigger.
+    pub fn is_action_bound(&self, action: &A) -> bool
+    where
+        A: PartialEq,
+    {
+        self.by_key.values().any(|val| val == action)
+            || self.by_mouse.values().any(|val| val == action)
+            || self.by_scroll.values().any(|val| val == action)
+    }
 }
 
 impl<A: Clone> Default for Bindings<A> {

@@ -12,8 +12,8 @@ Verryte's identity:
 - ECS-oriented and data-first
 - modular, extensible, and inspectable
 - focused on real terminal games, not GUI windows or generic game-engine sprawl
-- Ash Courier is the first proving game, used to validate the engine through a small
-  turn-based terminal roguelike
+- Wuthering Terminal is the tactical RPG prototype, used to validate the engine through
+  a complex turn-based game with team swapping, elemental reactions, boss fights, and adaptive-resolution sprites
 - input/control is central
 - interactive input, scripted input, tests, replays, and agent control must share the
   same action path
@@ -41,7 +41,7 @@ Meaningful improvements include:
 - adding observable state snapshots
 - adding terminal rendering primitives
 - adding a small example game or vertical slice
-- improving the Ash Courier prototype in a way that reveals or validates engine behavior
+- improving the Wuthering Terminal prototype in a way that reveals or validates engine behavior
 - adding map/spatial primitives
 - adding tests around behavior
 - adding docs that match implemented behavior
@@ -57,10 +57,10 @@ As of the latest commits:
 - **Input and control path is unified**: all gameplay paths (terminal, script, replay, agent) converge on `Action` enum and `apply_action()`. No separate test/interactive forks.
 - **Terminal rendering is functional**: grid-based cell rendering, viewport clipping, diff-based updates, batch write helpers.
 - **Map/spatial primitives are complete**: grids, pathfinding, visibility, bounds, geometric queries.
-- **Ash Courier proving game works**: turn-based roguelike validates engine behavior. Script runner tests win condition deterministically. TTY frontend supports interactive play.
+- **Wuthering Terminal prototype works**: tactical RPG validates engine behavior with team swapping, elemental reactions, telegraphed attacks, echo absorption, boss phases, and adaptive-resolution sprites. Script runner tests deterministically. TTY frontend supports interactive play.
 
 **Areas that could benefit from improvement:**
-- Ash Courier game depth: more mechanics, encounters, or content variety to stress-test the engine further.
+- Wuthering Terminal game depth: more encounters, enemy types, or content variety to stress-test the engine further.
 - State serialization: snapshot/replay persistence to disk for session save/load or agent replay analysis.
 - Performance optimization: profile heavy operations (pathfinding, visibility, grid iteration) and optimize as needed.
 - UI polish: better viewport camera control, visualization of spatial queries, cursor feedback.
@@ -107,7 +107,7 @@ Prioritize in this order:
 1. project must build
 2. tests/checks must be possible to run
 3. input/control path must stay central
-4. Ash Courier should prove engine behavior without forcing one-off engine design
+4. Wuthering Terminal should prove engine behavior without forcing one-off engine design
 5. public APIs should be small and inspectable
 6. examples should prove real engine behavior
 7. docs should reflect what exists now
@@ -124,7 +124,7 @@ Work in batches. Within each batch:
 - keep terminal-specific behavior separate from core game logic where possible
 - make the facade pleasant only when there is enough underlying behavior to justify it
 - avoid promising APIs in docs unless they exist or are clearly labeled as future intent
-- when using Ash Courier, push reusable behavior into the engine and keep game-specific
+- when using Wuthering Terminal, push reusable behavior into the engine and keep game-specific
   rules in the prototype
 
 Self-healing expectations:
@@ -161,7 +161,7 @@ You are done only when all practical items below are true:
 - at least 5 meaningful improvements are complete, unless a real blocker is documented
 - the project builds or the next build blocker is clearly identified and reduced
 - new behavior has tests, examples, or documentation
-- Ash Courier remains a proving game for the engine, not a separate incompatible app
+- Wuthering Terminal remains a proving game for the engine, not a separate incompatible app
 - the input/control model is preserved or improved
 - no unrelated user changes were reverted
 - final verification has been run and reported

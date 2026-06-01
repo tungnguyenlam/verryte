@@ -24,23 +24,24 @@ pub struct EntitySnapshot {
 /// Represents the difference between two [`WorldSnapshot`]s.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct WorldDiff {
-    pub added_entities: Vec<Entity>,
+    pub added_entities: Vec<EntitySnapshot>,
     pub removed_entities: Vec<Entity>,
     pub changed_entities: HashMap<Entity, EntityDiff>,
-    pub added_resources: Vec<String>,
+    pub added_resources: HashMap<String, serde_json::Value>,
     pub removed_resources: Vec<String>,
-    pub changed_resources: Vec<String>,
+    pub changed_resources: HashMap<String, serde_json::Value>,
 }
 
 /// Represents the difference in components for a single entity.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct EntityDiff {
-    pub added_components: Vec<String>,
+    pub added_components: HashMap<String, serde_json::Value>,
     pub removed_components: Vec<String>,
-    pub changed_components: Vec<String>,
+    pub changed_components: HashMap<String, serde_json::Value>,
 }
 
 impl WorldSnapshot {
+    /// Compute the difference to transform `self` into `other`.
     pub fn diff(&self, other: &WorldSnapshot) -> WorldDiff {
         let mut diff = WorldDiff::default();
 
@@ -49,10 +50,10 @@ impl WorldSnapshot {
         let other_entities: HashMap<Entity, &EntitySnapshot> =
             other.entities.iter().map(|e| (e.entity, e)).collect();
 
-        // Entities in other but not in self are "added" (relative to self)
+        // Entities in other but not in self are "added"
         for &entity in other_entities.keys() {
             if !self_entities.contains_key(&entity) {
-                diff.added_entities.push(entity);
+                diff.added_entities.push(other_entities[&entity].clone());
             }
         }
 
@@ -66,11 +67,11 @@ impl WorldSnapshot {
                 let o_ent = other_entities[&entity];
                 let mut e_diff = EntityDiff::default();
 
-                for name in o_ent.components.keys() {
+                for (name, val) in &o_ent.components {
                     if !s_ent.components.contains_key(name) {
-                        e_diff.added_components.push(name.clone());
-                    } else if s_ent.components[name] != o_ent.components[name] {
-                        e_diff.changed_components.push(name.clone());
+                        e_diff.added_components.insert(name.clone(), val.clone());
+                    } else if s_ent.components[name] != *val {
+                        e_diff.changed_components.insert(name.clone(), val.clone());
                     }
                 }
 
@@ -90,11 +91,11 @@ impl WorldSnapshot {
         }
 
         // Resources
-        for name in other.resources.keys() {
+        for (name, val) in &other.resources {
             if !self.resources.contains_key(name) {
-                diff.added_resources.push(name.clone());
-            } else if self.resources[name] != other.resources[name] {
-                diff.changed_resources.push(name.clone());
+                diff.added_resources.insert(name.clone(), val.clone());
+            } else if self.resources[name] != *val {
+                diff.changed_resources.insert(name.clone(), val.clone());
             }
         }
 
@@ -116,11 +117,13 @@ pub trait ComponentRegistration: Send + Sync {
         entity: Entity,
         value: serde_json::Value,
     ) -> Result<(), String>;
+    fn remove(&self, world: &mut World, entity: Entity);
 }
 
 pub trait ResourceRegistration: Send + Sync {
     fn serialize(&self, world: &World) -> Option<serde_json::Value>;
     fn deserialize(&self, world: &mut World, value: serde_json::Value) -> Result<(), String>;
+    fn remove(&self, world: &mut World);
 }
 
 struct TypedComponentRegistration<T> {
@@ -146,6 +149,10 @@ impl<T: 'static + Send + Sync + Serialize + DeserializeOwned> ComponentRegistrat
         world.insert(entity, component);
         Ok(())
     }
+
+    fn remove(&self, world: &mut World, entity: Entity) {
+        world.remove::<T>(entity);
+    }
 }
 
 struct TypedResourceRegistration<T> {
@@ -165,6 +172,10 @@ impl<T: 'static + Send + Sync + Serialize + DeserializeOwned> ResourceRegistrati
         let resource: T = serde_json::from_value(value).map_err(|e| e.to_string())?;
         world.insert_resource(resource);
         Ok(())
+    }
+
+    fn remove(&self, world: &mut World) {
+        world.remove_resource::<T>();
     }
 }
 
@@ -261,6 +272,64 @@ impl WorldRegistry {
 
         Ok(())
     }
+
+    /// Apply a difference to the world, patching it from its current state.
+    pub fn apply_diff(&self, world: &mut World, diff: WorldDiff) -> Result<(), String> {
+        // Remove entities
+        for entity in diff.removed_entities {
+            world.despawn(entity);
+        }
+
+        // Add entities
+        for entity_snap in diff.added_entities {
+            world.spawn_at(entity_snap.entity);
+            for (name, value) in entity_snap.components {
+                if let Some(reg) = self.components.get(&name) {
+                    reg.deserialize(world, entity_snap.entity, value)?;
+                }
+            }
+        }
+
+        // Change entities
+        for (entity, e_diff) in diff.changed_entities {
+            // Remove components
+            for name in e_diff.removed_components {
+                if let Some(reg) = self.components.get(&name) {
+                    reg.remove(world, entity);
+                }
+            }
+            // Add/Change components
+            for (name, value) in e_diff
+                .added_components
+                .into_iter()
+                .chain(e_diff.changed_components)
+            {
+                if let Some(reg) = self.components.get(&name) {
+                    reg.deserialize(world, entity, value)?;
+                }
+            }
+        }
+
+        // Remove resources
+        for name in diff.removed_resources {
+            if let Some(reg) = self.resources.get(&name) {
+                reg.remove(world);
+            }
+        }
+
+        // Add/Change resources
+        for (name, value) in diff
+            .added_resources
+            .into_iter()
+            .chain(diff.changed_resources)
+        {
+            if let Some(reg) = self.resources.get(&name) {
+                reg.deserialize(world, value)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(all(test, feature = "serde"))]
@@ -319,6 +388,228 @@ mod tests {
         assert_eq!(
             new_world.resource::<GlobalConfig>(),
             Some(&GlobalConfig { difficulty: 5 })
+        );
+    }
+
+    #[test]
+    fn test_diff_identical_snapshots() {
+        let snap = WorldSnapshot {
+            entities: vec![EntitySnapshot {
+                entity: Entity {
+                    index: 0,
+                    generation: 1,
+                },
+                components: HashMap::from([("Pos".into(), serde_json::json!({"x": 1, "y": 2}))]),
+            }],
+            resources: HashMap::from([("Config".into(), serde_json::json!({"difficulty": 5}))]),
+        };
+        let diff = snap.diff(&snap);
+        assert!(diff.added_entities.is_empty());
+        assert!(diff.removed_entities.is_empty());
+        assert!(diff.changed_entities.is_empty());
+        assert!(diff.added_resources.is_empty());
+        assert!(diff.removed_resources.is_empty());
+        assert!(diff.changed_resources.is_empty());
+    }
+
+    #[test]
+    fn test_diff_added_entity() {
+        let empty = WorldSnapshot::default();
+        let with_entity = WorldSnapshot {
+            entities: vec![EntitySnapshot {
+                entity: Entity {
+                    index: 0,
+                    generation: 1,
+                },
+                components: HashMap::from([("Pos".into(), serde_json::json!({"x": 1, "y": 2}))]),
+            }],
+            resources: HashMap::new(),
+        };
+        let diff = empty.diff(&with_entity);
+        assert_eq!(diff.added_entities.len(), 1);
+        assert!(diff.removed_entities.is_empty());
+    }
+
+    #[test]
+    fn test_diff_removed_entity() {
+        let empty = WorldSnapshot::default();
+        let with_entity = WorldSnapshot {
+            entities: vec![EntitySnapshot {
+                entity: Entity {
+                    index: 0,
+                    generation: 1,
+                },
+                components: HashMap::from([("Pos".into(), serde_json::json!({"x": 1, "y": 2}))]),
+            }],
+            resources: HashMap::new(),
+        };
+        let diff = with_entity.diff(&empty);
+        assert!(diff.added_entities.is_empty());
+        assert_eq!(diff.removed_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_diff_changed_component() {
+        let entity = Entity {
+            index: 0,
+            generation: 1,
+        };
+        let snap_a = WorldSnapshot {
+            entities: vec![EntitySnapshot {
+                entity,
+                components: HashMap::from([("HP".into(), serde_json::json!(10))]),
+            }],
+            resources: HashMap::new(),
+        };
+        let snap_b = WorldSnapshot {
+            entities: vec![EntitySnapshot {
+                entity,
+                components: HashMap::from([("HP".into(), serde_json::json!(5))]),
+            }],
+            resources: HashMap::new(),
+        };
+        let diff = snap_a.diff(&snap_b);
+        assert!(diff.added_entities.is_empty());
+        assert!(diff.removed_entities.is_empty());
+        let e_diff = diff.changed_entities.get(&entity).unwrap();
+        assert!(e_diff.changed_components.contains_key(&"HP".to_string()));
+    }
+
+    #[test]
+    fn test_diff_added_removed_component() {
+        let entity = Entity {
+            index: 0,
+            generation: 1,
+        };
+        let snap_a = WorldSnapshot {
+            entities: vec![EntitySnapshot {
+                entity,
+                components: HashMap::from([("Pos".into(), serde_json::json!({"x": 1, "y": 2}))]),
+            }],
+            resources: HashMap::new(),
+        };
+        let snap_b = WorldSnapshot {
+            entities: vec![EntitySnapshot {
+                entity,
+                components: HashMap::from([("HP".into(), serde_json::json!(10))]),
+            }],
+            resources: HashMap::new(),
+        };
+        let diff = snap_a.diff(&snap_b);
+        let e_diff = diff.changed_entities.get(&entity).unwrap();
+        assert!(e_diff.added_components.contains_key(&"HP".to_string()));
+        assert!(e_diff.removed_components.contains(&"Pos".to_string()));
+    }
+
+    #[test]
+    fn test_diff_resource_changes() {
+        let snap_a = WorldSnapshot {
+            entities: vec![],
+            resources: HashMap::from([
+                ("Config".into(), serde_json::json!({"difficulty": 1})),
+                ("Old".into(), serde_json::json!("gone")),
+            ]),
+        };
+        let snap_b = WorldSnapshot {
+            entities: vec![],
+            resources: HashMap::from([
+                ("Config".into(), serde_json::json!({"difficulty": 5})),
+                ("New".into(), serde_json::json!("fresh")),
+            ]),
+        };
+        let diff = snap_a.diff(&snap_b);
+        assert!(diff.added_resources.contains_key(&"New".to_string()));
+        assert!(diff.removed_resources.contains(&"Old".to_string()));
+        assert!(diff.changed_resources.contains_key(&"Config".to_string()));
+    }
+
+    #[test]
+    fn test_snapshot_empty_world() {
+        let world = World::new();
+        let registry = WorldRegistry::new();
+        let snap = registry.snapshot(&world);
+        assert!(snap.entities.is_empty());
+        assert!(snap.resources.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_entity_without_registered_components() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Pos { x: 1, y: 2 });
+
+        let mut registry = WorldRegistry::new();
+        // Only register HP, not Pos — entity should be excluded (no matching components)
+        registry.register_component::<HP>("HP");
+
+        let snap = registry.snapshot(&world);
+        assert!(snap.entities.is_empty());
+    }
+
+    #[test]
+    fn test_apply_clears_existing_world() {
+        let mut registry = WorldRegistry::new();
+        registry.register_component::<Pos>("Pos");
+
+        // Build a snapshot with one entity
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Pos { x: 42, y: 99 });
+        let snap = registry.snapshot(&world);
+
+        // Create a target world with different entities
+        let mut target = World::new();
+        let e_old = target.spawn();
+        target.insert(e_old, Pos { x: 0, y: 0 });
+        let _e_old2 = target.spawn();
+
+        // Apply snapshot — old entities should be replaced
+        registry.apply(&mut target, snap).unwrap();
+        // Snapshot entity should be alive with correct data
+        assert_eq!(target.get::<Pos>(e), Some(&Pos { x: 42, y: 99 }));
+    }
+
+    #[test]
+    fn test_apply_diff_incremental_updates() {
+        let mut registry = WorldRegistry::new();
+        registry.register_component::<Pos>("Pos");
+        registry.register_component::<HP>("HP");
+        registry.register_resource::<GlobalConfig>("Config");
+
+        // Initial state
+        let mut world = World::new();
+        let e1 = world.spawn();
+        world.insert(e1, Pos { x: 1, y: 1 });
+        world.insert_resource(GlobalConfig { difficulty: 1 });
+        let snap1 = registry.snapshot(&world);
+
+        // Modified state
+        world.insert(e1, Pos { x: 2, y: 2 }); // Change component
+        world.insert(e1, HP(100)); // Add component
+        let e2 = world.spawn();
+        world.insert(e2, Pos { x: 10, y: 10 }); // Add entity
+        world.insert_resource(GlobalConfig { difficulty: 2 }); // Change resource
+        let snap2 = registry.snapshot(&world);
+
+        // Compute diff
+        let diff = snap1.diff(&snap2);
+
+        // Apply diff to a world that matches snap1
+        let mut target = World::new();
+        target.spawn_at(e1);
+        target.insert(e1, Pos { x: 1, y: 1 });
+        target.insert_resource(GlobalConfig { difficulty: 1 });
+
+        registry.apply_diff(&mut target, diff).unwrap();
+
+        // Verify target matches snap2
+        assert_eq!(target.get::<Pos>(e1), Some(&Pos { x: 2, y: 2 }));
+        assert_eq!(target.get::<HP>(e1), Some(&HP(100)));
+        assert!(target.is_alive(e2));
+        assert_eq!(target.get::<Pos>(e2), Some(&Pos { x: 10, y: 10 }));
+        assert_eq!(
+            target.resource::<GlobalConfig>(),
+            Some(&GlobalConfig { difficulty: 2 })
         );
     }
 }

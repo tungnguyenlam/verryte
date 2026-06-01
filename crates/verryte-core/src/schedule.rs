@@ -476,6 +476,56 @@ impl Schedule {
         }
         true
     }
+
+    /// Run all defined stages in order, respecting run conditions.
+    ///
+    /// Systems added before the first `add_stage` call belong to no stage
+    /// and are skipped by this method. Use [`run`](Self::run) to execute all
+    /// systems regardless of stage membership.
+    ///
+    /// Returns the number of stages executed. Returns 0 if no stages are defined.
+    pub fn run_all_stages(&self, world: &mut World) -> usize {
+        let names: Vec<&'static str> = self.stage_names();
+        let mut count = 0;
+        for name in names {
+            if self.run_stage(name, world) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Run all defined stages in order, calling the hook with each stage name
+    /// before executing that stage.
+    ///
+    /// Returns the number of stages executed.
+    pub fn run_all_stages_with_hook<F>(&self, world: &mut World, mut on_stage: F) -> usize
+    where
+        F: FnMut(&str),
+    {
+        let names: Vec<&'static str> = self.stage_names();
+        let mut count = 0;
+        for name in names {
+            on_stage(name);
+            if self.run_stage(name, world) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Run all defined stages in order, ensuring a `Diagnostics` resource exists.
+    ///
+    /// This is a convenience method that inserts a default `Diagnostics`
+    /// resource if one is not already present, then runs all stages.
+    ///
+    /// Returns the number of stages executed.
+    pub fn run_all_stages_profiling(&self, world: &mut World) -> usize {
+        if !world.has_resource::<Diagnostics>() {
+            world.insert_resource(Diagnostics::new());
+        }
+        self.run_all_stages(world)
+    }
 }
 
 impl Default for Schedule {
@@ -988,5 +1038,70 @@ mod tests {
         assert_eq!(diags.systems.get("bump").unwrap().call_count, 1);
         // double was not run
         assert!(!diags.systems.contains_key("double"));
+    }
+
+    #[test]
+    fn run_all_stages_runs_stages_in_order() {
+        let mut world = World::new();
+        world.insert_resource(Counter(1));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("double");
+        schedule.add_named("double", double);
+        schedule.add_stage("bump");
+        schedule.add_named("bump", bump);
+
+        let count = schedule.run_all_stages(&mut world);
+        assert_eq!(count, 2);
+        // (1 * 2) + 1 = 3
+        assert_eq!(world.resource::<Counter>().unwrap().0, 3);
+    }
+
+    #[test]
+    fn run_all_stages_returns_zero_without_stages() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::new();
+        schedule.add_named("bump", bump);
+
+        let count = schedule.run_all_stages(&mut world);
+        assert_eq!(count, 0);
+        // bump was NOT run because it has no stage
+        assert_eq!(world.resource::<Counter>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn run_all_stages_with_hook_calls_stage_names() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("first");
+        schedule.add_named("bump", bump);
+        schedule.add_stage("second");
+        schedule.add_named("bump2", bump);
+
+        let mut stages = Vec::new();
+        let count =
+            schedule.run_all_stages_with_hook(&mut world, |name| stages.push(name.to_string()));
+        assert_eq!(count, 2);
+        assert_eq!(stages, vec!["first".to_string(), "second".to_string()]);
+        assert_eq!(world.resource::<Counter>().unwrap().0, 2);
+    }
+
+    #[test]
+    fn run_all_stages_profiling_inserts_diagnostics() {
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        let mut schedule = Schedule::new();
+        schedule.add_stage("first");
+        schedule.add_named("bump", bump);
+
+        assert!(!world.has_resource::<Diagnostics>());
+        let count = schedule.run_all_stages_profiling(&mut world);
+        assert_eq!(count, 1);
+        assert!(world.has_resource::<Diagnostics>());
+
+        let diags = world.resource::<Diagnostics>().unwrap();
+        assert_eq!(diags.system_count(), 1);
+        assert!(diags.systems.contains_key("bump"));
     }
 }

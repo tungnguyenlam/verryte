@@ -193,6 +193,12 @@ pub struct Grid {
     cells: Vec<Cell>,
 }
 
+impl Default for Grid {
+    fn default() -> Self {
+        Self::new(0, 0)
+    }
+}
+
 impl Grid {
     pub const BORDER_TL: char = '\u{256D}'; // ╭
     pub const BORDER_TR: char = '\u{256E}'; // ╮
@@ -1126,11 +1132,56 @@ impl Grid {
         }
     }
 
+    /// Apply a mutation function to every cell within `rect` in-place.
+    ///
+    /// Cells outside `rect` or outside the grid bounds are untouched.
+    /// Useful for localized effects (dimming, highlighting, color shifting)
+    /// without affecting the entire frame.
+    pub fn transform_rect<F>(&mut self, rect: Rect, mut f: F)
+    where
+        F: FnMut(u16, u16, &mut Cell),
+    {
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        for y in rect.y..y_end {
+            for x in rect.x..x_end {
+                if let Some(cell) = self.get_mut(x, y) {
+                    f(x, y, cell);
+                }
+            }
+        }
+    }
+
     pub fn map<F>(&self, mut f: F) -> Grid
     where
         F: FnMut(Cell) -> Cell,
     {
         let cells = self.cells.iter().map(|&cell| f(cell)).collect();
+        Grid {
+            width: self.width,
+            height: self.height,
+            cells,
+        }
+    }
+
+    /// Create a new grid where only cells within `rect` are transformed.
+    ///
+    /// Cells outside `rect` or outside grid bounds are copied unchanged.
+    /// The returned grid has the same dimensions as the original.
+    pub fn map_rect<F>(&self, rect: Rect, mut f: F) -> Grid
+    where
+        F: FnMut(u16, u16, Cell) -> Cell,
+    {
+        let mut cells = self.cells.clone();
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        for y in rect.y..y_end {
+            for x in rect.x..x_end {
+                if let Some(i) = self.index(x, y) {
+                    cells[i] = f(x, y, cells[i]);
+                }
+            }
+        }
         Grid {
             width: self.width,
             height: self.height,
@@ -2108,5 +2159,82 @@ mod tests {
         let view = grid.viewport(Rect::new(3, 3, 10, 10));
         assert!(view.width() <= 5);
         assert!(view.height() <= 5);
+    }
+
+    #[test]
+    fn transform_rect_modifies_only_region() {
+        let mut grid = Grid::new(5, 5);
+        // Set all cells to 'A'
+        for y in 0..5 {
+            for x in 0..5 {
+                grid.put(x, y, Cell::new('A'));
+            }
+        }
+        // Transform only the center 3x3 region
+        grid.transform_rect(Rect::new(1, 1, 3, 3), |_x, _y, cell| {
+            cell.glyph = 'B';
+        });
+        // Corners should still be 'A'
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'A');
+        assert_eq!(grid.get(4, 0).unwrap().glyph, 'A');
+        assert_eq!(grid.get(0, 4).unwrap().glyph, 'A');
+        assert_eq!(grid.get(4, 4).unwrap().glyph, 'A');
+        // Center should be 'B'
+        assert_eq!(grid.get(2, 2).unwrap().glyph, 'B');
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'B');
+        assert_eq!(grid.get(3, 3).unwrap().glyph, 'B');
+    }
+
+    #[test]
+    fn transform_rect_clips_to_grid() {
+        let mut grid = Grid::new(3, 3);
+        // Transform a rect that extends beyond the grid
+        grid.transform_rect(Rect::new(1, 1, 10, 10), |_x, _y, cell| {
+            cell.glyph = 'X';
+        });
+        // (0,0) should be untouched
+        assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
+        // (1,1) through (2,2) should be 'X'
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'X');
+        assert_eq!(grid.get(2, 2).unwrap().glyph, 'X');
+    }
+
+    #[test]
+    fn transform_rect_receives_coordinates() {
+        let mut grid = Grid::new(3, 3);
+        grid.transform_rect(Rect::new(0, 0, 3, 3), |x, y, cell| {
+            if x == 1 && y == 2 {
+                cell.glyph = 'T';
+            }
+        });
+        assert_eq!(grid.get(1, 2).unwrap().glyph, 'T');
+        assert_eq!(grid.get(0, 0).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn map_rect_transforms_only_region() {
+        let mut grid = Grid::new(4, 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                grid.put(x, y, Cell::new('A'));
+            }
+        }
+        let mapped = grid.map_rect(Rect::new(1, 1, 2, 2), |_x, _y, _cell| Cell::new('B'));
+        // Corners unchanged
+        assert_eq!(mapped.get(0, 0).unwrap().glyph, 'A');
+        assert_eq!(mapped.get(3, 3).unwrap().glyph, 'A');
+        // Region transformed
+        assert_eq!(mapped.get(1, 1).unwrap().glyph, 'B');
+        assert_eq!(mapped.get(2, 2).unwrap().glyph, 'B');
+        // Original unchanged
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'A');
+    }
+
+    #[test]
+    fn map_rect_preserves_dimensions() {
+        let grid = Grid::new(5, 5);
+        let mapped = grid.map_rect(Rect::new(1, 1, 3, 3), |_, _, c| c);
+        assert_eq!(mapped.width(), 5);
+        assert_eq!(mapped.height(), 5);
     }
 }

@@ -507,6 +507,30 @@ fn flood_fill4_stops_at_boundaries() {
 }
 
 #[test]
+fn flood_fill8_reaches_diagonals() {
+    let grid = TileGrid::from_vec(
+        3,
+        3,
+        vec![
+            '#', '.', '#',
+            '.', '#', '.',
+            '#', '.', '#',
+        ],
+    )
+    .unwrap();
+
+    let region4 = grid.flood_fill4(Point::new(1, 0), |_, tile| *tile == '.');
+    assert_eq!(region4.len(), 1);
+
+    let region8 = grid.flood_fill8(Point::new(1, 0), |_, tile| *tile == '.');
+    assert_eq!(region8.len(), 4);
+    assert!(region8.contains(&Point::new(1, 0)));
+    assert!(region8.contains(&Point::new(0, 1)));
+    assert!(region8.contains(&Point::new(2, 1)));
+    assert!(region8.contains(&Point::new(1, 2)));
+}
+
+#[test]
 fn count_regions4_counts_disconnected_areas() {
     let grid = TileGrid::from_vec(7, 1, vec!['.', '.', '#', '.', '.', '.', '#']).unwrap();
 
@@ -1627,4 +1651,40 @@ fn test_maze_generation() {
     // Inside should contain at least some paths '.'
     let path_count = grid.tiles().iter().filter(|&&t| t == '.').count();
     assert!(path_count > 10);
+}
+
+#[test]
+fn test_dijkstra_range_methods() {
+    let passable = |_p: Point| true;
+    let map = DijkstraMap::compute(5, 5, &[Point::new(2, 2)], passable, false);
+
+    // Test find_all_within_range
+    let within_2 = map.find_all_within_range(2);
+    // Distance 0: (2,2) -> 1 cell
+    // Distance 1: (2,1), (2,3), (1,2), (3,2) -> 4 cells
+    // Distance 2: (2,0), (2,4), (0,2), (4,2), (1,1), (3,1), (1,3), (3,3) -> 8 cells
+    // Total cells at distance <= 2 should be 1 + 4 + 8 = 13
+    assert_eq!(within_2.len(), 13);
+    for &(p, dist) in &within_2 {
+        assert!(dist <= 2);
+        assert_eq!(map.get(p), Some(dist));
+    }
+
+    // Test chase_path_to_range (from far away: 4,4 has distance 4 from 2,2)
+    let path = map
+        .chase_path_to_range(Point::new(4, 4), 1, 2, false)
+        .unwrap();
+    assert!(!path.is_empty());
+    let end = *path.last().unwrap();
+    let end_dist = map.get(end).unwrap();
+    assert!(end_dist >= 1 && end_dist <= 2);
+
+    // Test chase_path_to_range (too close: 2,2 has distance 0, min_range=1)
+    let path_flee = map
+        .chase_path_to_range(Point::new(2, 2), 1, 2, false)
+        .unwrap();
+    assert!(!path_flee.is_empty());
+    let end_flee = *path_flee.last().unwrap();
+    let end_flee_dist = map.get(end_flee).unwrap();
+    assert!(end_flee_dist >= 1 && end_flee_dist <= 2);
 }

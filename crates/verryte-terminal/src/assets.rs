@@ -3,6 +3,7 @@ use crate::grid::{Cell, CellAttrs, Grid};
 use crate::sprite::{ResolutionTier, Sprite};
 
 /// Translates a graphical image into a terminal cell grid using half-block characters (`▀`).
+#[cfg(feature = "image")]
 pub fn image_to_grid(img: &image::DynamicImage) -> Grid {
     use image::GenericImageView;
     let (width, height) = img.dimensions();
@@ -40,6 +41,7 @@ pub fn image_to_grid(img: &image::DynamicImage) -> Grid {
 }
 
 /// Translates a graphical image into a terminal cell grid with chroma-key transparency.
+#[cfg(feature = "image")]
 pub fn image_to_grid_with_chroma_key(
     img: &image::DynamicImage,
     chroma_key: Color,
@@ -164,11 +166,13 @@ impl VisualRegistry {
         }
     }
 
+    #[cfg(feature = "image")]
     pub fn register_image(&mut self, name: &str, img: &image::DynamicImage) {
         let grid = image_to_grid(img);
         self.register(name, VisualAsset::BlockSprite(grid));
     }
 
+    #[cfg(feature = "image")]
     pub fn register_image_with_chroma_key(
         &mut self,
         name: &str,

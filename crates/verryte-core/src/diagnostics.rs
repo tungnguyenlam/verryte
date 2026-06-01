@@ -75,6 +75,117 @@ impl Diagnostics {
     pub fn remove_system(&mut self, system_name: &str) -> bool {
         self.systems.remove(system_name).is_some()
     }
+
+    /// Return system names and metrics sorted by `last_duration` descending (slowest first).
+    ///
+    /// Useful for performance overlays that need pre-sorted data each frame
+    /// without re-sorting the underlying `HashMap`.
+    pub fn sorted_by_duration(&self) -> Vec<(&str, &SystemMetrics)> {
+        let mut entries: Vec<_> = self
+            .systems
+            .iter()
+            .map(|(name, metrics)| (name.as_str(), metrics))
+            .collect();
+        entries.sort_by_key(|b| std::cmp::Reverse(b.1.last_duration));
+        entries
+    }
+
+    /// Return system names and metrics sorted by `max_duration` descending (worst-case first).
+    pub fn sorted_by_max_duration(&self) -> Vec<(&str, &SystemMetrics)> {
+        let mut entries: Vec<_> = self
+            .systems
+            .iter()
+            .map(|(name, metrics)| (name.as_str(), metrics))
+            .collect();
+        entries.sort_by_key(|b| std::cmp::Reverse(b.1.max_duration));
+        entries
+    }
+
+    /// Return the total number of recorded systems.
+    pub fn system_count(&self) -> usize {
+        self.systems.len()
+    }
+
+    /// Return the aggregate call count across all systems.
+    pub fn total_calls(&self) -> u64 {
+        self.systems.values().map(|m| m.call_count).sum()
+    }
+
+    /// Return the aggregate duration across all systems.
+    pub fn total_duration(&self) -> Duration {
+        self.systems.values().map(|m| m.total_duration).sum()
+    }
+
+    /// Return system names and metrics sorted by `avg_duration` descending (slowest average first).
+    ///
+    /// Useful for identifying systems with consistently poor performance
+    /// (as opposed to `sorted_by_duration` which sorts by last execution).
+    pub fn sorted_by_avg_duration(&self) -> Vec<(&str, &SystemMetrics)> {
+        let mut entries: Vec<_> = self
+            .systems
+            .iter()
+            .map(|(name, metrics)| (name.as_str(), metrics))
+            .collect();
+        entries.sort_by_key(|b| std::cmp::Reverse(b.1.avg_duration()));
+        entries
+    }
+
+    /// Return system names and metrics sorted by `call_count` descending (most called first).
+    pub fn sorted_by_call_count(&self) -> Vec<(&str, &SystemMetrics)> {
+        let mut entries: Vec<_> = self
+            .systems
+            .iter()
+            .map(|(name, metrics)| (name.as_str(), metrics))
+            .collect();
+        entries.sort_by_key(|b| std::cmp::Reverse(b.1.call_count));
+        entries
+    }
+
+    /// Return a serializable snapshot of the diagnostics state.
+    pub fn snapshot(&self) -> DiagnosticsSnapshot {
+        let mut systems = Vec::with_capacity(self.systems.len());
+        for (name, metrics) in &self.systems {
+            systems.push(SystemMetricSnapshot {
+                name: name.clone(),
+                call_count: metrics.call_count,
+                total_duration_ns: metrics.total_duration.as_nanos() as u64,
+                last_duration_ns: metrics.last_duration.as_nanos() as u64,
+                max_duration_ns: metrics.max_duration.as_nanos() as u64,
+                min_duration_ns: metrics.min_duration.map(|d| d.as_nanos() as u64),
+                avg_duration_ns: metrics.avg_duration().as_nanos() as u64,
+            });
+        }
+        // Consistent ordering for the snapshot
+        systems.sort_by(|a, b| a.name.cmp(&b.name));
+
+        DiagnosticsSnapshot {
+            total_calls: self.total_calls(),
+            total_duration_ns: self.total_duration().as_nanos() as u64,
+            systems,
+        }
+    }
+}
+
+/// A serializable snapshot of the Diagnostics resource.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DiagnosticsSnapshot {
+    pub total_calls: u64,
+    pub total_duration_ns: u64,
+    pub systems: Vec<SystemMetricSnapshot>,
+}
+
+/// A serializable snapshot of a single system's metrics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SystemMetricSnapshot {
+    pub name: String,
+    pub call_count: u64,
+    pub total_duration_ns: u64,
+    pub last_duration_ns: u64,
+    pub max_duration_ns: u64,
+    pub min_duration_ns: Option<u64>,
+    pub avg_duration_ns: u64,
 }
 
 #[cfg(test)]
@@ -188,5 +299,115 @@ mod tests {
         assert!(!diag.remove_system("c"));
         assert_eq!(diag.systems.len(), 1);
         assert!(diag.systems.contains_key("b"));
+    }
+
+    #[test]
+    fn diagnostics_sorted_by_duration() {
+        let mut diag = Diagnostics::new();
+        diag.record("fast", Duration::from_millis(1));
+        diag.record("slow", Duration::from_millis(50));
+        diag.record("medium", Duration::from_millis(10));
+
+        let sorted = diag.sorted_by_duration();
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].0, "slow");
+        assert_eq!(sorted[1].0, "medium");
+        assert_eq!(sorted[2].0, "fast");
+    }
+
+    #[test]
+    fn diagnostics_sorted_by_max_duration() {
+        let mut diag = Diagnostics::new();
+        diag.record("spike", Duration::from_millis(100));
+        diag.record("spike", Duration::from_millis(1));
+        diag.record("steady", Duration::from_millis(10));
+        diag.record("steady", Duration::from_millis(10));
+
+        let sorted = diag.sorted_by_max_duration();
+        assert_eq!(sorted[0].0, "spike");
+        assert_eq!(sorted[0].1.max_duration, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn diagnostics_sorted_empty() {
+        let diag = Diagnostics::new();
+        assert!(diag.sorted_by_duration().is_empty());
+    }
+
+    #[test]
+    fn diagnostics_system_count_and_total_calls() {
+        let mut diag = Diagnostics::new();
+        assert_eq!(diag.system_count(), 0);
+        assert_eq!(diag.total_calls(), 0);
+
+        diag.record("a", Duration::from_millis(1));
+        diag.record("b", Duration::from_millis(2));
+        diag.record("a", Duration::from_millis(3));
+
+        assert_eq!(diag.system_count(), 2);
+        assert_eq!(diag.total_calls(), 3);
+    }
+
+    #[test]
+    fn diagnostics_total_duration() {
+        let mut diag = Diagnostics::new();
+        assert_eq!(diag.total_duration(), Duration::ZERO);
+
+        diag.record("a", Duration::from_millis(5));
+        diag.record("b", Duration::from_millis(10));
+        assert_eq!(diag.total_duration(), Duration::from_millis(15));
+    }
+
+    #[test]
+    fn diagnostics_sorted_by_avg_duration() {
+        let mut diag = Diagnostics::new();
+        // "steady" averages 10ms (10+10)/2
+        diag.record("steady", Duration::from_millis(10));
+        diag.record("steady", Duration::from_millis(10));
+        // "spiky" averages 50ms (1+99)/2
+        diag.record("spiky", Duration::from_millis(1));
+        diag.record("spiky", Duration::from_millis(99));
+
+        let sorted = diag.sorted_by_avg_duration();
+        assert_eq!(sorted.len(), 2);
+        assert_eq!(sorted[0].0, "spiky");
+        assert_eq!(sorted[1].0, "steady");
+    }
+
+    #[test]
+    fn diagnostics_sorted_by_call_count() {
+        let mut diag = Diagnostics::new();
+        diag.record("rare", Duration::from_millis(1));
+        diag.record("frequent", Duration::from_millis(1));
+        diag.record("frequent", Duration::from_millis(1));
+        diag.record("frequent", Duration::from_millis(1));
+
+        let sorted = diag.sorted_by_call_count();
+        assert_eq!(sorted[0].0, "frequent");
+        assert_eq!(sorted[0].1.call_count, 3);
+        assert_eq!(sorted[1].0, "rare");
+        assert_eq!(sorted[1].1.call_count, 1);
+    }
+
+    #[test]
+    fn test_diagnostics_snapshot() {
+        let mut diag = Diagnostics::new();
+        diag.record("b_system", Duration::from_millis(20));
+        diag.record("a_system", Duration::from_millis(10));
+        diag.record("a_system", Duration::from_millis(30));
+
+        let snap = diag.snapshot();
+        assert_eq!(snap.total_calls, 3);
+        assert_eq!(snap.total_duration_ns, 60_000_000); // 20 + 10 + 30 = 60ms
+        assert_eq!(snap.systems.len(), 2);
+
+        // Assert systems are sorted alphabetically by name
+        assert_eq!(snap.systems[0].name, "a_system");
+        assert_eq!(snap.systems[0].call_count, 2);
+        assert_eq!(snap.systems[0].avg_duration_ns, 20_000_000);
+
+        assert_eq!(snap.systems[1].name, "b_system");
+        assert_eq!(snap.systems[1].call_count, 1);
+        assert_eq!(snap.systems[1].avg_duration_ns, 20_000_000);
     }
 }

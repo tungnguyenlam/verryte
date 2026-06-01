@@ -16,6 +16,7 @@ pub enum CharacterClass {
     Healer,  // Mira
     Boss,    // Blight Sovereign
     ShadowStalker,
+    CorruptedSpore,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -6,16 +6,18 @@ use crate::Point;
 pub struct DijkstraMap {
     pub width: u16,
     pub height: u16,
-    pub distances: Vec<Option<u32>>,
+    pub distances: Vec<u32>,
 }
 
 impl DijkstraMap {
+    pub const UNREACHABLE: u32 = u32::MAX;
+
     /// Create a new empty Dijkstra map with the given dimensions.
     pub fn new(width: u16, height: u16) -> Self {
         Self {
             width,
             height,
-            distances: vec![None; (width as usize) * (height as usize)],
+            distances: vec![Self::UNREACHABLE; (width as usize) * (height as usize)],
         }
     }
 
@@ -41,30 +43,42 @@ impl DijkstraMap {
             if source.x >= 0 && source.x < width as i16 && source.y >= 0 && source.y < height as i16
             {
                 let idx = (source.y as usize) * (width as usize) + (source.x as usize);
-                map.distances[idx] = Some(0);
+                map.distances[idx] = 0;
                 queue.push_back((source, 0));
             }
         }
 
         while let Some((point, dist)) = queue.pop_front() {
             let next_dist = dist + 1;
-            let neighbors = if diagonal {
-                point.neighbors8().to_vec()
-            } else {
-                point.neighbors4().to_vec()
-            };
 
-            for neighbor in neighbors {
-                if neighbor.x >= 0
-                    && neighbor.x < width as i16
-                    && neighbor.y >= 0
-                    && neighbor.y < height as i16
-                    && passable(neighbor)
-                {
-                    let idx = (neighbor.y as usize) * (width as usize) + (neighbor.x as usize);
-                    if map.distances[idx].is_none() {
-                        map.distances[idx] = Some(next_dist);
-                        queue.push_back((neighbor, next_dist));
+            if diagonal {
+                for neighbor in point.neighbors8() {
+                    if neighbor.x >= 0
+                        && neighbor.x < width as i16
+                        && neighbor.y >= 0
+                        && neighbor.y < height as i16
+                        && passable(neighbor)
+                    {
+                        let idx = (neighbor.y as usize) * (width as usize) + (neighbor.x as usize);
+                        if map.distances[idx] == Self::UNREACHABLE {
+                            map.distances[idx] = next_dist;
+                            queue.push_back((neighbor, next_dist));
+                        }
+                    }
+                }
+            } else {
+                for neighbor in point.neighbors4() {
+                    if neighbor.x >= 0
+                        && neighbor.x < width as i16
+                        && neighbor.y >= 0
+                        && neighbor.y < height as i16
+                        && passable(neighbor)
+                    {
+                        let idx = (neighbor.y as usize) * (width as usize) + (neighbor.x as usize);
+                        if map.distances[idx] == Self::UNREACHABLE {
+                            map.distances[idx] = next_dist;
+                            queue.push_back((neighbor, next_dist));
+                        }
                     }
                 }
             }
@@ -80,7 +94,12 @@ impl DijkstraMap {
             && point.y >= 0
             && point.y < self.height as i16
         {
-            self.distances[(point.y as usize) * (self.width as usize) + (point.x as usize)]
+            let d = self.distances[(point.y as usize) * (self.width as usize) + (point.x as usize)];
+            if d == Self::UNREACHABLE {
+                None
+            } else {
+                Some(d)
+            }
         } else {
             None
         }
@@ -174,5 +193,81 @@ impl DijkstraMap {
         }
 
         path
+    }
+
+    /// Find all points in the Dijkstra map that have a distance <= max_range.
+    pub fn find_all_within_range(&self, max_range: u32) -> Vec<(Point, u32)> {
+        let mut results = Vec::new();
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let p = Point::new(x as i16, y as i16);
+                if let Some(dist) = self.get(p) {
+                    if dist <= max_range {
+                        results.push((p, dist));
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Returns a path from `from` that stops when it enters the range `[min_range, max_range]` from the sources.
+    ///
+    /// Returns None if unreachable or if no path can enter the range.
+    pub fn chase_path_to_range(
+        &self,
+        from: Point,
+        min_range: u32,
+        max_range: u32,
+        diagonal: bool,
+    ) -> Option<Vec<Point>> {
+        let current_dist = self.get(from)?;
+        if current_dist >= min_range && current_dist <= max_range {
+            return Some(vec![from]);
+        }
+
+        let mut path = vec![from];
+        let mut current = from;
+
+        while let Some(dist) = self.get(current) {
+            if dist >= min_range && dist <= max_range {
+                return Some(path);
+            }
+            if dist < min_range {
+                // Too close, flee to back off into range
+                if let Some(next) = self.flee_direction(current, diagonal) {
+                    if next == current || path.contains(&next) {
+                        break;
+                    }
+                    path.push(next);
+                    current = next;
+                } else {
+                    break;
+                }
+            } else {
+                // Too far, chase to get closer
+                if let Some(next) = self.chase_direction(current, diagonal) {
+                    if next == current || path.contains(&next) {
+                        break;
+                    }
+                    path.push(next);
+                    current = next;
+                } else {
+                    break;
+                }
+            }
+
+            if path.len() > (self.width as usize) * (self.height as usize) {
+                break;
+            }
+        }
+
+        if let Some(dist) = self.get(current) {
+            if dist >= min_range && dist <= max_range {
+                return Some(path);
+            }
+        }
+
+        None
     }
 }

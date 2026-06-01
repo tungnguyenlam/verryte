@@ -30,8 +30,8 @@ fn test_snapshot_diff() {
     let diff = snap1.diff(&snap2);
 
     assert_eq!(diff.added_entities.len(), 1);
-    assert_eq!(diff.added_entities[0], e2);
+    assert_eq!(diff.added_entities[0].entity, e2);
     assert!(diff.changed_entities.contains_key(&e1));
     let e1_diff = &diff.changed_entities[&e1];
-    assert_eq!(e1_diff.changed_components, vec!["Pos".to_string()]);
+    assert!(e1_diff.changed_components.contains_key("Pos"));
 }

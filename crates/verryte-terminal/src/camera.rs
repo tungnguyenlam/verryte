@@ -72,6 +72,52 @@ impl Camera {
         }
     }
 
+    /// Zoom in by adding the given factor, clamping to the max zoom level.
+    pub fn zoom_in(&mut self, factor: f32, max_zoom: f32) {
+        let next = (self.target_zoom + factor).min(max_zoom);
+        self.zoom_to(next);
+    }
+
+    /// Zoom out by subtracting the given factor, clamping to the min zoom level.
+    pub fn zoom_out(&mut self, factor: f32, min_zoom: f32) {
+        let next = (self.target_zoom - factor).max(min_zoom);
+        self.zoom_to(next);
+    }
+
+    /// Check if a point is within the current viewport camera's view.
+    pub fn is_point_visible(&self, x: f32, y: f32, width: u16, height: u16) -> bool {
+        let rect = self.viewport_rect(width, height);
+        x >= rect.x as f32
+            && x < (rect.x + rect.width) as f32
+            && y >= rect.y as f32
+            && y < (rect.y + rect.height) as f32
+    }
+
+    /// Check if a rectangle overlaps the current viewport camera's view.
+    pub fn is_rect_visible(&self, r: Rect, width: u16, height: u16) -> bool {
+        let view = self.viewport_rect(width, height);
+        r.x < view.x + view.width
+            && r.x + r.width > view.x
+            && r.y < view.y + view.height
+            && r.y + r.height > view.y
+    }
+
+    /// Focus on the bounding center of a set of coordinate points.
+    pub fn focus_on_points(&mut self, points: &[(f32, f32)]) {
+        if points.is_empty() {
+            return;
+        }
+        let mut sum_x = 0.0;
+        let mut sum_y = 0.0;
+        for &(x, y) in points {
+            sum_x += x;
+            sum_y += y;
+        }
+        let avg_x = sum_x / points.len() as f32;
+        let avg_y = sum_y / points.len() as f32;
+        self.look_at(avg_x, avg_y);
+    }
+
     pub fn shake(&mut self, intensity: f32) {
         self.shake_intensity = intensity;
     }
@@ -354,5 +400,42 @@ mod tests {
         cam.tick(&mut rng);
         assert!(cam.center_x > 0.0);
         assert!(cam.center_x < 10.0);
+    }
+
+    #[test]
+    fn test_camera_zoom_in_out_limits() {
+        let mut cam = Camera::new(0.0, 0.0);
+        cam.zoom_in(0.5, 2.0);
+        assert_eq!(cam.zoom, 1.5);
+
+        cam.zoom_in(1.0, 2.0);
+        assert_eq!(cam.zoom, 2.0); // Clamped to max_zoom 2.0
+
+        cam.zoom_out(0.8, 0.5);
+        assert_eq!(cam.zoom, 1.2);
+
+        cam.zoom_out(1.5, 0.5);
+        assert_eq!(cam.zoom, 0.5); // Clamped to min_zoom 0.5
+    }
+
+    #[test]
+    fn test_camera_focus_on_points() {
+        let mut cam = Camera::new(0.0, 0.0);
+        cam.focus_on_points(&[(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)]);
+        assert_eq!(cam.center_x, 5.0);
+        assert_eq!(cam.center_y, 3.3333333);
+    }
+
+    #[test]
+    fn test_camera_visibility_checks() {
+        let cam = Camera::new(10.0, 10.0);
+        assert!(cam.is_point_visible(5.0, 5.0, 20, 20));
+        assert!(cam.is_point_visible(0.0, 0.0, 20, 20));
+        assert!(cam.is_point_visible(19.0, 19.0, 20, 20));
+        assert!(!cam.is_point_visible(25.0, 10.0, 20, 20));
+
+        assert!(cam.is_rect_visible(Rect::new(5, 5, 2, 2), 20, 20));
+        assert!(cam.is_rect_visible(Rect::new(19, 19, 10, 10), 20, 20));
+        assert!(!cam.is_rect_visible(Rect::new(25, 25, 5, 5), 20, 20));
     }
 }

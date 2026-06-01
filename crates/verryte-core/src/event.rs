@@ -7,6 +7,12 @@
 
 use std::collections::VecDeque;
 
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound = "E: serde::Serialize + serde::de::DeserializeOwned")
+)]
 pub struct Events<E> {
     queue: VecDeque<E>,
     clear_count: usize,

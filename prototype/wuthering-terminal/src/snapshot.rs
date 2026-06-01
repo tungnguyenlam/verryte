@@ -2,9 +2,10 @@
 
 use crate::action::Action;
 use crate::components::{
-    CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState, Outcome,
-    Position, Rooted, Stats, Stunned, Team, TelegraphZone, TurnPhase,
+    CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState, Inventory,
+    Item, Outcome, Position, Rooted, Stats, Stunned, Team, TelegraphZone, TurnPhase,
 };
+use verryte_core::snapshot::{WorldRegistry, WorldSnapshot};
 use verryte_input::ActionSource;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -34,29 +35,41 @@ pub struct StepReport {
     pub diagnostics: std::collections::HashMap<String, f64>, // ms
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SavedEntity {
-    pub entity: verryte_core::Entity,
-    pub position: Option<Position>,
-    pub team: Option<Team>,
-    pub class: Option<CharacterClass>,
-    pub stats: Option<Stats>,
-    pub echo_item: Option<EchoItem>,
-    pub elemental_status: Option<ElementalStatus>,
-    pub rooted: Option<Rooted>,
-    pub stunned: Option<Stunned>,
-    pub shield: Option<ElementalShield>,
+pub fn create_registry() -> WorldRegistry {
+    let mut reg = WorldRegistry::new();
+
+    // Components
+    reg.register_component::<CharacterClass>("CharacterClass");
+    reg.register_component::<Team>("Team");
+    reg.register_component::<Stats>("Stats");
+    reg.register_component::<Position>("Position");
+    reg.register_component::<ElementalStatus>("ElementalStatus");
+    reg.register_component::<ElementalShield>("ElementalShield");
+    reg.register_component::<Rooted>("Rooted");
+    reg.register_component::<Stunned>("Stunned");
+    reg.register_component::<Inventory>("Inventory");
+    reg.register_component::<Item>("Item");
+    reg.register_component::<EchoItem>("EchoItem");
+
+    // Resources
+    reg.register_resource::<GameState>("GameState");
+    reg.register_resource::<TelegraphZone>("TelegraphZone");
+    reg.register_resource::<verryte_core::MessageLog>("MessageLog");
+    reg.register_resource::<verryte_core::GameClock>("GameClock");
+    reg.register_resource::<verryte_core::Rng>("Rng");
+    reg.register_resource::<crate::map::TacticalMap>("TacticalMap");
+    reg.register_resource::<verryte_terminal::Camera>("Camera");
+    reg.register_resource::<verryte_input::ActionHistory<Action>>("ActionHistory");
+    // reg.register_resource::<verryte_terminal::vfx::VfxSystem>("VfxSystem"); // Skip if not serializable
+    reg.register_resource::<crate::components::EquippedEchoes>("EquippedEchoes");
+    reg.register_resource::<crate::components::TurnTransition>("TurnTransition");
+    reg.register_resource::<verryte_map::VisibilityMap>("VisibilityMap");
+    reg.register_resource::<verryte_core::Events<GameEvent>>("GameEvents");
+
+    reg
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FullSaveState {
-    pub game_state: GameState,
-    pub telegraph_zone: TelegraphZone,
-    pub message_log: verryte_core::MessageLog,
-    pub clock: verryte_core::GameClock,
-    pub rng: verryte_core::Rng,
-    pub map: crate::map::TacticalMap,
-    pub camera: verryte_terminal::Camera,
-    pub action_history: verryte_input::ActionHistory<Action>,
-    pub entities: Vec<SavedEntity>,
+    pub world: WorldSnapshot,
 }

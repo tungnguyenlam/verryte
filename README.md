@@ -26,7 +26,7 @@ those pieces.
   `Schedule::remove_by_name`, `Schedule::insert_at`, and `Schedule::replace_by_name` for runtime
   schedule management and selective execution, `Schedule::add_conditional` for
   systems gated by a `RunCondition` predicate, `Schedule::add_stage` /
-  `Schedule::run_stage` / `Schedule::run_stage_with_hook` for named execution
+  `Schedule::run_stage` / `Schedule::run_stage_with_hook` / `Schedule::run_all_stages` for named execution
   phases with optional per-system observability hooks, `Schedule::run_profiling`
   for zero-effort diagnostics (auto-inserts `Diagnostics` resource), `Events::peek` /
   `Events::last` for non-consuming event inspection, bounded
@@ -34,11 +34,13 @@ those pieces.
   filtering, `Rng` (seeded xorshift64 RNG) for reproducible randomness in
   tests, replays, and procedural generation (including `weighted_pick` for
   weighted random selection), `GameClock` for tracking elapsed ticks,
-  pause state, and real-time duration, and `Diagnostics` with `reset()`,
-  `clear()`, `remove_system()`, per-system `avg_duration()`, and `min_duration`
-  tracking for runtime performance monitoring. `AudioEvents` type alias for
+  pause state, and real-time duration, and   `Diagnostics` with `reset()`,
+  `clear()`, `remove_system()`, per-system `avg_duration()`, `min_duration`,
+  `sorted_by_duration()`, `sorted_by_max_duration()`, `sorted_by_avg_duration()`,
+  `sorted_by_call_count()`, `system_count()`, `total_calls()`, `total_duration()`,
+  and `snapshot()` for serializable performance summaries. `AudioEvents` type alias for
   ergonomic event channel usage.
-  Optional `serde` feature enables `Serialize`/`Deserialize` on `Entity`.
+  Optional `serde` feature enables `Serialize`/`Deserialize` on `Entity` and `DiagnosticsSnapshot`.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse/scroll
   bindings, script command bindings, sourced queued actions, replayable
   `ActionTrace`s, router-level script injection, pending queue snapshots and
@@ -55,6 +57,10 @@ those pieces.
   `InputRouter::total_actions_queued()` for lifetime action metrics,
   `InputRouter::start_recording` / `stop_recording` for action recording to
   disk (actions collected in memory, flushed via serde on stop),
+  `InputRouter::recorded_as_trace` / `take_recording` for converting recordings
+  into `ActionTrace` without disk I/O,
+  `InputRouter::recorded_actions` for borrowing recorded actions without stopping,
+  `Bindings::get_keys_for_action` for retrieving key mappings bound to an action,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
   movement, insertion, deletion, max length, dirty tracking, undo/redo,
   autocomplete cycling, word jumps (Ctrl+Left/Right), word deletion
@@ -79,7 +85,9 @@ those pieces.
   (`TileGrid::field_of_view`), shortest/nearest cardinal and 8-directional
   paths, reachable regions (4 and 8-directional), distance helpers (Manhattan,
   Chebyshev), flood-fill for connected-component detection, region counting,
-  hazard-distance safety scoring (`safer_neighbors4`), random-walk dungeon
+  hazard-distance safety scoring (`safer_neighbors4`), `DijkstraMap::find_all_within_range`,
+  `DijkstraMap::chase_path_to_range` for tactical approach and retreat patterns,
+  random-walk dungeon
   generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
   (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching`,
   `TileGrid::find_matching`, `TileGrid::points_in`,
@@ -104,7 +112,7 @@ those pieces.
   (`draw_border_rounded`, `draw_rounded_panel`, `draw_text_box`), horizontal/vertical lines
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
   text wrapping utilities (`wrap_text`, `write_wrapped_text`, `write_lines`),
-  `Grid::transform` and `Grid::map` for bulk cell modification, row/column helpers
+  `Grid::transform`, `Grid::transform_rect`, and `Grid::map` for bulk cell modification, row/column helpers
   (`Grid::row_mut`, `Grid::fill_row`, `Grid::fill_col`), `Rect::inset` for
   padded layouts, `Grid::resize` for dynamic grid sizing on terminal resize,
   `Grid::scroll_up` and
@@ -121,10 +129,11 @@ those pieces.
   `is_reverse`, `is_blink`, `is_empty`). `Color` has `Display` (`#RRGGBB`),
   `From<(u8,u8,u8)>`. `Rect` has `Display` and `From<(u16,u16,u16,u16)>`. `Grid::fill_background`
   sets the background color across all cells without changing glyphs.
-  Widgets: `MenuView` with scroll support for long option lists,
+  Widgets:  `MenuView` with scroll support for long option lists,
   `VerticalProgressBar` for bottom-to-top fills, `Tooltip` for floating
   context hints, `PerformanceOverlay`, and `MessageLogView`.
-  `Camera::follow()` for smooth entity tracking.
+  `Camera::follow()` for smooth entity tracking, `Camera::zoom_in` / `zoom_out` with clamps,
+  and `Camera::focus_on_points` to dynamically frame multiple targets.
   `image_to_grid` converts PNG images to half-block terminal grids, and
   `image_to_grid_with_chroma_key` adds transparency support for sprite loading.
   The `vfx` module provides a reusable visual effects system: particles

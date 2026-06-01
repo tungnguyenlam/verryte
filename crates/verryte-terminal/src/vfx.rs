@@ -441,6 +441,7 @@ pub enum EasingMode {
 }
 
 /// A color flash overlay that can be full-screen or region-limited.
+#[derive(Clone, Debug)]
 pub struct Flash {
     pub color: Color,
     pub duration: f32,
@@ -580,6 +581,7 @@ impl FloatingText {
 // ── AoE Ring ──────────────────────────────────────────────────────────────────
 
 /// An expanding ring indicator for area-of-effect abilities.
+#[derive(Clone, Debug)]
 pub struct AoeRing {
     pub cx: i32,
     pub cy: i32,
@@ -604,6 +606,7 @@ impl AoeRing {
 // ── Spatial Highlight ─────────────────────────────────────────────────────────
 
 /// A set of points to highlight on the map (e.g., a path or AoE preview).
+#[derive(Clone, Debug)]
 pub struct SpatialHighlight {
     pub points: Vec<(i32, i32)>,
     pub color: Color,
@@ -734,6 +737,57 @@ impl VfxSystem {
             h.lifetime -= dt;
         }
         self.highlights.retain(|h| h.alive());
+    }
+
+    /// Add a screen shake effect.
+    pub fn trigger_shake(&mut self, intensity: f32, duration: f32) {
+        self.shakes.push(ScreenShake::new(intensity, duration));
+    }
+
+    /// Add an eased screen shake effect.
+    pub fn trigger_shake_eased(&mut self, intensity: f32, duration: f32, easing: EasingMode) {
+        self.shakes.push(ScreenShake::new_eased(intensity, duration, easing));
+    }
+
+    /// Add a full screen flash effect.
+    pub fn trigger_flash(&mut self, color: Color, duration: f32) {
+        self.flashes.push(Flash::full_screen(color, duration));
+    }
+
+    /// Add a regional flash effect.
+    pub fn trigger_flash_region(&mut self, color: Color, duration: f32, region: Rect) {
+        self.flashes.push(Flash::region(color, duration, region));
+    }
+
+    /// Add a floating text indicator.
+    pub fn trigger_floating_text(&mut self, x: f32, y: f32, text: &str, fg: Color, bold: bool) {
+        self.floating_texts.push(FloatingText::new(x, y, text, fg, bold));
+    }
+
+    /// Add an AoE ring effect.
+    pub fn trigger_aoe_ring(&mut self, cx: i32, cy: i32, max_radius: f32, color: Color, duration: f32) {
+        self.aoe_rings.push(AoeRing {
+            cx,
+            cy,
+            max_radius,
+            current_radius: 0.0,
+            expand_speed: if duration > 0.0 { max_radius / duration } else { max_radius },
+            color,
+            lifetime: duration,
+            max_lifetime: duration,
+        });
+    }
+
+    /// Add a spatial highlight.
+    pub fn trigger_highlight(&mut self, points: Vec<(i32, i32)>, color: Color, glyph: Option<char>, bg_alpha: f32, lifetime: f32) {
+        self.highlights.push(SpatialHighlight {
+            points,
+            color,
+            glyph,
+            bg_alpha,
+            lifetime,
+            max_lifetime: lifetime,
+        });
     }
 
     pub fn shake_offset(&self) -> (i16, i16) {
@@ -1360,5 +1414,23 @@ mod tests {
         assert!(p_straight.x > 0.0);
         assert_ne!(p_straight.x, p_spiral.x);
         assert_ne!(p_straight.y, p_wave.y);
+    }
+
+    #[test]
+    fn test_vfx_system_trigger_helpers() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_shake(2.0, 0.5);
+        vfx.trigger_shake_eased(1.5, 0.3, EasingMode::QuadOut);
+        vfx.trigger_flash(Color::RED, 0.2);
+        vfx.trigger_flash_region(Color::BLUE, 0.4, Rect::new(0, 0, 10, 10));
+        vfx.trigger_floating_text(5.0, 5.0, "HEAL", Color::GREEN, true);
+        vfx.trigger_aoe_ring(5, 5, 4.0, Color::YELLOW, 1.0);
+        vfx.trigger_highlight(vec![(1, 1), (2, 2)], Color::CYAN, Some('*'), 0.5, 1.5);
+
+        assert_eq!(vfx.shakes.len(), 2);
+        assert_eq!(vfx.flashes.len(), 2);
+        assert_eq!(vfx.floating_texts.len(), 1);
+        assert_eq!(vfx.aoe_rings.len(), 1);
+        assert_eq!(vfx.highlights.len(), 1);
     }
 }

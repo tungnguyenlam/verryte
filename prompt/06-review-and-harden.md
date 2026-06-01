@@ -18,7 +18,7 @@ If you find issues, fix the highest-value ones that are safe and local. If a con
 real but too large for this pass, document it clearly as a follow-up.
 
 Self-healing rule: do not preserve a bad pattern just because it already exists. Confirm
-the intended behavior from `GOAL.md`, the Ash Courier prototype README, tests, and the
+the intended behavior from `GOAL.md`, the Wuthering Terminal prototype README, tests, and the
 current code. If those sources conflict, make the smallest correction that restores a
 coherent direction and leave a clear note for the next agent.
 

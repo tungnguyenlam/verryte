@@ -106,6 +106,16 @@ impl Game {
             Team::Enemy,
             CharacterClass::ShadowStalker,
         );
+        game.world.spawn_character(
+            Position::new(12, 6),
+            Team::Enemy,
+            CharacterClass::CorruptedSpore,
+        );
+        game.world.spawn_character(
+            Position::new(12, 10),
+            Team::Enemy,
+            CharacterClass::CorruptedSpore,
+        );
 
         let potion = game
             .world
@@ -197,6 +207,7 @@ impl Game {
             CharacterClass::Healer => "Mira",
             CharacterClass::Boss => "Blight Sovereign",
             CharacterClass::ShadowStalker => "Shadow Stalker",
+            CharacterClass::CorruptedSpore => "Corrupted Spore",
         }
     }
 
@@ -542,7 +553,6 @@ impl Game {
         }
     }
 
-    // (end_player_turn removed)
     pub fn run_enemy_ai(&mut self) {
         let mut enemies = Vec::new();
         for (e, team) in self.world.query::<Team>() {
@@ -1306,6 +1316,66 @@ impl Game {
             .look_at(active_pos.x as f32, active_pos.y as f32);
     }
 
+    pub fn get_skill_info(
+        class: CharacterClass,
+        skill: crate::components::TargetingMode,
+    ) -> Option<(String, i16, i32, bool, i32)> {
+        match (class, skill) {
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
+                Some(("Heavy Slash".to_string(), 1, 2, false, 45))
+            }
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
+                Some(("Dragon Fire".to_string(), 3, 3, true, 50))
+            }
+            (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
+                Some(("Thunderbolt".to_string(), 3, 2, false, 55))
+            }
+            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
+                Some(("Glacial Tempest".to_string(), 4, 3, true, 40))
+            }
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
+                Some(("Holy Light".to_string(), 2, 2, false, 50))
+            }
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
+                Some(("Divine Protection".to_string(), 0, 3, true, 40))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn get_skill_aoe(
+        class: CharacterClass,
+        skill: crate::components::TargetingMode,
+        target: Position,
+    ) -> Vec<Position> {
+        let mut tiles = Vec::new();
+        match (class, skill) {
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        tiles.push(Position::new(target.x + dx, target.y + dy));
+                    }
+                }
+            }
+            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
+                tiles.push(target);
+                for d in 1..=2 {
+                    tiles.push(Position::new(target.x + d, target.y));
+                    tiles.push(Position::new(target.x - d, target.y));
+                    tiles.push(Position::new(target.x, target.y + d));
+                    tiles.push(Position::new(target.x, target.y - d));
+                }
+            }
+            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
+                // Healer ultimate affects ALL players.
+            }
+            _ => {
+                tiles.push(target);
+            }
+        }
+        tiles
+    }
+
     pub fn execute_skill(
         &mut self,
         caster: Entity,
@@ -1315,18 +1385,9 @@ impl Game {
         value: i32,
         is_aoe: bool,
     ) {
+        let (skill_name, _range, _ap, _is_aoe, _power) =
+            Self::get_skill_info(class, skill).unwrap_or(("Unknown".to_string(), 0, 0, false, 0));
         let caster_name = Self::get_class_name(class);
-        let skill_name = match (class, skill) {
-            (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => "Heavy Slash",
-            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => "Dragon Fire",
-            (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => "Thunderbolt",
-            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => "Glacial Tempest",
-            (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => "Holy Light",
-            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
-                "Divine Protection"
-            }
-            _ => "Unknown Skill",
-        };
 
         self.log(format!(
             "{} cast {} at ({}, {})!",
@@ -1401,194 +1462,152 @@ impl Game {
             _ => {}
         }
 
-        if class == CharacterClass::Healer {
-            if skill == crate::components::TargetingMode::Skill2 {
-                let mut players = Vec::new();
-                for (e, team) in self.world.query::<Team>() {
-                    if *team == Team::Player {
-                        players.push(e);
+        if class == CharacterClass::Healer && skill == crate::components::TargetingMode::Skill2 {
+            let mut players = Vec::new();
+            for (e, team) in self.world.query::<Team>() {
+                if *team == Team::Player {
+                    players.push(e);
+                }
+            }
+            for pe in players {
+                let mut final_hp = 0;
+                let mut p_class = CharacterClass::Warrior;
+                if let Some(stats) = self.world.get_mut::<Stats>(pe) {
+                    stats.hp = std::cmp::min(stats.max_hp, stats.hp + value);
+                    final_hp = stats.hp;
+                    p_class = *self.world.get::<CharacterClass>(pe).unwrap();
+                }
+                let p_name = Self::get_class_name(p_class);
+                self.log(format!(
+                    "Healed {} for {} HP! (HP: {})",
+                    p_name, value, final_hp
+                ));
+
+                let p_pos = *self.world.get::<Position>(pe).unwrap();
+                let (pcx, pcy) = self.get_tile_center_pixels(p_pos);
+                self.vfx_mut()
+                    .floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        pcx,
+                        pcy - 2.0,
+                        &format!("+{}", value),
+                        Color(50, 255, 50),
+                        true,
+                    ));
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 10));
+            }
+        } else {
+            let mut targets = Vec::new();
+            if is_aoe {
+                let aoe_tiles = Self::get_skill_aoe(class, skill, target_pos);
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team
+                        == (if class == CharacterClass::Healer {
+                            Team::Player
+                        } else {
+                            Team::Enemy
+                        })
+                        && aoe_tiles.contains(p)
+                    {
+                        targets.push((e, *p));
                     }
                 }
-                for pe in players {
+            } else {
+                if let Some((target_ent, target_team, _stats, _class)) =
+                    self.get_entity_at(target_pos)
+                {
+                    if target_team
+                        == (if class == CharacterClass::Healer {
+                            Team::Player
+                        } else {
+                            Team::Enemy
+                        })
+                    {
+                        targets.push((target_ent, target_pos));
+                    }
+                }
+            }
+
+            if targets.is_empty() {
+                self.log("Skill hit no targets.");
+            }
+
+            for (te, t_pos) in targets {
+                let target_class = *self.world.get::<CharacterClass>(te).unwrap();
+                let target_name = Self::get_class_name(target_class);
+
+                if class == CharacterClass::Healer {
                     let mut final_hp = 0;
-                    let mut p_class = CharacterClass::Warrior;
-                    if let Some(stats) = self.world.get_mut::<Stats>(pe) {
+                    if let Some(stats) = self.world.get_mut::<Stats>(te) {
                         stats.hp = std::cmp::min(stats.max_hp, stats.hp + value);
                         final_hp = stats.hp;
-                        p_class = *self.world.get::<CharacterClass>(pe).unwrap();
                     }
-                    let p_name = Self::get_class_name(p_class);
                     self.log(format!(
                         "Healed {} for {} HP! (HP: {})",
-                        p_name, value, final_hp
+                        target_name, value, final_hp
                     ));
-
-                    let p_pos = *self.world.get::<Position>(pe).unwrap();
-                    let (pcx, pcy) = self.get_tile_center_pixels(p_pos);
                     self.vfx_mut()
                         .floating_texts
                         .push(verryte_terminal::vfx::FloatingText::new(
-                            pcx,
-                            pcy - 2.0,
+                            cx,
+                            cy - 2.0,
                             &format!("+{}", value),
                             Color(50, 255, 50),
                             true,
                         ));
-                    self.vfx_mut()
-                        .particles
-                        .extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 10));
-                }
-            } else {
-                if let Some((target_ent, target_team, _target_stats, target_class)) =
-                    self.get_entity_at(target_pos)
-                {
-                    if target_team == Team::Player {
-                        let mut final_hp = 0;
-                        if let Some(stats) = self.world.get_mut::<Stats>(target_ent) {
-                            stats.hp = std::cmp::min(stats.max_hp, stats.hp + value);
-                            final_hp = stats.hp;
-                        }
-                        let target_name = Self::get_class_name(target_class);
-                        self.log(format!(
-                            "Healed {} for {} HP! (HP: {})",
-                            target_name, value, final_hp
-                        ));
-                        self.vfx_mut().floating_texts.push(
-                            verryte_terminal::vfx::FloatingText::new(
-                                cx,
-                                cy - 2.0,
-                                &format!("+{}", value),
-                                Color(50, 255, 50),
-                                true,
-                            ),
-                        );
-                    } else {
-                        self.log("Cannot heal enemies!");
-                    }
                 } else {
-                    self.log("No player character at target location!");
-                }
-            }
-        } else {
-            if is_aoe {
-                let mut targets = Vec::new();
-                for (e, p, team) in self.world.query2::<Position, Team>() {
-                    if *team == Team::Enemy {
-                        let is_in_aoe = match (class, skill) {
-                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
-                                (p.x - target_pos.x).abs() <= 1 && (p.y - target_pos.y).abs() <= 1
-                            }
-                            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
-                                let dx = (p.x - target_pos.x).abs();
-                                let dy = (p.y - target_pos.y).abs();
-                                (dx == 0 && dy <= 2) || (dy == 0 && dx <= 2)
-                            }
-                            _ => false,
-                        };
-                        if is_in_aoe {
-                            targets.push(e);
-                        }
-                    }
-                }
-
-                if targets.is_empty() {
-                    self.log("Skill hit no enemies.");
-                }
-
-                for te in targets {
-                    let target_class = *self.world.get::<CharacterClass>(te).unwrap();
-                    let target_pos = *self.world.get::<Position>(te).unwrap();
-                    let target_name = Self::get_class_name(target_class);
                     let base_damage =
                         std::cmp::max(1, value - self.world.get::<Stats>(te).unwrap().def);
-                    let (_damage, mut defeated) = self.resolve_combat_hit(
-                        te,
-                        base_damage,
-                        caster_name,
-                        target_name,
-                        target_pos,
-                    );
+                    let (damage, mut defeated) =
+                        self.resolve_combat_hit(te, base_damage, caster_name, target_name, t_pos);
+
+                    if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                        log.send(GameEvent::Attacked {
+                            attacker: caster,
+                            target: te,
+                            damage,
+                        });
+                    }
+
                     if !defeated {
                         let skill_element = match (class, skill) {
-                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
-                                crate::components::ElementalStatus::None
-                            } // Dragon Fire
+                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
+                                crate::components::ElementalStatus::Ice { duration: 3 }
+                            }
+                            (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
+                                crate::components::ElementalStatus::Lightning { duration: 3 }
+                            }
+                            (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
+                                crate::components::ElementalStatus::Nature { duration: 3 }
+                            }
                             (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
                                 crate::components::ElementalStatus::Ice { duration: 3 }
-                            } // Glacial Tempest
+                            }
                             _ => crate::components::ElementalStatus::None,
                         };
                         if skill_element != crate::components::ElementalStatus::None {
                             self.apply_elemental_status(te, skill_element);
                         }
                         if let Some(t_stats) = self.world.get::<Stats>(te) {
-                            defeated = t_stats.hp <= 0;
+                            if t_stats.hp <= 0 {
+                                defeated = true;
+                            }
                         }
                     }
 
                     if defeated {
                         let name_str = target_name.to_string();
-                        self.handle_defeat(te, &name_str, target_class, target_pos);
+                        self.handle_defeat(te, &name_str, target_class, t_pos);
                     } else {
-                        self.check_parry(target_pos);
+                        self.check_parry(t_pos);
                     }
-                }
-
-                self.build_concert_energy(30);
-            } else {
-                if let Some((target_ent, target_team, target_stats, target_class)) =
-                    self.get_entity_at(target_pos)
-                {
-                    if target_team == Team::Enemy {
-                        let base_damage = std::cmp::max(1, value - target_stats.def);
-                        let target_name = Self::get_class_name(target_class);
-                        let (_damage, mut defeated) = self.resolve_combat_hit(
-                            target_ent,
-                            base_damage,
-                            caster_name,
-                            target_name,
-                            target_pos,
-                        );
-                        if !defeated {
-                            let skill_element = match (class, skill) {
-                                (
-                                    CharacterClass::Warrior,
-                                    crate::components::TargetingMode::Skill1,
-                                ) => crate::components::ElementalStatus::Ice { duration: 3 },
-                                (
-                                    CharacterClass::Mage,
-                                    crate::components::TargetingMode::Skill1,
-                                ) => crate::components::ElementalStatus::Lightning { duration: 3 },
-                                (
-                                    CharacterClass::Healer,
-                                    crate::components::TargetingMode::Skill1,
-                                ) => crate::components::ElementalStatus::Nature { duration: 3 },
-                                _ => crate::components::ElementalStatus::None,
-                            };
-                            if skill_element != crate::components::ElementalStatus::None {
-                                self.apply_elemental_status(target_ent, skill_element);
-                            }
-                            if let Some(t_stats) = self.world.get::<Stats>(target_ent) {
-                                defeated = t_stats.hp <= 0;
-                            }
-                        }
-
-                        if defeated {
-                            let name_str = target_name.to_string();
-                            self.handle_defeat(target_ent, &name_str, target_class, target_pos);
-                        } else {
-                            self.check_parry(target_pos);
-                        }
-
-                        self.build_concert_energy(25);
-                    } else {
-                        self.log("Cannot target player characters with damage skills!");
-                    }
-                } else {
-                    self.log("No enemy target at position!");
                 }
             }
         }
+
+        self.build_concert_energy(30);
     }
 
     pub fn outcome(&self) -> Outcome {
@@ -2191,28 +2210,11 @@ impl Game {
                     let caster_pos = *self.world.get::<Position>(sel_entity).unwrap();
                     let caster_class = *self.world.get::<CharacterClass>(sel_entity).unwrap();
 
-                    let (range, ap_cost, is_aoe, damage_or_heal) =
-                        match (caster_class, state_clone.targeting) {
-                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill1) => {
-                                (1, 2, false, 45)
-                            }
-                            (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
-                                (3, 3, true, 50)
-                            }
-                            (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
-                                (3, 2, false, 55)
-                            }
-                            (CharacterClass::Mage, crate::components::TargetingMode::Skill2) => {
-                                (4, 3, true, 40)
-                            }
-                            (CharacterClass::Healer, crate::components::TargetingMode::Skill1) => {
-                                (2, 2, false, 50)
-                            }
-                            (CharacterClass::Healer, crate::components::TargetingMode::Skill2) => {
-                                (0, 3, true, 40)
-                            }
-                            _ => (1, 1, false, 0),
-                        };
+                    let (_name, range, ap_cost, is_aoe, damage_or_heal) = Self::get_skill_info(
+                        caster_class,
+                        state_clone.targeting,
+                    )
+                    .unwrap_or(("Unknown".to_string(), 1, 1, false, 0));
 
                     let dist = (caster_pos.x - cursor.x).abs() + (caster_pos.y - cursor.y).abs();
                     if range > 0 && dist > range {
@@ -3006,10 +3008,10 @@ impl Game {
         // Simple AI: pick the first player character with AP and do something
         let player_entities: Vec<Entity> = self
             .world
-            .query::<(&Team, &Stats)>()
+            .query2::<Team, Stats>()
             .iter()
-            .filter(|(_, (team, stats))| **team == Team::Player && stats.ap > 0)
-            .map(|(e, _)| *e)
+            .filter(|(_, team, stats)| **team == Team::Player && stats.ap > 0)
+            .map(|(e, _, _)| *e)
             .collect();
 
         if player_entities.is_empty() {
@@ -3026,10 +3028,10 @@ impl Game {
         // Check for enemies in range
         let enemies: Vec<(Entity, Position)> = self
             .world
-            .query::<(&Team, &Position)>()
+            .query2::<Team, Position>()
             .iter()
-            .filter(|(_, (team, _))| **team == Team::Enemy)
-            .map(|(e, (_, p))| (*e, **p))
+            .filter(|(_, team, _)| **team == Team::Enemy)
+            .map(|(e, _, p)| (*e, **p))
             .collect();
 
         let range = match class {
@@ -3058,11 +3060,11 @@ impl Game {
             // Move towards nearest enemy
             let mut nearest_enemy: Option<Position> = None;
             let mut min_dist = i32::MAX;
-            for (_, (_, e_pos)) in self
+            for (_, _team, e_pos) in self
                 .world
-                .query::<(&Team, &Position)>()
+                .query2::<Team, Position>()
                 .iter()
-                .filter(|(_, (team, _))| **team == Team::Enemy)
+                .filter(|(_, team, _)| **team == Team::Enemy)
             {
                 let dist = (pos.x - e_pos.x).abs() as i32 + (pos.y - e_pos.y).abs() as i32;
                 if dist < min_dist {
@@ -3286,12 +3288,16 @@ impl Game {
         } else {
             // Targeting mode range
             if let Some(sel_entity) = state.selected_entity {
-                if let Some(caster_pos) = self.world.get::<Position>(sel_entity) {
-                    let range = match state.targeting {
-                        crate::components::TargetingMode::Skill1 => 3,
-                        crate::components::TargetingMode::Skill2 => 4,
-                        _ => 0,
-                    };
+                if let (Some(caster_pos), Some(class)) = (
+                    self.world.get::<Position>(sel_entity),
+                    self.world.get::<CharacterClass>(sel_entity),
+                ) {
+                    let (_name, range, _ap, _aoe, _power) = Self::get_skill_info(
+                        *class,
+                        state.targeting,
+                    )
+                    .unwrap_or(("Unknown".to_string(), 0, 0, false, 0));
+
                     for ty in 0..map.height {
                         for tx in 0..map.width {
                             let target = Position::new(tx as i16, ty as i16);
@@ -3311,6 +3317,31 @@ impl Game {
                                                 cell.bg,
                                                 Color(50, 150, 50),
                                                 0.35,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // AoE Preview under cursor
+                    let dist = (caster_pos.x - state.cursor.x).abs()
+                        + (caster_pos.y - state.cursor.y).abs();
+                    if dist <= range {
+                        let aoe_tiles = Self::get_skill_aoe(*class, state.targeting, state.cursor);
+                        for pos in aoe_tiles {
+                            let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
+                            for dy in 0..tile_h {
+                                for dx in 0..tile_w {
+                                    let tx = sx + dx as i32;
+                                    let ty = sy + dy as i32;
+                                    if viewport.rect.contains(tx as u16, ty as u16) {
+                                        if let Some(cell) = screen.get_mut(tx as u16, ty as u16) {
+                                            cell.bg = verryte_terminal::vfx::blend_color(
+                                                cell.bg,
+                                                Color(200, 200, 50),
+                                                0.5,
                                             );
                                         }
                                     }
@@ -3380,6 +3411,7 @@ impl Game {
                 CharacterClass::Healer => "mira",
                 CharacterClass::Boss => "blight-sovereign",
                 CharacterClass::ShadowStalker => "lyra", // Placeholder
+                CharacterClass::CorruptedSpore => "blight-sovereign", // Placeholder
             };
 
             if let Some(asset) = registry.get(key) {
@@ -3498,49 +3530,9 @@ impl Game {
         &self,
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::snapshot::{FullSaveState, SavedEntity};
-
-        let mut entities = Vec::new();
-        for e in self.world.entities() {
-            entities.push(SavedEntity {
-                entity: e,
-                position: self.world.get::<Position>(e).copied(),
-                team: self.world.get::<Team>(e).copied(),
-                class: self.world.get::<CharacterClass>(e).copied(),
-                stats: self.world.get::<Stats>(e).cloned(),
-                echo_item: self.world.get::<crate::components::EchoItem>(e).copied(),
-                elemental_status: self
-                    .world
-                    .get::<crate::components::ElementalStatus>(e)
-                    .copied(),
-                rooted: self.world.get::<crate::components::Rooted>(e).copied(),
-                stunned: self.world.get::<crate::components::Stunned>(e).copied(),
-                shield: self
-                    .world
-                    .get::<crate::components::ElementalShield>(e)
-                    .copied(),
-            });
-        }
-
-        let state = FullSaveState {
-            game_state: self.world.resource::<GameState>().unwrap().clone(),
-            telegraph_zone: self
-                .world
-                .resource::<crate::components::TelegraphZone>()
-                .unwrap()
-                .clone(),
-            message_log: self.world.resource::<MessageLog>().unwrap().clone(),
-            clock: self.world.resource::<GameClock>().unwrap().clone(),
-            rng: *self.world.resource::<Rng>().unwrap(),
-            map: self.world.resource::<TacticalMap>().unwrap().clone(),
-            camera: self.camera.clone(),
-            action_history: self
-                .world
-                .resource::<verryte_input::ActionHistory<Action>>()
-                .unwrap()
-                .clone(),
-            entities,
-        };
+        let registry = crate::snapshot::create_registry();
+        let snapshot = registry.snapshot(&self.world);
+        let state = crate::snapshot::FullSaveState { world: snapshot };
 
         let json = serde_json::to_string_pretty(&state)?;
         std::fs::write(path, json)?;
@@ -3551,68 +3543,25 @@ impl Game {
         &mut self,
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::snapshot::FullSaveState;
-
         let data = std::fs::read_to_string(path)?;
-        let state: FullSaveState = serde_json::from_str(&data)?;
+        let state: crate::snapshot::FullSaveState = serde_json::from_str(&data)?;
 
-        // Clear and rebuild world
-        self.world = World::new();
-        self.world.insert_resource(state.map);
-        self.world.insert_resource(state.game_state);
-        self.world.insert_resource(state.telegraph_zone);
-        self.world.insert_resource(state.clock);
-        self.world.insert_resource(state.rng);
-        self.world.insert_resource(state.message_log);
-        self.world.insert_resource(state.action_history);
-        self.world
-            .insert_resource(verryte_terminal::vfx::VfxSystem::new());
-        self.world
-            .insert_resource(verryte_terminal::DialogueState::new("Narrative", ""));
-        self.world
-            .insert_resource(crate::components::EquippedEchoes::default());
+        let registry = crate::snapshot::create_registry();
+        registry.apply(&mut self.world, state.world)?;
 
-        let mut registry = VisualRegistry::new();
-        crate::generated_assets::register_assets(&mut registry);
-        self.world.insert_resource(registry);
-        self.world
-            .insert_resource(Events::<GameEvent>::with_capacity(16));
+        // Re-insert non-snapshotted resources
+        let mut asset_registry = verryte_terminal::assets::VisualRegistry::new();
+        crate::generated_assets::register_assets(&mut asset_registry);
+        self.world.insert_resource(asset_registry);
 
-        self.camera = state.camera;
+        if self.world.resource::<Events<GameEvent>>().is_none() {
+            self.world
+                .insert_resource(Events::<GameEvent>::with_capacity(16));
+        }
 
-        for se in state.entities {
-            let mut builder = self.world.builder();
-            if let Some(p) = se.position {
-                builder = builder.with(p);
-            }
-            if let Some(t) = se.team {
-                builder = builder.with(t);
-            }
-            if let Some(c) = se.class {
-                builder = builder.with(c);
-            }
-            if let Some(s) = se.stats {
-                builder = builder.with(s);
-            }
-            if let Some(e) = se.echo_item {
-                builder = builder.with(e);
-            }
-            if let Some(es) = se.elemental_status {
-                builder = builder.with(es);
-            }
-            if let Some(r) = se.rooted {
-                builder = builder.with(r);
-            }
-            if let Some(st) = se.stunned {
-                builder = builder.with(st);
-            }
-            if let Some(sh) = se.shield {
-                builder = builder.with(sh);
-            }
-            // Note: In a real engine, we'd want to preserve the entity ID exactly,
-            // but verryte-core's builder always spawns a new ID.
-            // For this prototype, we'll assume relative order or just accept new IDs.
-            builder.build();
+        // Sync camera from resource
+        if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {
+            self.camera = camera.clone();
         }
 
         self.log("Game loaded successfully.");
@@ -3662,126 +3611,32 @@ impl Game {
     }
 
     pub fn save_state(&self) -> Result<String, serde_json::Error> {
-        use crate::snapshot::{FullSaveState, SavedEntity};
-
-        let mut entities = Vec::new();
-        for entity in self.world.entities() {
-            let position = self.world.get::<Position>(entity).copied();
-            let team = self.world.get::<Team>(entity).copied();
-            let class = self.world.get::<CharacterClass>(entity).copied();
-            let stats = self.world.get::<Stats>(entity).cloned();
-            let echo_item = self
-                .world
-                .get::<crate::components::EchoItem>(entity)
-                .copied();
-            let elemental_status = self
-                .world
-                .get::<crate::components::ElementalStatus>(entity)
-                .copied();
-            let rooted = self.world.get::<crate::components::Rooted>(entity).copied();
-            let stunned = self
-                .world
-                .get::<crate::components::Stunned>(entity)
-                .copied();
-            let shield = self
-                .world
-                .get::<crate::components::ElementalShield>(entity)
-                .copied();
-
-            entities.push(SavedEntity {
-                entity,
-                position,
-                team,
-                class,
-                stats,
-                echo_item,
-                elemental_status,
-                rooted,
-                stunned,
-                shield,
-            });
-        }
-
-        let state = FullSaveState {
-            game_state: self.world.resource::<GameState>().unwrap().clone(),
-            telegraph_zone: self
-                .world
-                .resource::<crate::components::TelegraphZone>()
-                .unwrap()
-                .clone(),
-            message_log: self.world.resource::<MessageLog>().unwrap().clone(),
-            clock: self.world.resource::<GameClock>().unwrap().clone(),
-            rng: *self.world.resource::<Rng>().unwrap(),
-            map: self.world.resource::<TacticalMap>().unwrap().clone(),
-            camera: self.camera.clone(),
-            action_history: self
-                .world
-                .resource::<verryte_input::ActionHistory<Action>>()
-                .unwrap()
-                .clone(),
-            entities,
-        };
+        let registry = crate::snapshot::create_registry();
+        let snapshot = registry.snapshot(&self.world);
+        let state = crate::snapshot::FullSaveState { world: snapshot };
 
         serde_json::to_string(&state)
     }
 
-    pub fn load_state(&mut self, state_str: &str) -> Result<(), String> {
-        use crate::snapshot::FullSaveState;
+    pub fn load_state(&mut self, state_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let state: crate::snapshot::FullSaveState = serde_json::from_str(state_str)?;
 
-        let state: FullSaveState = serde_json::from_str(state_str)
-            .map_err(|e| format!("Failed to parse save state: {}", e))?;
+        let registry = crate::snapshot::create_registry();
+        registry.apply(&mut self.world, state.world)?;
 
-        // Despawn all current entities
-        self.world.despawn_all();
+        // Re-insert non-snapshotted resources
+        let mut asset_registry = verryte_terminal::assets::VisualRegistry::new();
+        crate::generated_assets::register_assets(&mut asset_registry);
+        self.world.insert_resource(asset_registry);
 
-        // Restore resources
-        *self.world.resource_mut::<GameState>().unwrap() = state.game_state;
-        *self
-            .world
-            .resource_mut::<crate::components::TelegraphZone>()
-            .unwrap() = state.telegraph_zone;
-        *self.world.resource_mut::<MessageLog>().unwrap() = state.message_log;
-        *self.world.resource_mut::<GameClock>().unwrap() = state.clock;
-        *self.world.resource_mut::<Rng>().unwrap() = state.rng;
-        *self.world.resource_mut::<TacticalMap>().unwrap() = state.map;
-        *self
-            .world
-            .resource_mut::<verryte_input::ActionHistory<Action>>()
-            .unwrap() = state.action_history;
+        if self.world.resource::<Events<GameEvent>>().is_none() {
+            self.world
+                .insert_resource(Events::<GameEvent>::with_capacity(16));
+        }
 
-        // Restore camera
-        self.camera = state.camera;
-
-        // Respawn entities and restore their components
-        for saved in state.entities {
-            self.world.spawn_at(saved.entity);
-            if let Some(pos) = saved.position {
-                self.world.insert(saved.entity, pos);
-            }
-            if let Some(team) = saved.team {
-                self.world.insert(saved.entity, team);
-            }
-            if let Some(class) = saved.class {
-                self.world.insert(saved.entity, class);
-            }
-            if let Some(stats) = saved.stats {
-                self.world.insert(saved.entity, stats);
-            }
-            if let Some(echo) = saved.echo_item {
-                self.world.insert(saved.entity, echo);
-            }
-            if let Some(el) = saved.elemental_status {
-                self.world.insert(saved.entity, el);
-            }
-            if let Some(rooted) = saved.rooted {
-                self.world.insert(saved.entity, rooted);
-            }
-            if let Some(stunned) = saved.stunned {
-                self.world.insert(saved.entity, stunned);
-            }
-            if let Some(shield) = saved.shield {
-                self.world.insert(saved.entity, shield);
-            }
+        // Sync camera from resource
+        if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {
+            self.camera = camera.clone();
         }
 
         Ok(())

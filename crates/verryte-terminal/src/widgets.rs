@@ -251,8 +251,7 @@ impl PerformanceOverlay {
             return;
         }
 
-        let mut sorted_systems: Vec<_> = diagnostics.systems.iter().collect();
-        sorted_systems.sort_by_key(|b| std::cmp::Reverse(b.1.last_duration));
+        let sorted_systems = diagnostics.sorted_by_duration();
 
         for (i, (name, metrics)) in sorted_systems.iter().enumerate() {
             let y = inner.y + i as u16;

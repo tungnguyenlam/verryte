@@ -11,7 +11,7 @@ Pick work that moves the engine toward its final shape:
 - terminal rendering primitives
 - game loop scaffolding
 - modular plugin or extension points
-- Ash Courier prototype work that proves the engine shape without hard-coding the engine
+- Wuthering Terminal prototype work that proves the engine shape without hard-coding the engine
   around one game
 - tests that make future changes safer
 

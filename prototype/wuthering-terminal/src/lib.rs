@@ -13,7 +13,7 @@ pub mod ui;
 pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
-pub use snapshot::{FullSaveState, SavedEntity, Snapshot, StepReport};
+pub use snapshot::{FullSaveState, Snapshot, StepReport};
 pub use spawn::Spawner;
 pub use verryte_map::Point as Position;
 
@@ -26,7 +26,7 @@ mod tests {
     #[test]
     fn test_game_init() {
         let game = Game::new();
-        assert_eq!(game.world.entity_count(), 10); // 3 player chars + 1 boss + 2 shadow stalkers + 4 items
+        assert_eq!(game.world.entity_count(), 12); // 3 player chars + 1 boss + 2 shadow stalkers + 2 spores + 4 items
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -79,7 +79,7 @@ mod tests {
         );
 
         // Check that all entities are restored
-        assert_eq!(game2.world.entity_count(), 10);
+        assert_eq!(game2.world.entity_count(), 12);
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -568,6 +568,7 @@ mod tests {
                 CharacterClass::Healer => healer = Some(e),
                 CharacterClass::Boss => boss = Some(e),
                 CharacterClass::ShadowStalker => {}
+                CharacterClass::CorruptedSpore => {}
             }
         }
         let warrior = warrior.unwrap();

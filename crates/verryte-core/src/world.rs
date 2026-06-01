@@ -737,6 +737,10 @@ impl World {
     /// Collect every live `(entity, &component)` pair for a given component
     /// type. The result allocates so callers can hand the iterator off freely;
     /// the engine is not yet hot-loop oriented.
+    /// Returns all entities that have a component of type `T`.
+    ///
+    /// This is a convenience method that collects results into a `Vec`. For
+    /// better performance in tight loops, consider using `query_iter`.
     pub fn query<T: 'static + Send + Sync>(&self) -> Vec<(Entity, &T)> {
         let mut out = Vec::new();
         let Some(column) = self.columns.get(&TypeId::of::<T>()) else {
@@ -2427,6 +2431,39 @@ impl World {
             }
         }
 
+        count
+    }
+
+    /// Spawn an entity with a specific string tag.
+    pub fn spawn_with_tag(&mut self, name: &str) -> Entity {
+        let e = self.spawn();
+        self.insert(e, crate::tag::Tag::new(name));
+        e
+    }
+
+    /// Check if a specific entity has the given tag.
+    pub fn has_tag(&self, entity: Entity, name: &str) -> bool {
+        self.get::<crate::tag::Tag>(entity).map_or(false, |t| t.is(name))
+    }
+
+    /// Retrieve all entities that have a Tag matching the given name.
+    pub fn find_entities_with_tag(&self, name: &str) -> Vec<Entity> {
+        let mut out = Vec::new();
+        for (e, tag) in self.query::<crate::tag::Tag>() {
+            if tag.is(name) {
+                out.push(e);
+            }
+        }
+        out
+    }
+
+    /// Despawns all entities that have a Tag matching the given name.
+    pub fn despawn_all_with_tag(&mut self, name: &str) -> usize {
+        let targets = self.find_entities_with_tag(name);
+        let count = targets.len();
+        for e in targets {
+            self.despawn(e);
+        }
         count
     }
 }

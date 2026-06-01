@@ -1941,4 +1941,105 @@ mod tests {
         );
         assert_eq!(cmd_roundtrip.translate_glyph('f'), Some(DummyAction::Fire));
     }
+
+    #[test]
+    fn test_recorded_as_trace_returns_none_when_empty() {
+        let mut router = bound_router();
+        router.start_recording("/tmp/test_recording.json");
+        assert!(router.recorded_as_trace().is_none());
+    }
+
+    #[test]
+    fn test_recorded_as_trace_returns_actions() {
+        let mut router = bound_router();
+        router.start_recording("/tmp/test_recording.json");
+        router.inject_from(Move::North, ActionSource::Terminal);
+        router.inject_from(Move::South, ActionSource::Script);
+
+        let trace = router.recorded_as_trace();
+        assert!(trace.is_some());
+        let trace = trace.unwrap();
+        assert_eq!(trace.len(), 2);
+        // Recording should still be active
+        assert!(router.is_recording());
+        assert_eq!(router.recorded_count(), 2);
+    }
+
+    #[test]
+    fn test_take_recording_stops_and_returns_trace() {
+        let mut router = bound_router();
+        router.start_recording("/tmp/test_recording.json");
+        router.inject_from(Move::East, ActionSource::Terminal);
+        router.inject_from(Move::West, ActionSource::Agent);
+
+        let trace = router.take_recording();
+        assert_eq!(trace.len(), 2);
+        assert!(!router.is_recording());
+        assert_eq!(router.recorded_count(), 0);
+    }
+
+    #[test]
+    fn test_take_recording_empty() {
+        let mut router = bound_router();
+        router.start_recording("/tmp/test_recording.json");
+        let trace = router.take_recording();
+        assert!(trace.is_empty());
+        assert!(!router.is_recording());
+    }
+
+    #[test]
+    fn test_recorded_actions_borrow() {
+        let mut router = bound_router();
+        assert!(router.recorded_actions().is_none());
+
+        router.start_recording("/tmp/test_recording.json");
+        router.inject_from(Move::North, ActionSource::Terminal);
+        router.inject_from(Move::South, ActionSource::Script);
+
+        let actions = router.recorded_actions();
+        assert!(actions.is_some());
+        assert_eq!(actions.unwrap().len(), 2);
+        // Recording still active
+        assert!(router.is_recording());
+    }
+
+    #[test]
+    fn action_trace_from_actions() {
+        let trace = ActionTrace::from_actions(
+            vec![Move::North, Move::East, Move::South],
+            ActionSource::Script,
+        );
+        assert_eq!(trace.len(), 3);
+        assert_eq!(trace.steps()[0].action, Move::North);
+        assert_eq!(trace.steps()[0].source, ActionSource::Script);
+        assert_eq!(trace.steps()[2].action, Move::South);
+    }
+
+    #[test]
+    fn action_trace_from_history() {
+        let mut router = bound_router();
+        router.inject_from(Move::North, ActionSource::Terminal);
+        router.inject_from(Move::Wait, ActionSource::Agent);
+        let _ = router.next_queued();
+        let _ = router.next_queued();
+
+        let trace = ActionTrace::from_history(router.history());
+        assert_eq!(trace.len(), 2);
+        assert_eq!(trace.steps()[0].source, ActionSource::Terminal);
+        assert_eq!(trace.steps()[1].source, ActionSource::Agent);
+    }
+
+    #[test]
+    fn action_trace_from_detailed_string_error() {
+        let result = ActionTrace::from_detailed_string("bad_format", |_| None::<Move>);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing ':'"));
+    }
+
+    #[test]
+    fn action_trace_from_detailed_string_unrecognized_action() {
+        let result = ActionTrace::from_detailed_string("Terminal:unknown_action", |_| None::<Move>);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unrecognized action"));
+    }
 }

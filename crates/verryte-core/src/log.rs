@@ -82,6 +82,32 @@ impl MessageLog {
     {
         self.messages.retain(|msg| keep(msg));
     }
+
+    /// Save the message log to a file as JSON.
+    #[cfg(feature = "serde")]
+    pub fn save_to_file<P>(&self, path: P) -> Result<(), String>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let path = path.as_ref();
+        let s = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("failed to serialize message log: {}", e))?;
+        std::fs::write(path, s)
+            .map_err(|e| format!("failed to write message log to {:?}: {}", path, e))
+    }
+
+    /// Load a message log from a file as JSON.
+    #[cfg(feature = "serde")]
+    pub fn load_from_file<P>(path: P) -> Result<Self, String>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read message log from {:?}: {}", path, e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("failed to deserialize message log from {:?}: {}", path, e))
+    }
 }
 
 #[cfg(test)]
@@ -150,5 +176,22 @@ mod tests {
         log.push("b");
         log.retain(|_| false);
         assert!(log.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_message_log_file_round_trip() {
+        let mut log = MessageLog::with_max(10);
+        log.push("first message");
+        log.push("second message");
+
+        let path = "test_log.json";
+        log.save_to_file(path).unwrap();
+
+        let loaded = MessageLog::load_from_file(path).unwrap();
+        assert_eq!(loaded.messages(), log.messages());
+        assert_eq!(loaded.max(), log.max());
+
+        std::fs::remove_file(path).unwrap();
     }
 }

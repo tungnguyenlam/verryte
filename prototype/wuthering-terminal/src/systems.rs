@@ -101,9 +101,68 @@ pub fn enemy_ai_system(world: &mut World) {
                 return;
             };
 
-            let range = 2; // Boss attack range
+            let range = if enemy_class == CharacterClass::CorruptedSpore {
+                1
+            } else {
+                2
+            }; // Boss/normal attack range
             if min_dist <= range {
-                // Boss is next to a player. Let's decide whether to telegraph or normal attack!
+                if enemy_class == CharacterClass::CorruptedSpore {
+                    // Explode!
+                    log(world, "[fg:FF3333][b]Corrupted Spore explodes![/][/fg]");
+                    let (ex, ey) = get_tile_center_pixels(world, enemy_pos);
+                    let vfx = world.resource_mut::<VfxSystem>().unwrap();
+                    vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                        ex,
+                        ey,
+                        50,
+                        Color(50, 200, 50),
+                        &['*', '·', '°', '◌'],
+                    ));
+                    vfx.shakes
+                        .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                            3.0,
+                            0.5,
+                            verryte_terminal::vfx::EasingMode::QuadOut,
+                        ));
+
+                    // Deal damage to all players in 3x3 area
+                    let mut affected = Vec::new();
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            let target_pos = Position::new(enemy_pos.x + dx, enemy_pos.y + dy);
+                            for (pe, p, team) in world.query2::<Position, Team>() {
+                                if *team == Team::Player && *p == target_pos {
+                                    affected.push((pe, *p));
+                                }
+                            }
+                        }
+                    }
+
+                    for (target_e, target_pos) in affected {
+                        let player_stats = world.get::<Stats>(target_e).cloned();
+                        let player_class = world.get::<CharacterClass>(target_e).cloned();
+                        if let (Some(_ps), Some(pc)) = (player_stats, player_class) {
+                            let target_name = Game::get_class_name(pc);
+                            let (_damage, defeated) = resolve_combat_hit(
+                                world,
+                                target_e,
+                                30,
+                                "Spore Explosion",
+                                target_name,
+                                target_pos,
+                            );
+                            if defeated {
+                                handle_defeat(world, target_e, target_name, pc, target_pos);
+                            }
+                        }
+                    }
+
+                    world.despawn(enemy_entity);
+                    break;
+                }
+
+                // Boss attack logic
                 let rng_val = {
                     let rng = world.resource_mut::<Rng>().unwrap();
                     rng.next_u32(100)

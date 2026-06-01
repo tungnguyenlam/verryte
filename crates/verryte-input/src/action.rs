@@ -178,6 +178,39 @@ impl<A> ActionHistory<A> {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<A> ActionHistory<A> {
+    /// Save the action history to a file on disk as JSON.
+    pub fn save_to_file<P>(&self, path: P) -> Result<(), String>
+    where
+        P: AsRef<std::path::Path>,
+        A: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let path = path.as_ref();
+        let s = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("failed to serialize action history: {}", e))?;
+        std::fs::write(path, s)
+            .map_err(|e| format!("failed to write action history to {:?}: {}", path, e))
+    }
+
+    /// Load an action history from a file on disk as JSON.
+    pub fn load_from_file<P>(path: P) -> Result<Self, String>
+    where
+        P: AsRef<std::path::Path>,
+        A: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read action history from {:?}: {}", path, e))?;
+        serde_json::from_str(&content).map_err(|e| {
+            format!(
+                "failed to deserialize action history from {:?}: {}",
+                path, e
+            )
+        })
+    }
+}
+
 /// A buffer that can throttle actions based on per-action cooldowns.
 #[derive(Clone, Debug)]
 pub struct ActionBuffer<A: Clone + Eq + std::hash::Hash> {

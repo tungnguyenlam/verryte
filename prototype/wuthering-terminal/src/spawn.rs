@@ -66,6 +66,17 @@ impl Spawner for World {
                 level: 1,
                 xp: 0,
             },
+            CharacterClass::CorruptedSpore => Stats {
+                hp: 40,
+                max_hp: 40,
+                atk: 15,
+                def: 0,
+                spd: 10,
+                ap: 2,
+                max_ap: 2,
+                level: 1,
+                xp: 0,
+            },
         };
 
         self.builder()
