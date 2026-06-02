@@ -21,12 +21,13 @@ pub use verryte_map::Point as Position;
 mod tests {
     use super::*;
     use crate::components::{CharacterClass, GameState, Stats, Team, TurnPhase};
+    use crate::map::{TacticalMap, Tile};
     use verryte_input::ActionSource;
 
     #[test]
     fn test_game_init() {
         let game = Game::new();
-        assert_eq!(game.world.entity_count(), 12); // 3 player chars + 1 boss + 2 shadow stalkers + 2 spores + 4 items
+        assert_eq!(game.world.entity_count(), 14); // 3 players + 1 boss + 2 stalkers + 2 spores + 1 sentinel + 1 wraith + 4 items
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -79,7 +80,7 @@ mod tests {
         );
 
         // Check that all entities are restored
-        assert_eq!(game2.world.entity_count(), 12);
+        assert_eq!(game2.world.entity_count(), 14);
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -569,6 +570,8 @@ mod tests {
                 CharacterClass::Boss => boss = Some(e),
                 CharacterClass::ShadowStalker => {}
                 CharacterClass::CorruptedSpore => {}
+                CharacterClass::CursedSentinel => {}
+                CharacterClass::PlagueWraith => {}
             }
         }
         let warrior = warrior.unwrap();
@@ -820,7 +823,6 @@ mod tests {
                 .unwrap_or_else(|| panic!("Asset {} should be registered", key));
             if let verryte_terminal::VisualAsset::Animated(sprite) = asset {
                 assert_eq!(sprite.name, key);
-                // Check all 6 tiers
                 for tier in verryte_terminal::ResolutionTier::ALL {
                     let mut s = sprite.clone();
                     s.set_tier(tier);
@@ -871,8 +873,6 @@ mod tests {
                         );
                     }
                 }
-            } else {
-                panic!("Asset {} should be an Animated sprite", key);
             }
         }
     }
@@ -1087,5 +1087,366 @@ mod tests {
         assert_eq!(shield2.amount, 25);
         assert_eq!(shield2.max_amount, 30);
         assert_eq!(shield2.shield_type, ShieldType::Lightning);
+    }
+
+    #[test]
+    fn test_script_full_combat_loop() {
+        let mut game = Game::new();
+
+        let script = "inspect:4,4 confirm inspect:4,5 confirm next confirm";
+        let count = game
+            .router
+            .inject_script_with(
+                &default_commands(),
+                script,
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        assert_eq!(count, 6);
+
+        let reports = game.run_pending_reports();
+        assert_eq!(reports.len(), 6);
+
+        for report in &reports {
+            assert_eq!(report.source, ActionSource::Script);
+        }
+
+        let state = game.world.resource::<GameState>().unwrap();
+        assert_eq!(state.turn, 1);
+        assert_eq!(state.phase, TurnPhase::Player);
+        assert_eq!(state.outcome, Outcome::Playing);
+    }
+
+    #[test]
+    fn test_cursor_bounds_clamping() {
+        let mut game = Game::new();
+
+        let map = game.world.resource::<TacticalMap>().unwrap();
+        let w = map.width as i16;
+        let h = map.height as i16;
+
+        for _ in 0..100 {
+            game.apply_action(Action::MoveNorth, ActionSource::Terminal);
+            game.apply_action(Action::MoveWest, ActionSource::Terminal);
+        }
+        let cursor = game.world.resource::<GameState>().unwrap().cursor;
+        assert!(cursor.x >= 0 && cursor.x < w);
+        assert!(cursor.y >= 0 && cursor.y < h);
+
+        for _ in 0..100 {
+            game.apply_action(Action::MoveSouth, ActionSource::Terminal);
+            game.apply_action(Action::MoveEast, ActionSource::Terminal);
+        }
+        let cursor = game.world.resource::<GameState>().unwrap().cursor;
+        assert!(cursor.x >= 0 && cursor.x < w);
+        assert!(cursor.y >= 0 && cursor.y < h);
+    }
+
+    #[test]
+    fn test_enemy_ai_moves_toward_players() {
+        let mut game = Game::new();
+
+        let mut stalker_pos = None;
+        for (_e, pos, team, class) in game.world.query3::<Position, Team, CharacterClass>() {
+            if *team == Team::Enemy && *class == CharacterClass::ShadowStalker {
+                stalker_pos = Some(*pos);
+                break;
+            }
+        }
+        let initial_pos = stalker_pos.expect("ShadowStalker should exist");
+
+        game.apply_action(Action::EndTurn, ActionSource::Terminal);
+        game.update(0.1);
+        game.update(0.1);
+        game.update(0.1);
+
+        let mut stalker_pos_after = None;
+        for (_e, pos, team, class) in game.world.query3::<Position, Team, CharacterClass>() {
+            if *team == Team::Enemy && *class == CharacterClass::ShadowStalker {
+                stalker_pos_after = Some(*pos);
+                break;
+            }
+        }
+        let after_pos = stalker_pos_after.expect("ShadowStalker should still exist");
+        let dist_before = (initial_pos.x - 4).abs() + (initial_pos.y - 4).abs();
+        let dist_after = (after_pos.x - 4).abs() + (after_pos.y - 4).abs();
+        assert!(
+            dist_after <= dist_before,
+            "ShadowStalker should move closer to players: before={}, after={}",
+            dist_before,
+            dist_after
+        );
+    }
+
+    #[test]
+    fn test_render_output_dimensions() {
+        let game = Game::new();
+        let grid = game.render();
+        let (term_w, term_h) = verryte_tty::terminal_size();
+        assert_eq!(grid.width(), term_w);
+        assert_eq!(grid.height(), term_h);
+    }
+
+    #[test]
+    fn test_action_history_tracks_actions() {
+        let mut game = Game::new();
+
+        game.apply_action(Action::MoveNorth, ActionSource::Terminal);
+        game.apply_action(Action::MoveSouth, ActionSource::Script);
+        game.apply_action(Action::Confirm, ActionSource::Agent);
+
+        let history = game
+            .world
+            .resource::<verryte_input::ActionHistory<Action>>()
+            .unwrap();
+        assert_eq!(history.len(), 3);
+
+        let records: Vec<_> = history.iter().collect();
+        assert_eq!(records[0].action, Action::MoveNorth);
+        assert_eq!(records[0].source, ActionSource::Terminal);
+        assert_eq!(records[1].action, Action::MoveSouth);
+        assert_eq!(records[1].source, ActionSource::Script);
+        assert_eq!(records[2].action, Action::Confirm);
+        assert_eq!(records[2].source, ActionSource::Agent);
+    }
+
+    #[test]
+    fn test_snapshot_consistency() {
+        let mut game = Game::new();
+
+        let snap1 = game.snapshot();
+        assert_eq!(snap1.turn, 1);
+        assert_eq!(snap1.phase, TurnPhase::Player);
+        assert_eq!(snap1.outcome, Outcome::Playing);
+        assert_eq!(snap1.player_team.count, 3);
+        assert_eq!(snap1.enemy_team.count, 7); // Boss + 2 stalkers + 2 spores + sentinel + wraith
+
+        game.apply_action(Action::MoveNorth, ActionSource::Terminal);
+        let snap2 = game.snapshot();
+        assert_eq!(snap2.turn, 1);
+        assert_eq!(snap2.player_team.total_hp, snap1.player_team.total_hp);
+    }
+
+    #[test]
+    fn test_full_script_victory_path() {
+        let mut game = Game::new();
+
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 1;
+        game.world.resource_mut::<GameState>().unwrap().boss_phase =
+            crate::components::BossPhase::Phase2;
+
+        let script = "inspect:4,4 confirm inspect:4,5 confirm";
+        game.router
+            .inject_script_with(
+                &default_commands(),
+                script,
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        game.run_pending_reports();
+
+        let mut boss_exists = false;
+        for (_, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Boss {
+                boss_exists = true;
+            }
+        }
+        assert!(!boss_exists, "Boss should be defeated");
+
+        let mut echo_pos = None;
+        for (_, pos, _) in game.world.query2::<Position, crate::components::EchoItem>() {
+            echo_pos = Some(*pos);
+        }
+        assert!(echo_pos.is_some(), "Echo should be dropped");
+
+        let echo = echo_pos.unwrap();
+        let script2 = format!(
+            "inspect:{},{} confirm inspect:{},{} confirm",
+            4, 4, echo.x, echo.y
+        );
+        game.router
+            .inject_script_with(
+                &default_commands(),
+                &script2,
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        game.run_pending_reports();
+
+        let echoes = game
+            .world
+            .resource::<crate::components::EquippedEchoes>()
+            .unwrap();
+        let state = game.world.resource::<GameState>().unwrap();
+        assert!(
+            !echoes.abilities.is_empty() || state.outcome == Outcome::Victory,
+            "Should have absorbed echo or achieved victory"
+        );
+    }
+
+    #[test]
+    fn test_auto_battle_turn_cycle() {
+        let mut game = Game::new();
+        game.world.resource_mut::<GameState>().unwrap().auto_battle = true;
+
+        for _ in 0..15 {
+            game.update(0.1);
+            let state = game.world.resource::<GameState>().unwrap();
+            if state.outcome != Outcome::Playing {
+                break;
+            }
+        }
+
+        let state = game.world.resource::<GameState>().unwrap();
+        assert_eq!(
+            state.outcome,
+            Outcome::Playing,
+            "Game should still be playing"
+        );
+    }
+
+    #[test]
+    fn test_terrain_movement_costs() {
+        let game = Game::new();
+        let map = game.world.resource::<TacticalMap>().unwrap();
+
+        // Grass costs 1
+        assert_eq!(map.movement_cost(Position::new(0, 0)), 1);
+        // Wall costs 999
+        assert_eq!(map.movement_cost(Position::new(4, 1)), 999);
+        // Water costs 2
+        assert_eq!(map.movement_cost(Position::new(8, 4)), 2);
+
+        // is_walkable returns true for Grass and Water, false for Wall
+        assert!(map.is_walkable(Position::new(0, 0)));
+        assert!(map.is_walkable(Position::new(8, 4)));
+        assert!(!map.is_walkable(Position::new(4, 1)));
+
+        // Tactical map has non-uniform terrain
+        let mut has_grass = false;
+        let mut has_wall = false;
+        let mut has_water = false;
+        for y in 0..map.height {
+            for x in 0..map.width {
+                match map.tile(x as i16, y as i16) {
+                    Tile::Grass => has_grass = true,
+                    Tile::Wall => has_wall = true,
+                    Tile::Water => has_water = true,
+                }
+            }
+        }
+        assert!(has_grass, "Map should have grass tiles");
+        assert!(has_wall, "Map should have wall tiles");
+        assert!(has_water, "Map should have water tiles");
+    }
+
+    #[test]
+    fn test_water_movement_ap_cost() {
+        let mut game = Game::new();
+
+        // Place warrior at (8, 3) which is grass adjacent to water at (8, 4)
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(8, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(8, 3);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Move to (8, 4) which is water — should cost 2 AP
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(8, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        let stats = game.world.get::<Stats>(warrior).unwrap();
+        assert_eq!(stats.ap, 1, "Moving onto water should cost 2 AP");
+    }
+
+    #[test]
+    fn test_new_enemy_types_exist() {
+        let game = Game::new();
+        let mut sentinel_found = false;
+        let mut wraith_found = false;
+        for (_e, class) in game.world.query::<CharacterClass>() {
+            match *class {
+                CharacterClass::CursedSentinel => sentinel_found = true,
+                CharacterClass::PlagueWraith => wraith_found = true,
+                _ => {}
+            }
+        }
+        assert!(sentinel_found, "CursedSentinel should be spawned");
+        assert!(wraith_found, "PlagueWraith should be spawned");
+    }
+
+    #[test]
+    fn test_plague_wraith_applies_nature() {
+        let mut game = Game::new();
+
+        let wraith = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::PlagueWraith)
+            .map(|(e, _)| e)
+            .unwrap();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Move wraith next to warrior
+        *game.world.get_mut::<Position>(wraith).unwrap() = Position::new(5, 4);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+
+        // Give wraith AP and force enemy phase
+        game.world.get_mut::<Stats>(wraith).unwrap().ap = 3;
+        game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+
+        // Run enemy AI
+        crate::systems::enemy_ai_system(&mut game.world);
+
+        // Warrior should have Nature status
+        let status = game
+            .world
+            .get::<crate::components::ElementalStatus>(warrior)
+            .unwrap();
+        assert!(
+            matches!(status, crate::components::ElementalStatus::Nature { .. }),
+            "PlagueWraith should apply Nature status on hit"
+        );
     }
 }

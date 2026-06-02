@@ -2443,7 +2443,8 @@ impl World {
 
     /// Check if a specific entity has the given tag.
     pub fn has_tag(&self, entity: Entity, name: &str) -> bool {
-        self.get::<crate::tag::Tag>(entity).map_or(false, |t| t.is(name))
+        self.get::<crate::tag::Tag>(entity)
+            .is_some_and(|t| t.is(name))
     }
 
     /// Retrieve all entities that have a Tag matching the given name.

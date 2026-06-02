@@ -100,48 +100,55 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         }
     }
 
-    // Draw HUD line 1 components
-    grid.write_str(
-        2,
-        hud_y + 1,
-        &format!("TURN: {:02} | ", state.turn),
-        Color::WHITE,
-        hud_bg,
-    );
-    grid.write_str(
-        13,
-        hud_y + 1,
-        &format!("PHASE: {:<12}", phase_str),
-        phase_color,
-        hud_bg,
-    );
-    grid.write_str(
-        31,
-        hud_y + 1,
-        &format!(" | {}", selection_str),
-        Color::WHITE,
-        hud_bg,
-    );
+    let turn_label = format!("TURN: {:02} | ", state.turn);
+    let phase_label = format!("PHASE: {:<12}", phase_str);
 
     let ce_pct = (state.concert_energy as f32 / 100.0).clamp(0.0, 1.0);
     let ce_color = if state.concert_energy >= 100 {
-        Color(255, 215, 0) // Gold
+        Color(255, 215, 0)
     } else {
-        Color(100, 200, 255) // Cyan-ish
+        Color(100, 200, 255)
     };
+    let ce_label = format!(" | CONCERT: {:>3}/100 ", state.concert_energy);
+    let bar_w: u16 = 10;
+    let ce_total = ce_label.len() as u16 + bar_w + 1;
+    let ce_x = term_w.saturating_sub(ce_total + 2);
 
-    grid.write_str(
-        90,
-        hud_y + 1,
-        &format!(" | CONCERT: {:>3}/100 ", state.concert_energy),
-        ce_color,
-        hud_bg,
-    );
+    let turn_x = 2u16;
+    let phase_x = turn_x + turn_label.len() as u16;
+    let sel_x = phase_x + phase_label.len() as u16 + 1;
 
-    verryte_terminal::ProgressBar::new(verryte_terminal::Rect::new(110, hud_y + 1, 10, 1))
-        .with_value(ce_pct)
-        .with_colors(ce_color, Color(40, 40, 50))
-        .render(grid);
+    if turn_x < ce_x {
+        grid.write_str(turn_x, hud_y + 1, &turn_label, Color::WHITE, hud_bg);
+    }
+    if phase_x < ce_x {
+        grid.write_str(phase_x, hud_y + 1, &phase_label, phase_color, hud_bg);
+    }
+    if sel_x < ce_x {
+        let max_sel = (ce_x.saturating_sub(sel_x + 1)) as usize;
+        let sel_truncated = if selection_str.len() > max_sel && max_sel > 3 {
+            format!("{}...", &selection_str[..max_sel - 3])
+        } else {
+            selection_str.clone()
+        };
+        grid.write_str(sel_x, hud_y + 1, &sel_truncated, Color::WHITE, hud_bg);
+    }
+
+    if ce_x > 2 {
+        grid.write_str(ce_x, hud_y + 1, &ce_label, ce_color, hud_bg);
+        let bar_x = ce_x + ce_label.len() as u16;
+        if bar_x + bar_w <= term_w {
+            verryte_terminal::ProgressBar::new(verryte_terminal::Rect::new(
+                bar_x,
+                hud_y + 1,
+                bar_w,
+                1,
+            ))
+            .with_value(ce_pct)
+            .with_colors(ce_color, Color(40, 40, 50))
+            .render(grid);
+        }
+    }
 
     let hovered_tile = map.tile(state.cursor.x, state.cursor.y);
     let tile_type_str = match hovered_tile {
@@ -231,14 +238,8 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     };
 
     // Draw HUD line 2 components
-    grid.write_str(
-        2,
-        hud_y + 2,
-        &format!("CURSOR: ({:02}, {:02}) | ", state.cursor.x, state.cursor.y),
-        Color::CYAN,
-        hud_bg,
-    );
-    grid.write_str(20, hud_y + 2, &hovered_str, Color::WHITE, hud_bg);
+    let cursor_label = format!("CURSOR: ({:02}, {:02}) | ", state.cursor.x, state.cursor.y);
+    grid.write_str(2, hud_y + 2, &cursor_label, Color::CYAN, hud_bg);
 
     let mut echo_str = "None".to_string();
     if let Some(echoes) = world.resource::<crate::components::EquippedEchoes>() {
@@ -251,13 +252,27 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
                 .join(", ");
         }
     }
+    let echo_label = format!(" | ECHOES: {}", echo_str);
+    let echo_x = term_w.saturating_sub(echo_label.len() as u16 + 2);
+
+    let entity_x = cursor_label.len() as u16 + 2;
+    let max_entity = echo_x.saturating_sub(entity_x + 1) as usize;
+    let truncated_hovered = if hovered_str.len() > max_entity && max_entity > 3 {
+        format!("{}...", &hovered_str[..max_entity - 3])
+    } else {
+        hovered_str.clone()
+    };
     grid.write_str(
-        80,
+        entity_x,
         hud_y + 2,
-        &format!(" | ECHOES: {}", echo_str),
-        Color::YELLOW,
+        &truncated_hovered,
+        Color::WHITE,
         hud_bg,
     );
+
+    if echo_x > entity_x + truncated_hovered.len() as u16 {
+        grid.write_str(echo_x, hud_y + 2, &echo_label, Color::YELLOW, hud_bg);
+    }
 
     // AI / Recording indicators
     if state.auto_battle {
@@ -392,4 +407,83 @@ fn get_entity_at(
         }
     }
     None
+}
+
+pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
+    let map = world.resource::<TacticalMap>().unwrap();
+    let state = world.resource::<GameState>().unwrap();
+    let mm_w = map.width + 2;
+    let mm_h = map.height + 2;
+    let mm_x = grid.width().saturating_sub(mm_w + 1);
+    let mm_y = 1u16;
+
+    if mm_x == 0 || mm_y + mm_h > board_h {
+        return;
+    }
+
+    let mm_bg = Color(5, 5, 10);
+    for dy in 0..mm_h {
+        for dx in 0..mm_w {
+            grid.put(mm_x + dx, mm_y + dy, Cell::new(' ').with_bg(mm_bg));
+        }
+    }
+
+    grid.draw_border_styled(
+        verryte_terminal::Rect::new(mm_x, mm_y, mm_w, mm_h),
+        verryte_terminal::BorderStyle::Rounded,
+        Color(60, 80, 100),
+        mm_bg,
+    );
+
+    let inner_x = mm_x + 1;
+    let inner_y = mm_y + 1;
+
+    for ty in 0..map.height {
+        for tx in 0..map.width {
+            let pt = crate::Position::new(tx as i16, ty as i16);
+            let tile = map.tile(pt.x, pt.y);
+            let (ch, fg) = match tile {
+                Tile::Grass => ('·', Color(30, 60, 30)),
+                Tile::Wall => ('#', Color(80, 80, 80)),
+                Tile::Water => ('~', Color(40, 40, 120)),
+            };
+            grid.put(
+                inner_x + tx,
+                inner_y + ty,
+                Cell::new(ch).with_fg(fg).with_bg(mm_bg),
+            );
+        }
+    }
+
+    for (_e, pos, team) in world.query2::<crate::Position, Team>() {
+        let (ch, fg) = match team {
+            Team::Player => ('P', Color::GREEN),
+            Team::Enemy => ('E', Color::RED),
+        };
+        let px = inner_x + pos.x as u16;
+        let py = inner_y + pos.y as u16;
+        if px < grid.width() && py < grid.height() {
+            grid.put(
+                px,
+                py,
+                Cell::new(ch)
+                    .with_fg(fg)
+                    .with_bg(mm_bg)
+                    .with_attrs(verryte_terminal::CellAttrs::NONE.bold()),
+            );
+        }
+    }
+
+    let cx = inner_x + state.cursor.x as u16;
+    let cy = inner_y + state.cursor.y as u16;
+    if cx < grid.width() && cy < grid.height() {
+        grid.put(
+            cx,
+            cy,
+            Cell::new('X')
+                .with_fg(Color::YELLOW)
+                .with_bg(mm_bg)
+                .with_attrs(verryte_terminal::CellAttrs::NONE.bold()),
+        );
+    }
 }

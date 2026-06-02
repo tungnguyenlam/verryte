@@ -77,6 +77,28 @@ impl Spawner for World {
                 level: 1,
                 xp: 0,
             },
+            CharacterClass::CursedSentinel => Stats {
+                hp: 60,
+                max_hp: 60,
+                atk: 30,
+                def: 15,
+                spd: 3,
+                ap: 2,
+                max_ap: 2,
+                level: 3,
+                xp: 0,
+            },
+            CharacterClass::PlagueWraith => Stats {
+                hp: 50,
+                max_hp: 50,
+                atk: 20,
+                def: 5,
+                spd: 7,
+                ap: 3,
+                max_ap: 3,
+                level: 2,
+                xp: 0,
+            },
         };
 
         self.builder()

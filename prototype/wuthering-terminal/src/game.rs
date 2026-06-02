@@ -42,7 +42,7 @@ impl Game {
         let mut world = World::new();
         let width = 24;
         let height = 16;
-        let map = TacticalMap::new(width, height);
+        let map = TacticalMap::tactical();
 
         world.insert_resource(map);
         world.insert_resource(GameState {
@@ -115,6 +115,16 @@ impl Game {
             Position::new(12, 10),
             Team::Enemy,
             CharacterClass::CorruptedSpore,
+        );
+        game.world.spawn_character(
+            Position::new(16, 3),
+            Team::Enemy,
+            CharacterClass::CursedSentinel,
+        );
+        game.world.spawn_character(
+            Position::new(10, 14),
+            Team::Enemy,
+            CharacterClass::PlagueWraith,
         );
 
         let potion = game
@@ -208,6 +218,8 @@ impl Game {
             CharacterClass::Boss => "Blight Sovereign",
             CharacterClass::ShadowStalker => "Shadow Stalker",
             CharacterClass::CorruptedSpore => "Corrupted Spore",
+            CharacterClass::CursedSentinel => "Cursed Sentinel",
+            CharacterClass::PlagueWraith => "Plague Wraith",
         }
     }
 
@@ -465,8 +477,8 @@ impl Game {
             Some(s) => s,
             None => return Vec::new(),
         };
-        let max_steps = stats.ap as u16;
-        if max_steps == 0 {
+        let max_ap = stats.ap;
+        if max_ap == 0 {
             return vec![pos];
         }
 
@@ -479,10 +491,44 @@ impl Game {
             }
         }
 
-        map.tiles
-            .reachable_points4_bounded(pos, max_steps, |pt, tile| {
-                matches!(tile, Tile::Grass) && !occupied.contains(&pt)
-            })
+        // BFS with terrain cost tracking
+        let mut reachable = Vec::new();
+        let mut best_cost: std::collections::HashMap<Position, i32> =
+            std::collections::HashMap::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back((pos, 0i32));
+        best_cost.insert(pos, 0);
+
+        while let Some((current, cost_so_far)) = queue.pop_front() {
+            reachable.push(current);
+            for neighbor in current.neighbors4() {
+                if neighbor.x < 0
+                    || neighbor.x >= map.width as i16
+                    || neighbor.y < 0
+                    || neighbor.y >= map.height as i16
+                {
+                    continue;
+                }
+                if occupied.contains(&neighbor) {
+                    continue;
+                }
+                let tile = map.tile(neighbor.x, neighbor.y);
+                if matches!(tile, Tile::Wall) {
+                    continue;
+                }
+                let move_cost = map.movement_cost(neighbor);
+                let new_cost = cost_so_far + move_cost;
+                if new_cost <= max_ap {
+                    let entry = best_cost.entry(neighbor).or_insert(i32::MAX);
+                    if new_cost < *entry {
+                        *entry = new_cost;
+                        queue.push_back((neighbor, new_cost));
+                    }
+                }
+            }
+        }
+
+        reachable
     }
 
     pub fn get_path_to(&self, entity: Entity, target: Position) -> Option<Vec<Position>> {
@@ -494,9 +540,15 @@ impl Game {
                 occupied.insert(*p);
             }
         }
-        map.tiles.shortest_path4(pos, target, |pt, tile| {
-            matches!(tile, Tile::Grass) && !occupied.contains(&pt)
-        })
+        map.tiles.shortest_path4_weighted(
+            pos,
+            target,
+            |pt, tile| matches!(tile, Tile::Grass | Tile::Water) && !occupied.contains(&pt),
+            |_from, _to, tile| match tile {
+                Tile::Water => 2,
+                _ => 1,
+            },
+        )
     }
 
     pub fn cycle_character(&mut self, next: bool) {
@@ -2481,11 +2533,13 @@ impl Game {
                         let reachable = self.get_reachable_tiles(sel_entity);
                         if reachable.contains(&cursor) {
                             if let Some(path) = self.get_path_to(sel_entity, cursor) {
-                                let dist = (path.len() - 1) as i32;
+                                let map = self.world.resource::<TacticalMap>().unwrap();
+                                let total_cost: i32 =
+                                    path.iter().skip(1).map(|p| map.movement_cost(*p)).sum();
                                 let mut ap_ok = false;
                                 if let Some(sel_stats) = self.world.get_mut::<Stats>(sel_entity) {
-                                    if sel_stats.ap >= dist {
-                                        sel_stats.ap -= dist;
+                                    if sel_stats.ap >= total_cost {
+                                        sel_stats.ap -= total_cost;
                                         ap_ok = true;
                                     }
                                 }
@@ -2499,7 +2553,7 @@ impl Game {
                                     let char_name = Self::get_class_name(sel_class);
                                     self.log(format!(
                                         "{} moved to ({}, {}) spending {} AP.",
-                                        char_name, cursor.x, cursor.y, dist
+                                        char_name, cursor.x, cursor.y, total_cost
                                     ));
 
                                     // Spawn movement particles
@@ -3410,8 +3464,10 @@ impl Game {
                 CharacterClass::Mage => "lyra",
                 CharacterClass::Healer => "mira",
                 CharacterClass::Boss => "blight-sovereign",
-                CharacterClass::ShadowStalker => "lyra", // Placeholder
-                CharacterClass::CorruptedSpore => "blight-sovereign", // Placeholder
+                CharacterClass::ShadowStalker => "lyra",
+                CharacterClass::CorruptedSpore => "blight-sovereign",
+                CharacterClass::CursedSentinel => "kael",
+                CharacterClass::PlagueWraith => "lyra",
             };
 
             if let Some(asset) = registry.get(key) {
@@ -3504,7 +3560,10 @@ impl Game {
             }
         }
 
-        // 8. HUD
+        // 8. Minimap
+        crate::ui::render_minimap(&mut screen, &self.world, board_h);
+
+        // 9. HUD
         crate::ui::render_hud(&mut screen, &self.world, term_w, term_h);
 
         // 9. Screen Flash

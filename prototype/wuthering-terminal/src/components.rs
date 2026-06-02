@@ -17,6 +17,8 @@ pub enum CharacterClass {
     Boss,    // Blight Sovereign
     ShadowStalker,
     CorruptedSpore,
+    CursedSentinel,
+    PlagueWraith,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

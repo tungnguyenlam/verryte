@@ -101,11 +101,12 @@ pub fn enemy_ai_system(world: &mut World) {
                 return;
             };
 
-            let range = if enemy_class == CharacterClass::CorruptedSpore {
-                1
-            } else {
-                2
-            }; // Boss/normal attack range
+            let range = match enemy_class {
+                CharacterClass::CorruptedSpore => 1,
+                CharacterClass::CursedSentinel => 3,
+                CharacterClass::Boss => 2,
+                _ => 2,
+            };
             if min_dist <= range {
                 if enemy_class == CharacterClass::CorruptedSpore {
                     // Explode!
@@ -318,6 +319,27 @@ pub fn enemy_ai_system(world: &mut World) {
                             target: player_entity,
                             damage,
                         });
+                    }
+
+                    // PlagueWraith applies Nature status on hit
+                    if enemy_class == CharacterClass::PlagueWraith && !defeated {
+                        let already_nature = world
+                            .get::<ElementalStatus>(player_entity)
+                            .map(|s| matches!(s, ElementalStatus::Nature { .. }))
+                            .unwrap_or(false);
+                        if !already_nature {
+                            world.insert(player_entity, ElementalStatus::Nature { duration: 2 });
+                            log(
+                                world,
+                                format!("{} is afflicted with Nature blight!", player_name),
+                            );
+                            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                                events.send(GameEvent::ElementalApplied {
+                                    entity: player_entity,
+                                    status: ElementalStatus::Nature { duration: 2 },
+                                });
+                            }
+                        }
                     }
 
                     if defeated {
@@ -1117,6 +1139,8 @@ pub fn handle_defeat(
         let xp_amount = match class {
             CharacterClass::Boss => 1000,
             CharacterClass::ShadowStalker => 50,
+            CharacterClass::CursedSentinel => 40,
+            CharacterClass::PlagueWraith => 35,
             _ => 20,
         };
         award_xp(world, xp_amount);
