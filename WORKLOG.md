@@ -2803,3 +2803,122 @@ scripts or stdin piping for CI integration.
 - Enemy AI for CursedSentinel could include retreat behavior when players get within range 2.
 - Water tiles could have visual effects (ripple animation) to make the cost difference more apparent.
 - Consider adding more terrain types (lava = damage on entry, ice = slide movement).
+
+## 2026-06-02 - autonomous engine run: ECS ergonomics, Display impls, ANSI optimization, dead code removal, boss config
+
+**Goal.** Complete 6 meaningful improvements in one sustained autonomous run: fix missing re-exports, improve ECS ergonomics and performance, add Display impls for debugging, remove dead code and fix a gameplay bug, and extract hardcoded boss configuration into a data-driven resource.
+
+**Changes.**
+- `crates/verryte-core/src/lib.rs:48` - added `Query4`, `Query5`, `QueryMut4Guard`, `QueryMut5Guard` to public re-exports. Previously users could not name these types in their own type signatures.
+- `crates/verryte-core/src/world.rs:164` - added `live_count: usize` field to `World` for O(1) `entity_count()`. Previously it scanned the entire `alive` vector on every call. Count is maintained in `spawn`, `spawn_at`, `despawn`, and `clear_entities`.
+- `crates/verryte-core/src/world.rs:1886` - added `impl Default for World` (delegating to `World::new()`). A duplicate Default impl existed at line 2485 and was preserved.
+- `crates/verryte-core/src/event.rs:10` - added `Clone` derive to `Events<E>`. Previously event channels could not be cloned for snapshotting or replay comparison.
+- `crates/verryte-core/src/diagnostics.rs:167` - added `Display` impl for `Diagnostics` showing system count and per-system avg/max/last durations sorted by average.
+- `crates/verryte-core/src/schedule.rs:535` - added `Display` impl for `Schedule` delegating to `describe()`.
+- `crates/verryte-terminal/src/grid.rs:84` - added `Display` impl for `CellAttrs` (e.g. "bold+italic").
+- `crates/verryte-terminal/src/grid.rs:180` - added `Display` impl for `Cell` (e.g. "'@' fg=#FFFFFF bg=#000000").
+- `crates/verryte-terminal/src/grid.rs:1338` - optimized `Grid::to_ansi_string()` to use `std::fmt::Write` instead of per-cell `format!()` allocations. Writes directly into the pre-allocated buffer.
+- `crates/verryte-map/src/visibility.rs:13` - added `Display` impl for `Visibility` enum ("Hidden", "Explored", "Visible").
+- `prototype/wuthering-terminal/src/game.rs:608-897` - removed 290-line dead `Game::run_enemy_ai()` method. It was never called; the ECS `enemy_ai_system` in `systems.rs` is the active implementation.
+- `prototype/wuthering-terminal/src/game.rs:259` - added `attacker: Entity` parameter to `resolve_combat_hit()` and implemented Thorns Echo reflect damage. Previously Thorns calculated reflect but never applied it due to missing attacker reference.
+- `prototype/wuthering-terminal/src/components.rs:66` - added `BossConfig` resource struct with configurable phase 2 threshold, stat bonuses, telegraph damage, and telegraph rates. Default values match the previous hardcoded values.
+- `prototype/wuthering-terminal/src/game.rs:1386` - updated `check_boss_phase_transition` and `handle_defeat` to read from `BossConfig` resource instead of hardcoded values.
+- `prototype/wuthering-terminal/src/systems.rs:1082` - updated `handle_defeat` and enemy AI telegraph logic to read from `BossConfig` resource.
+- `prototype/wuthering-terminal/src/game.rs:41` - inserted `BossConfig::default()` and `Diagnostics::new()` as world resources in `Game::new()`.
+- `README.md` - updated crate descriptions to document `Query4`/`Query5`, `Events::Clone`, `Diagnostics::Display`, `Schedule::Display`, optimized ANSI output, and `Visibility::Display`.
+
+**Reasoning.** The missing `Query4`/`Query5` re-exports prevented users from naming types returned by `query4_iter()`/`query5_iter()`. The `entity_count()` O(1) optimization eliminates a hidden O(n) scan that could become expensive as entity counts grow. `Events::Clone` enables event state snapshotting for replay comparison. The `Display` impls improve debugging and logging ergonomics across the engine. The ANSI `write!` optimization reduces heap allocations per frame from O(cells) to 0 for the color/attribute emission. Dead code removal eliminates confusion between two divergent enemy AI implementations. The Thorns reflect bug fix closes a gameplay hole where an equipped Echo did nothing during QTE swap intro skills. The `BossConfig` resource centralizes boss tuning data that was previously hardcoded in 3 separate locations, making balance adjustments a single-resource change.
+
+**Assumptions.** I assumed `live_count` should track all entities regardless of component state, matching the semantics of `entity_count()`. The `BossConfig` defaults match the previously hardcoded values exactly so no gameplay behavior changes. The Thorns reflect applies to the attacker entity passed to `resolve_combat_hit`, which at the call sites is always the attacking entity.
+
+**Gotchas.** A pre-existing `impl Default for World` at line 2485 conflicted with the one I added at line 1888. Removed the duplicate since the existing one delegates to `World::new()` which already initializes `live_count`. The `clear_entities` method needed a `self.live_count = 0` reset to pass the existing clear/reset tests.
+
+**Follow-ups.** Consider adding `World::find_where<T, F>` to collapse repeated `query().find()` patterns in the prototype. The `BossConfig` could be serialized to JSON for data-driven enemy tuning. The `enemy_ai_system` in `systems.rs` could benefit from class-specific behavior (flanking, focus-fire, retreat) instead of uniform chase-the-nearest-player logic.
+
+## 2026-06-03 - autonomous engine run: telegraph bug, echo abilities, AI targeting, terrain costs, code dedup
+
+**Goal.** Complete 5 meaningful improvements in one sustained autonomous run per prompt/09-autonomous-engine-run.md. Focus on correctness bugs, missing gameplay mechanics, enemy AI depth, and code quality.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/systems.rs:687` — fixed hardcoded telegraph damage bug. `end_player_turn_system` extracted `TelegraphZone.damage` alongside `tiles` and uses it for damage calculation instead of hardcoded `50`. Phase 2 telegraph attacks now correctly deal 80 damage instead of 50. Also fixed Thorns reflect during telegraph to use 10% of actual telegraph damage instead of flat 5.
+- `prototype/wuthering-terminal/src/game.rs:413` — implemented Stun Echo ability: 15% chance on hit to apply `Stunned { duration: 1 }` to the target. Implemented Lifesteal Echo ability: heals the attacker for 15% of damage dealt, capped at max HP. Both follow the existing Frostbite pattern (check ability flag → roll RNG → apply effect). Fixed borrow checker issues by extracting ability flags into local variables before mutable world operations.
+- `prototype/wuthering-terminal/src/game.rs:365` — fixed borrow checker issue in Thorns Echo: extracted `has_thorns` boolean before the mutable `get_mut::<Stats>(attacker)` call.
+- `prototype/wuthering-terminal/src/game.rs:12` — extracted `saves_dir()` helper function returning the correct saves directory path. Replaced 5 copy-pasted `if std::path::Path::new("prototype/wuthering-terminal").exists()` blocks.
+- `prototype/wuthering-terminal/src/systems.rs:77` — improved enemy AI targeting from pure Manhattan distance to a scoring heuristic: `score = hp_pct + distance + healer_bonus`. Healers get a -30 score bonus (prioritized). Low-HP targets score lower (prioritized). Distance remains a tie-breaker. Updated test `test_plague_wraith_applies_nature` to account for new targeting by moving other players far away and setting warrior HP to 50%.
+- `prototype/wuthering-terminal/src/systems.rs:417` — fixed enemy AI DijkstraMap passability to include `Tile::Water` alongside `Tile::Grass`. Enemies no longer treat water as impassable. Updated enemy movement to use `map.movement_cost(target_tile)` instead of hardcoded `1` AP per step — water tiles now cost enemies 2 AP to traverse.
+- `prototype/wuthering-terminal/src/lib.rs:1413` — updated `test_plague_wraith_applies_nature` to work with new AI targeting: moves Mage/Healer far away, sets Warrior HP to 50% to ensure it's the priority target and survives the hit (so Nature status can be applied).
+
+**Reasoning.** The telegraph damage bug was the highest-impact fix: Phase 2 boss telegraphs were dealing 50 damage instead of 80, making the boss significantly easier than intended. The Stun and Lifesteal Echo abilities were defined in the enum but never implemented, misleading players who equipped them. The `saves_dir()` extraction eliminates 5x code duplication. The AI targeting heuristic makes enemies tactically smarter — they now focus-fire weakened targets and prioritize healers, instead of always chasing the nearest character. Terrain-aware enemy movement prevents players from exploiting water tiles as impassable barriers for enemies.
+
+**Assumptions.** The healer bonus of -30 means a healer at distance 16 has the same score as a non-healer at distance -14 (impossible), so healers are always prioritized unless another target is much closer and lower HP. The Stun probability of 15% and Lifesteal percentage of 15% match the component doc comments. Water terrain cost of 2 AP for enemies matches the player movement cost.
+
+**Gotchas.** The PlagueWraith test failed twice: first because the Healer's -30 score bonus caused targeting the Healer instead of the Warrior, then because setting warrior HP to 10 caused instant defeat (preventing Nature application via the `!defeated` guard). Setting HP to 50 (50%) ensures the warrior is both prioritized and survives. Borrow checker required extracting ability flags into local booleans before mutable world operations in the Echo ability code.
+
+**Follow-ups.** The `resolve_combat_hit` and `handle_defeat` functions are still duplicated between `game.rs` (method version) and `systems.rs` (free function version). The systems.rs version is more complete (shields, XP, panned audio). Consider delegating the Game method to the systems version. The enemy AI could benefit from flanking behavior (approach from different directions) and retreat logic (retreat when low HP).
+
+## 2026-06-03 - autonomous engine run: test coverage, Display impls, error messages, FixedTime reset
+
+**Goal.** Complete 6 meaningful improvements in one sustained autonomous run:
+add comprehensive test coverage to untested modules, add Display impls for
+debugging, convert unwrap→expect in wuthering-terminal systems, and add
+FixedTime::reset for fixed-timestep lifecycle completeness.
+
+**Changes.**
+- `crates/verryte-input/src/replay.rs` — added 10 unit tests covering
+  `ActionReplayer` (new, with_auto, step, reset, trace reference, finished state),
+  `ReplayRunner` (new, step, fast_forward, reset), `replay_trace` free function,
+  and empty trace edge case. Previously had zero test coverage.
+- `crates/verryte-terminal/src/viewport.rs` — added 8 unit tests covering
+  `TileViewport` (new, world_to_screen, screen_to_world, world-screen roundtrip,
+  visible_tiles clamping, blit_sprite centering, render_layer tile filling,
+  render_layer transparent skip). Previously had zero test coverage.
+- `crates/verryte-terminal/src/sprite.rs` — added 18 unit tests covering
+  `ResolutionTier` (from_size boundaries, tile_dimensions, sprite_size, ALL count),
+  `Frame` (new), `Sprite` (new, tick frame advancement, tick paused, reset,
+  set_frame clamping, with_tier, set_tier fallback, frame_at bounds),
+  `SpriteSheet` (add, get, add replaces by name, remove, tick_all, reset_all,
+  get_mut, iter). Previously had zero test coverage.
+- `crates/verryte-map/src/spatial_hash.rs` — added `Display` impl for
+  `SpatialHash<T>` showing cell_size, bucket count, and total entry count.
+  Added tests for Display output and is_empty in `tests.rs`.
+- `crates/verryte-terminal/src/dialogue.rs` — added `Display` impls for
+  `DialogueTheme` ("Arcane", "Forest", etc.) and `DialogueState` (showing
+  title, visible/total chars, finished status, choice count). Added 3 tests
+  for Display output.
+- `crates/verryte-core/src/clock.rs` — added `FixedTime::reset()` method that
+  clears the accumulator back to `Duration::ZERO`. Added 5 unit tests covering
+  `FixedTime::new`, `consume` returning false on empty, multiple consecutive
+  consumes, `reset`, and equality.
+- `prototype/wuthering-terminal/src/systems.rs` — converted ~20 `unwrap()` calls
+  to `expect()` with descriptive messages across `enemy_ai_system`,
+  `turn_management_system`, `end_player_turn_system`, `resolve_combat_hit`,
+  `handle_defeat`, and `award_xp`. Covers VfxSystem, GameState, Rng,
+  TacticalMap, TelegraphZone, TurnTransition, CharacterClass, Position,
+  ElementalShield, and tile grid access.
+
+**Reasoning.** The replay, viewport, and sprite modules had zero test coverage
+despite being non-trivial public APIs. Replay is core to the agent-ready promise
+(action traces must be reproducible). Viewport is the bridge between world
+coordinates and terminal cells. Sprite/ResolutionTier is the adaptive rendering
+pipeline. Display impls on SpatialHash, DialogueTheme, and DialogueState improve
+debugging and logging ergonomics. FixedTime::reset fills a lifecycle gap where
+games switching scenes or restarting need to clear the accumulator. The
+unwrap→expect conversion makes panic messages in wuthering-terminal's systems
+actionable instead of cryptic "called unwrap() on None" messages.
+
+**Assumptions.** The replay tests use `ActionTrace::from_actions` with a single
+`ActionSource` since the API takes one source for all actions. Camera at (0,0)
+centers the viewport, so world_to_screen(0,0) returns the half-width/height
+offset, not (0,0). FixedTime::reset clears only the accumulator, not the step
+duration.
+
+**Gotchas.** InputRouter::new requires a Bindings argument, not zero args.
+Camera::top_left returns negative coordinates when centering on (0,0) with a
+non-zero viewport size. The `make_frames` helper creates frames with
+`duration + i` durations, making tick advancement non-uniform — uniform-duration
+tests need explicit frame construction.
+
+**Follow-ups.** Consider adding tests for `ActionReplayer` with serde
+roundtrip (requires `serde` feature). The `verryte-audio` crate still has
+minimal test coverage for `AudioPlayer` methods. The remaining ~15 unwrap
+calls in game.rs could be converted to expect in a future pass.

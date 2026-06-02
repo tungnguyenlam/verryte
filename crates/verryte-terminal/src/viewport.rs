@@ -113,3 +113,117 @@ impl TileViewport {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::Cell;
+    use verryte_map::{Point, TileGrid};
+
+    fn make_viewport() -> TileViewport {
+        TileViewport::new(Rect::new(0, 0, 40, 20), 8, 4)
+    }
+
+    #[test]
+    fn viewport_new_sets_fields() {
+        let vp = make_viewport();
+        assert_eq!(vp.rect, Rect::new(0, 0, 40, 20));
+        assert_eq!(vp.tile_w, 8);
+        assert_eq!(vp.tile_h, 4);
+    }
+
+    #[test]
+    fn world_to_screen_at_origin() {
+        // Camera at (0,0) centers viewport, so top_left = (-20, -10)
+        // world_to_screen(0,0) = 0*8 - (-20) = 20, 0*4 - (-10) = 10
+        let vp = make_viewport();
+        let (sx, sy) = vp.world_to_screen(0.0, 0.0);
+        assert_eq!(sx, 20);
+        assert_eq!(sy, 10);
+    }
+
+    #[test]
+    fn world_to_screen_with_tile_offset() {
+        let vp = make_viewport();
+        let (sx, sy) = vp.world_to_screen(2.0, 3.0);
+        // 2*8 + 20 = 36, 3*4 + 10 = 22
+        assert_eq!(sx, 36);
+        assert_eq!(sy, 22);
+    }
+
+    #[test]
+    fn screen_to_world_at_origin() {
+        let vp = make_viewport();
+        let (wx, wy) = vp.screen_to_world(20, 10);
+        assert!((wx - 0.0).abs() < 0.1);
+        assert!((wy - 0.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn world_screen_roundtrip() {
+        let vp = make_viewport();
+        let (sx, sy) = vp.world_to_screen(3.0, 5.0);
+        let (wx, wy) = vp.screen_to_world(sx, sy);
+        assert!((wx - 3.0).abs() < 0.1);
+        assert!((wy - 5.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn visible_tiles_clamps_to_map() {
+        let vp = make_viewport();
+        let (x1, y1, x2, y2) = vp.visible_tiles(3, 3);
+        assert_eq!(x1, 0);
+        assert_eq!(y1, 0);
+        assert_eq!(x2, 3);
+        assert_eq!(y2, 3);
+    }
+
+    #[test]
+    fn blit_sprite_centers_in_tile() {
+        let vp = make_viewport();
+        let mut screen = Grid::new(40, 20);
+        let sprite = Grid::new(4, 2);
+        vp.blit_sprite(&mut screen, 0.0, 0.0, &sprite);
+        // Should not panic
+    }
+
+    #[test]
+    fn render_layer_fills_tiles() {
+        let vp = make_viewport();
+        let mut screen = Grid::new(40, 20);
+        let mut layer: TileGrid<bool> = TileGrid::new(3, 3, false);
+        layer.set(Point::new(0, 0), true);
+        layer.set(Point::new(1, 1), true);
+
+        vp.render_layer(&mut screen, &layer, |&val| {
+            if val {
+                Cell::new('#')
+            } else {
+                Cell::new('.')
+            }
+        });
+
+        // Tile (0,0) maps to screen (20, 10) which is within 40x20 grid
+        let cell = screen.get(20, 10).unwrap();
+        assert_eq!(cell.glyph, '#');
+
+        // Tile (1,1) maps to screen (28, 14) which is within 40x20 grid
+        let cell = screen.get(28, 14).unwrap();
+        assert_eq!(cell.glyph, '#');
+    }
+
+    #[test]
+    fn render_layer_skips_transparent() {
+        let vp = make_viewport();
+        let mut screen = Grid::new(40, 20);
+        // Place marker at tile (0,0) screen location
+        screen.put(20, 10, Cell::new('X'));
+        let layer: TileGrid<bool> = TileGrid::new(2, 2, false);
+
+        vp.render_layer(&mut screen, &layer, |_| Cell::EMPTY);
+
+        // EMPTY cells are transparent, should not overwrite
+        let cell = screen.get(20, 10).unwrap();
+        assert_eq!(cell.glyph, 'X');
+    }
+}

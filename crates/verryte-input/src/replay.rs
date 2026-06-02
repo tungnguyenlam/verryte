@@ -125,3 +125,167 @@ pub fn replay_trace<A: Clone>(trace: &ActionTrace<A>, router: &mut InputRouter<A
         router.inject_from(step.action.clone(), step.source);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::ActionSource;
+    use crate::bindings::Bindings;
+    use crate::router::InputRouter;
+    use crate::trace::ActionTrace;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Act {
+        A,
+        B,
+        C,
+    }
+
+    fn make_trace() -> ActionTrace<Act> {
+        ActionTrace::from_actions(vec![Act::A, Act::B, Act::C], ActionSource::Script)
+    }
+
+    #[test]
+    fn action_replayer_new_starts_at_zero() {
+        let r = ActionReplayer::new(make_trace());
+        assert_eq!(r.current_index(), 0);
+        assert_eq!(r.total_steps(), 3);
+        assert!(!r.is_finished());
+    }
+
+    #[test]
+    fn action_replayer_with_auto_sets_flag() {
+        let r = ActionReplayer::new(make_trace()).with_auto();
+        assert!(r.auto_advance);
+    }
+
+    #[test]
+    fn action_replayer_step_feeds_into_router() {
+        let trace = make_trace();
+        let mut replayer = ActionReplayer::new(trace);
+        let mut router: InputRouter<Act> = InputRouter::new(Bindings::new());
+
+        assert!(replayer.step(&mut router));
+        assert_eq!(replayer.current_index(), 1);
+        let action = router.pop_action().unwrap();
+        assert_eq!(action.action, Act::A);
+        assert_eq!(action.source, ActionSource::Script);
+
+        assert!(replayer.step(&mut router));
+        assert_eq!(replayer.current_index(), 2);
+        let action = router.pop_action().unwrap();
+        assert_eq!(action.action, Act::B);
+        assert_eq!(action.source, ActionSource::Script);
+
+        assert!(replayer.step(&mut router));
+        assert_eq!(replayer.current_index(), 3);
+        assert!(replayer.is_finished());
+
+        assert!(!replayer.step(&mut router));
+    }
+
+    #[test]
+    fn action_replayer_reset_returns_to_start() {
+        let trace = make_trace();
+        let mut replayer = ActionReplayer::new(trace);
+        let mut router: InputRouter<Act> = InputRouter::new(Bindings::new());
+
+        replayer.step(&mut router);
+        replayer.step(&mut router);
+        assert_eq!(replayer.current_index(), 2);
+
+        replayer.reset();
+        assert_eq!(replayer.current_index(), 0);
+        assert!(!replayer.is_finished());
+    }
+
+    #[test]
+    fn action_replayer_trace_returns_reference() {
+        let trace = make_trace();
+        let replayer = ActionReplayer::new(trace);
+        assert_eq!(replayer.trace().len(), 3);
+    }
+
+    #[test]
+    fn replay_runner_new_starts_at_zero() {
+        let runner = ReplayRunner::new(make_trace());
+        assert_eq!(runner.current_step(), 0);
+        assert_eq!(runner.total_steps(), 3);
+        assert!(!runner.is_finished());
+    }
+
+    #[test]
+    fn replay_runner_step_feeds_into_router() {
+        let trace = make_trace();
+        let mut runner = ReplayRunner::new(trace);
+        let mut router: InputRouter<Act> = InputRouter::new(Bindings::new());
+
+        assert!(runner.step(&mut router));
+        assert_eq!(runner.current_step(), 1);
+        let action = router.pop_action().unwrap();
+        assert_eq!(action.action, Act::A);
+
+        assert!(runner.step(&mut router));
+        assert!(runner.step(&mut router));
+        assert!(runner.is_finished());
+        assert!(!runner.step(&mut router));
+    }
+
+    #[test]
+    fn replay_runner_fast_forward_drains_all() {
+        let trace = make_trace();
+        let mut runner = ReplayRunner::new(trace);
+        let mut router: InputRouter<Act> = InputRouter::new(Bindings::new());
+
+        runner.fast_forward(&mut router);
+        assert!(runner.is_finished());
+        assert_eq!(runner.current_step(), 3);
+        assert_eq!(router.pending(), 3);
+    }
+
+    #[test]
+    fn replay_runner_reset_returns_to_start() {
+        let trace = make_trace();
+        let mut runner = ReplayRunner::new(trace);
+        let mut router: InputRouter<Act> = InputRouter::new(Bindings::new());
+
+        runner.fast_forward(&mut router);
+        assert!(runner.is_finished());
+
+        runner.reset();
+        assert_eq!(runner.current_step(), 0);
+        assert!(!runner.is_finished());
+    }
+
+    #[test]
+    fn replay_trace_feeds_all_actions() {
+        let trace = make_trace();
+        let mut router: InputRouter<Act> = InputRouter::new(Bindings::new());
+        replay_trace(&trace, &mut router);
+        assert_eq!(router.pending(), 3);
+
+        let a1 = router.pop_action().unwrap();
+        assert_eq!(a1.action, Act::A);
+        let a2 = router.pop_action().unwrap();
+        assert_eq!(a2.action, Act::B);
+        let a3 = router.pop_action().unwrap();
+        assert_eq!(a3.action, Act::C);
+    }
+
+    #[test]
+    fn replay_empty_trace_is_noop() {
+        let trace = ActionTrace::<Act>::from_actions(vec![], ActionSource::Script);
+        let mut replayer = ActionReplayer::new(trace.clone());
+        let mut runner = ReplayRunner::new(trace.clone());
+        let mut router: InputRouter<Act> = InputRouter::new(Bindings::new());
+
+        assert!(replayer.is_finished());
+        assert!(!replayer.step(&mut router));
+
+        assert!(runner.is_finished());
+        assert!(!runner.step(&mut router));
+
+        replay_trace(&trace, &mut router);
+        assert_eq!(router.pending(), 0);
+    }
+}

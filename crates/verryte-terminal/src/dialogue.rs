@@ -12,6 +12,18 @@ pub enum DialogueTheme {
     Dungeon,
 }
 
+impl std::fmt::Display for DialogueTheme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Arcane => write!(f, "Arcane"),
+            Self::Forest => write!(f, "Forest"),
+            Self::Blood => write!(f, "Blood"),
+            Self::Frost => write!(f, "Frost"),
+            Self::Dungeon => write!(f, "Dungeon"),
+        }
+    }
+}
+
 /// A UI widget for rendering interactive dialogue boxes.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -232,6 +244,20 @@ impl DialogueState {
     }
 }
 
+impl std::fmt::Display for DialogueState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Dialogue({:?}: {:.0}/{:.0} chars, finished={}, choices={})",
+            self.title,
+            self.visible_chars,
+            self.text.len() as f32,
+            self.finished,
+            self.choices.len()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,5 +385,30 @@ mod tests {
             let b = DialogueBox::new(Rect::new(0, 0, 10, 5)).with_theme(theme);
             assert_ne!(b.border_color, Color::BLACK);
         }
+    }
+
+    #[test]
+    fn test_dialogue_theme_display() {
+        assert_eq!(DialogueTheme::Arcane.to_string(), "Arcane");
+        assert_eq!(DialogueTheme::Forest.to_string(), "Forest");
+        assert_eq!(DialogueTheme::Blood.to_string(), "Blood");
+        assert_eq!(DialogueTheme::Frost.to_string(), "Frost");
+        assert_eq!(DialogueTheme::Dungeon.to_string(), "Dungeon");
+    }
+
+    #[test]
+    fn test_dialogue_state_display() {
+        let state = DialogueState::new("Greeting", "Hello world");
+        let s = format!("{state}");
+        assert!(s.contains("Greeting"));
+        assert!(s.contains("finished=false"));
+        assert!(s.contains("choices=0"));
+    }
+
+    #[test]
+    fn test_dialogue_state_display_with_choices() {
+        let state = DialogueState::new("Q", "Pick one").with_choices(vec!["A".into(), "B".into()]);
+        let s = format!("{state}");
+        assert!(s.contains("choices=2"));
     }
 }

@@ -508,16 +508,7 @@ fn flood_fill4_stops_at_boundaries() {
 
 #[test]
 fn flood_fill8_reaches_diagonals() {
-    let grid = TileGrid::from_vec(
-        3,
-        3,
-        vec![
-            '#', '.', '#',
-            '.', '#', '.',
-            '#', '.', '#',
-        ],
-    )
-    .unwrap();
+    let grid = TileGrid::from_vec(3, 3, vec!['#', '.', '#', '.', '#', '.', '#', '.', '#']).unwrap();
 
     let region4 = grid.flood_fill4(Point::new(1, 0), |_, tile| *tile == '.');
     assert_eq!(region4.len(), 1);
@@ -1162,6 +1153,26 @@ fn spatial_hash_chebyshev_and_euclidean_queries() {
     assert!(euc_nearby2.contains(&1));
     assert!(euc_nearby2.contains(&2));
     assert!(euc_nearby2.contains(&3));
+}
+
+#[test]
+fn spatial_hash_display() {
+    let mut hash = SpatialHash::<u32>::new(5);
+    hash.insert(Point::new(1, 1), 10);
+    hash.insert(Point::new(2, 2), 20);
+    let s = format!("{hash}");
+    assert!(s.contains("cell_size=5"));
+    assert!(s.contains("entries=2"));
+}
+
+#[test]
+fn spatial_hash_is_empty() {
+    let hash = SpatialHash::<u32>::new(5);
+    assert!(hash.is_empty());
+
+    let mut hash2 = SpatialHash::<u32>::new(5);
+    hash2.insert(Point::new(0, 0), 1);
+    assert!(!hash2.is_empty());
 }
 
 #[test]

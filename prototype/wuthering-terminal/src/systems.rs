@@ -75,16 +75,27 @@ pub fn enemy_ai_system(world: &mut World) {
             all_done = false;
 
             let mut nearest_player: Option<(Entity, Position, Stats, CharacterClass)> = None;
-            let mut min_dist = i16::MAX;
+            let mut best_score = i32::MAX;
 
             for (pe, p, team) in world.query2::<Position, Team>() {
                 if *team == Team::Player {
                     let dist = (enemy_pos.x - p.x).abs() + (enemy_pos.y - p.y).abs();
-                    if dist < min_dist {
-                        if let (Some(stats), Some(class)) =
-                            (world.get::<Stats>(pe), world.get::<CharacterClass>(pe))
-                        {
-                            min_dist = dist;
+                    if let (Some(stats), Some(class)) =
+                        (world.get::<Stats>(pe), world.get::<CharacterClass>(pe))
+                    {
+                        let hp_pct = if stats.max_hp > 0 {
+                            (stats.hp * 100) / stats.max_hp
+                        } else {
+                            0
+                        };
+                        let healer_bonus = if *class == CharacterClass::Healer {
+                            -30
+                        } else {
+                            0
+                        };
+                        let score = hp_pct + dist as i32 + healer_bonus;
+                        if score < best_score {
+                            best_score = score;
                             nearest_player = Some((pe, *p, stats.clone(), *class));
                         }
                     }
@@ -93,7 +104,10 @@ pub fn enemy_ai_system(world: &mut World) {
 
             let Some((player_entity, player_pos, player_stats, player_class)) = nearest_player
             else {
-                world.resource_mut::<GameState>().unwrap().outcome = Outcome::Defeat;
+                world
+                    .resource_mut::<GameState>()
+                    .expect("GameState must be registered")
+                    .outcome = Outcome::Defeat;
                 log(
                     world,
                     "[fg:FF3333][b]Defeat![/] All player characters defeated.[/fg]",
@@ -107,12 +121,16 @@ pub fn enemy_ai_system(world: &mut World) {
                 CharacterClass::Boss => 2,
                 _ => 2,
             };
-            if min_dist <= range {
+            let actual_dist =
+                (enemy_pos.x - player_pos.x).abs() + (enemy_pos.y - player_pos.y).abs();
+            if actual_dist <= range {
                 if enemy_class == CharacterClass::CorruptedSpore {
                     // Explode!
                     log(world, "[fg:FF3333][b]Corrupted Spore explodes![/][/fg]");
                     let (ex, ey) = get_tile_center_pixels(world, enemy_pos);
-                    let vfx = world.resource_mut::<VfxSystem>().unwrap();
+                    let vfx = world
+                        .resource_mut::<VfxSystem>()
+                        .expect("VfxSystem must be registered");
                     vfx.particles.extend(verryte_terminal::vfx::emit_burst(
                         ex,
                         ey,
@@ -165,20 +183,34 @@ pub fn enemy_ai_system(world: &mut World) {
 
                 // Boss attack logic
                 let rng_val = {
-                    let rng = world.resource_mut::<Rng>().unwrap();
+                    let rng = world.resource_mut::<Rng>().expect("Rng must be registered");
                     rng.next_u32(100)
                 };
 
                 let telegraph_active = {
-                    let telegraph_zone = world.resource::<TelegraphZone>().unwrap();
+                    let telegraph_zone = world
+                        .resource::<TelegraphZone>()
+                        .expect("TelegraphZone must be registered");
                     !telegraph_zone.tiles.is_empty()
                 };
 
                 let is_phase_2 = {
-                    let state = world.resource::<GameState>().unwrap();
+                    let state = world
+                        .resource::<GameState>()
+                        .expect("GameState must be registered");
                     state.boss_phase == BossPhase::Phase2
                 };
-                let telegraph_rate = if is_phase_2 { 60 } else { 40 };
+                let telegraph_rate = if is_phase_2 {
+                    world
+                        .resource::<crate::components::BossConfig>()
+                        .map(|c| c.telegraph_rate_phase2)
+                        .unwrap_or(60)
+                } else {
+                    world
+                        .resource::<crate::components::BossConfig>()
+                        .map(|c| c.telegraph_rate_phase1)
+                        .unwrap_or(40)
+                };
 
                 if !telegraph_active
                     && enemy_class == CharacterClass::Boss
@@ -211,19 +243,35 @@ pub fn enemy_ai_system(world: &mut World) {
                     }
 
                     let map_w = {
-                        let map = world.resource::<TacticalMap>().unwrap();
+                        let map = world
+                            .resource::<TacticalMap>()
+                            .expect("TacticalMap must be registered");
                         map.width as i16
                     };
                     let map_h = {
-                        let map = world.resource::<TacticalMap>().unwrap();
+                        let map = world
+                            .resource::<TacticalMap>()
+                            .expect("TacticalMap must be registered");
                         map.height as i16
                     };
                     tiles.retain(|p| p.x >= 0 && p.x < map_w && p.y >= 0 && p.y < map_h);
 
-                    let damage = if is_phase_2 { 80 } else { 50 };
+                    let damage = if is_phase_2 {
+                        world
+                            .resource::<crate::components::BossConfig>()
+                            .map(|c| c.telegraph_damage_phase2)
+                            .unwrap_or(80)
+                    } else {
+                        world
+                            .resource::<crate::components::BossConfig>()
+                            .map(|c| c.telegraph_damage_phase1)
+                            .unwrap_or(50)
+                    };
 
                     {
-                        let telegraph_zone = world.resource_mut::<TelegraphZone>().unwrap();
+                        let telegraph_zone = world
+                            .resource_mut::<TelegraphZone>()
+                            .expect("TelegraphZone must be registered");
                         telegraph_zone.tiles = tiles;
                         telegraph_zone.damage = damage;
                     }
@@ -240,7 +288,9 @@ pub fn enemy_ai_system(world: &mut World) {
 
                     // Spawn dark particles
                     let (ex, ey) = get_tile_center_pixels(world, enemy_pos);
-                    let vfx = world.resource_mut::<VfxSystem>().unwrap();
+                    let vfx = world
+                        .resource_mut::<VfxSystem>()
+                        .expect("VfxSystem must be registered");
                     vfx.particles.extend(verryte_terminal::vfx::emit_burst(
                         ex,
                         ey,
@@ -364,7 +414,9 @@ pub fn enemy_ai_system(world: &mut World) {
                     }
                 }
             } else {
-                let map = world.resource::<TacticalMap>().unwrap();
+                let map = world
+                    .resource::<TacticalMap>()
+                    .expect("TacticalMap must be registered");
                 let player_positions: Vec<Position> = world
                     .query2::<Position, Team>()
                     .iter()
@@ -389,8 +441,9 @@ pub fn enemy_ai_system(world: &mut World) {
                         {
                             return false;
                         }
-                        let tile = map.tiles.get(pt).unwrap();
-                        matches!(tile, Tile::Grass) && !is_occupied_except(world, pt, enemy_entity)
+                        let tile = map.tiles.get(pt).expect("point passed bounds check");
+                        matches!(tile, Tile::Grass | Tile::Water)
+                            && !is_occupied_except(world, pt, enemy_entity)
                     },
                     false, // 4-way movement
                 );
@@ -409,11 +462,12 @@ pub fn enemy_ai_system(world: &mut World) {
                 }
 
                 if let Some(target_tile) = best_move {
+                    let move_cost = map.movement_cost(target_tile);
                     if let Some(pos) = world.get_mut::<Position>(enemy_entity) {
                         *pos = target_tile;
                     }
                     if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
-                        stats.ap -= 1;
+                        stats.ap -= move_cost;
                     }
                     let enemy_name = Game::get_class_name(enemy_class);
                     log(
@@ -441,7 +495,7 @@ pub fn enemy_ai_system(world: &mut World) {
     if all_done {
         world
             .resource_mut::<crate::components::TurnTransition>()
-            .unwrap()
+            .expect("TurnTransition must be registered")
             .request_end = true;
     }
 }
@@ -450,7 +504,7 @@ pub fn turn_management_system(world: &mut World) {
     let request_end = {
         let trans = world
             .resource_mut::<crate::components::TurnTransition>()
-            .unwrap();
+            .expect("TurnTransition must be registered");
         let req = trans.request_end;
         trans.request_end = false;
         req
@@ -468,7 +522,9 @@ pub fn turn_management_system(world: &mut World) {
         TurnPhase::Player => {
             // Player -> Enemy
             {
-                let state = world.resource_mut::<GameState>().unwrap();
+                let state = world
+                    .resource_mut::<GameState>()
+                    .expect("GameState must be registered");
                 state.phase = TurnPhase::Enemy;
                 state.selected_entity = None;
             }
@@ -523,7 +579,9 @@ pub fn turn_management_system(world: &mut World) {
                     if let Some(stats) = world.get_mut::<Stats>(e) {
                         stats.ap = 0;
                     }
-                    let class = *world.get::<CharacterClass>(e).unwrap();
+                    let class = *world
+                        .get::<CharacterClass>(e)
+                        .expect("enemy must have CharacterClass");
                     log(
                         world,
                         format!(
@@ -542,11 +600,16 @@ pub fn turn_management_system(world: &mut World) {
         TurnPhase::Enemy => {
             // Enemy -> Player
             {
-                let state = world.resource_mut::<GameState>().unwrap();
+                let state = world
+                    .resource_mut::<GameState>()
+                    .expect("GameState must be registered");
                 state.phase = TurnPhase::Player;
                 state.turn += 1;
             }
-            let turn_num = world.resource::<GameState>().unwrap().turn;
+            let turn_num = world
+                .resource::<GameState>()
+                .expect("GameState must be registered")
+                .turn;
             log(
                 world,
                 format!(
@@ -634,7 +697,9 @@ pub fn turn_management_system(world: &mut World) {
                     if let Some(stats) = world.get_mut::<Stats>(e) {
                         stats.ap = 0;
                     }
-                    let class = *world.get::<CharacterClass>(e).unwrap();
+                    let class = *world
+                        .get::<CharacterClass>(e)
+                        .expect("player must have CharacterClass");
                     log(
                         world,
                         format!(
@@ -664,11 +729,14 @@ pub fn turn_management_system(world: &mut World) {
 
 pub fn end_player_turn_system(world: &mut World) {
     // Execute any telegraphed attacks first!
-    let telegraph_tiles = {
-        let telegraph_zone = world.resource_mut::<TelegraphZone>().unwrap();
+    let (telegraph_tiles, telegraph_damage) = {
+        let telegraph_zone = world
+            .resource_mut::<TelegraphZone>()
+            .expect("TelegraphZone must be registered");
         let tiles = telegraph_zone.tiles.clone();
+        let damage = telegraph_zone.damage;
         telegraph_zone.tiles.clear();
-        tiles
+        (tiles, damage)
     };
 
     if !telegraph_tiles.is_empty() {
@@ -679,7 +747,9 @@ pub fn end_player_turn_system(world: &mut World) {
 
         // VFX feedback!
         {
-            let vfx = world.resource_mut::<VfxSystem>().unwrap();
+            let vfx = world
+                .resource_mut::<VfxSystem>()
+                .expect("VfxSystem must be registered");
             vfx.flashes
                 .push(verryte_terminal::vfx::Flash::full_screen_eased(
                     Color(120, 0, 180),
@@ -704,19 +774,23 @@ pub fn end_player_turn_system(world: &mut World) {
         }
 
         for pe in players_in_zone {
-            let target_class = *world.get::<CharacterClass>(pe).unwrap();
-            let target_pos = *world.get::<Position>(pe).unwrap();
+            let target_class = *world
+                .get::<CharacterClass>(pe)
+                .expect("player must have CharacterClass");
+            let target_pos = *world
+                .get::<Position>(pe)
+                .expect("player must have Position");
             let target_name = Game::get_class_name(target_class);
             let mut final_hp = 0;
             if let Some(stats) = world.get_mut::<Stats>(pe) {
-                stats.hp -= 50; // Fixed high damage
+                stats.hp -= telegraph_damage;
                 final_hp = stats.hp;
             }
             log(
                 world,
                 format!(
-                    "Dark Annihilation hit {} for 50 damage! (HP: {})",
-                    target_name, final_hp
+                    "Dark Annihilation hit {} for {} damage! (HP: {})",
+                    target_name, telegraph_damage, final_hp
                 ),
             );
 
@@ -726,7 +800,7 @@ pub fn end_player_turn_system(world: &mut World) {
                     .abilities
                     .contains(&crate::components::EchoAbility::Thorns)
                 {
-                    let reflect_damage = 5;
+                    let reflect_damage = (telegraph_damage as f32 * 0.1) as i32;
                     let mut boss_ent = None;
                     for (e, class) in world.query::<CharacterClass>() {
                         if *class == CharacterClass::Boss {
@@ -755,7 +829,9 @@ pub fn end_player_turn_system(world: &mut World) {
 
             let (cx, cy) = get_tile_center_pixels(world, target_pos);
             {
-                let vfx = world.resource_mut::<VfxSystem>().unwrap();
+                let vfx = world
+                    .resource_mut::<VfxSystem>()
+                    .expect("VfxSystem must be registered");
                 vfx.floating_texts
                     .push(verryte_terminal::vfx::FloatingText::new_eased(
                         cx,
@@ -781,7 +857,9 @@ pub fn end_player_turn_system(world: &mut World) {
     }
 
     {
-        let state = world.resource_mut::<GameState>().unwrap();
+        let state = world
+            .resource_mut::<GameState>()
+            .expect("GameState must be registered");
         state.phase = TurnPhase::Enemy;
         state.selected_entity = None;
     }
@@ -811,7 +889,9 @@ pub fn award_xp(world: &mut World, amount: u32) {
 
     let mut level_ups = Vec::new();
     for e in players {
-        let class = *world.get::<CharacterClass>(e).unwrap();
+        let class = *world
+            .get::<CharacterClass>(e)
+            .expect("player must have CharacterClass");
         if let Some(stats) = world.get_mut::<Stats>(e) {
             stats.xp += amount;
             let needed = stats.level * 100;
@@ -865,7 +945,7 @@ pub fn resolve_combat_hit(
     pos: Position,
 ) -> (i32, bool) {
     let (is_crit, is_block, damage) = {
-        let rng = world.resource_mut::<Rng>().unwrap();
+        let rng = world.resource_mut::<Rng>().expect("Rng must be registered");
         let roll = rng.next_u32(100);
         if roll < 20 {
             (true, false, (base_damage as f32 * 1.5) as i32)
@@ -926,12 +1006,13 @@ pub fn resolve_combat_hit(
     log(world, log_msg);
 
     if shield_absorbed > 0 {
-        let shield_name = match shield_type_opt.unwrap() {
-            ShieldType::Ice => "[fg:80D0FF]Ice Shield[/fg]",
-            ShieldType::Lightning => "[fg:FFD700]Lightning Shield[/fg]",
-            ShieldType::Nature => "[fg:50DC64]Nature Shield[/fg]",
-            ShieldType::Physical => "[fg:CCCCCC]Physical Shield[/fg]",
-        };
+        let shield_name =
+            match shield_type_opt.expect("shield_type must be set when shield_absorbed > 0") {
+                ShieldType::Ice => "[fg:80D0FF]Ice Shield[/fg]",
+                ShieldType::Lightning => "[fg:FFD700]Lightning Shield[/fg]",
+                ShieldType::Nature => "[fg:50DC64]Nature Shield[/fg]",
+                ShieldType::Physical => "[fg:CCCCCC]Physical Shield[/fg]",
+            };
         if shield_broke {
             log(
                 world,
@@ -978,7 +1059,9 @@ pub fn resolve_combat_hit(
             }
         }
 
-        let vfx = world.resource_mut::<VfxSystem>().unwrap();
+        let vfx = world
+            .resource_mut::<VfxSystem>()
+            .expect("VfxSystem must be registered");
         vfx.floating_texts
             .push(verryte_terminal::vfx::FloatingText::new_eased(
                 tcx,
@@ -990,12 +1073,13 @@ pub fn resolve_combat_hit(
             ));
 
         if shield_absorbed > 0 {
-            let shield_color = match shield_type_opt.unwrap() {
-                ShieldType::Ice => Color(100, 200, 255),
-                ShieldType::Lightning => Color(255, 230, 50),
-                ShieldType::Nature => Color(50, 220, 100),
-                ShieldType::Physical => Color(160, 160, 160),
-            };
+            let shield_color =
+                match shield_type_opt.expect("shield_type must be set when shield_absorbed > 0") {
+                    ShieldType::Ice => Color(100, 200, 255),
+                    ShieldType::Lightning => Color(255, 230, 50),
+                    ShieldType::Nature => Color(50, 220, 100),
+                    ShieldType::Physical => Color(160, 160, 160),
+                };
             vfx.floating_texts
                 .push(verryte_terminal::vfx::FloatingText::new_eased(
                     tcx + 2.0,
@@ -1080,14 +1164,18 @@ pub fn handle_defeat(
             .expect("GameState resource must be registered")
             .boss_phase;
         if phase == BossPhase::Phase1 {
+            let config = world
+                .resource::<crate::components::BossConfig>()
+                .cloned()
+                .unwrap_or_default();
             if let Some(stats) = world.get_mut::<Stats>(entity) {
-                stats.max_hp = 500;
-                stats.hp = 500;
-                stats.atk += 10;
-                stats.def += 5;
-                stats.spd += 2;
-                stats.max_ap = 7;
-                stats.ap = 7;
+                stats.max_hp = config.phase2_max_hp;
+                stats.hp = config.phase2_max_hp;
+                stats.atk += config.phase2_atk_bonus;
+                stats.def += config.phase2_def_bonus;
+                stats.spd += config.phase2_spd_bonus;
+                stats.max_ap = config.phase2_max_ap;
+                stats.ap = config.phase2_max_ap;
             }
 
             if let Some(state) = world.resource_mut::<GameState>() {
@@ -1098,7 +1186,9 @@ pub fn handle_defeat(
 
             let (bx, by) = get_tile_center_pixels(world, pos);
 
-            let vfx = world.resource_mut::<VfxSystem>().unwrap();
+            let vfx = world
+                .resource_mut::<VfxSystem>()
+                .expect("VfxSystem must be registered");
             vfx.particles.extend(verryte_terminal::vfx::emit_burst(
                 bx,
                 by,
@@ -1134,7 +1224,11 @@ pub fn handle_defeat(
     // Award XP if it was an enemy
     if class != CharacterClass::Boss
         || (class == CharacterClass::Boss
-            && world.resource::<GameState>().unwrap().boss_phase == BossPhase::Phase2)
+            && world
+                .resource::<GameState>()
+                .expect("GameState must be registered")
+                .boss_phase
+                == BossPhase::Phase2)
     {
         let xp_amount = match class {
             CharacterClass::Boss => 1000,
@@ -1155,7 +1249,9 @@ pub fn handle_defeat(
 
         // Visual boss death burst
         let (cx, cy) = get_tile_center_pixels(world, pos);
-        let vfx = world.resource_mut::<VfxSystem>().unwrap();
+        let vfx = world
+            .resource_mut::<VfxSystem>()
+            .expect("VfxSystem must be registered");
         vfx.particles.extend(verryte_terminal::vfx::emit_burst(
             cx,
             cy,

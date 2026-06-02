@@ -274,3 +274,219 @@ impl SpriteSheet {
         self.sprites.iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::Grid;
+
+    fn make_frames(n: usize, duration: u32) -> Vec<Frame> {
+        (0..n)
+            .map(|i| Frame::new(Grid::new(2, 2), duration + i as u32))
+            .collect()
+    }
+
+    #[test]
+    fn resolution_tier_from_size_boundaries() {
+        assert_eq!(ResolutionTier::from_size(80, 24), ResolutionTier::SMALL);
+        assert_eq!(ResolutionTier::from_size(79, 24), ResolutionTier::TINY);
+        assert_eq!(ResolutionTier::from_size(80, 23), ResolutionTier::TINY);
+        assert_eq!(ResolutionTier::from_size(100, 30), ResolutionTier::MEDIUM);
+        assert_eq!(ResolutionTier::from_size(120, 36), ResolutionTier::LARGE);
+        assert_eq!(ResolutionTier::from_size(140, 42), ResolutionTier::XLARGE);
+        assert_eq!(ResolutionTier::from_size(160, 48), ResolutionTier::ULTRA);
+        assert_eq!(ResolutionTier::from_size(200, 80), ResolutionTier::ULTRA);
+        assert_eq!(ResolutionTier::from_size(0, 0), ResolutionTier::TINY);
+    }
+
+    #[test]
+    fn resolution_tier_tile_dimensions() {
+        assert_eq!(ResolutionTier::TINY.tile_dimensions(), (6, 3));
+        assert_eq!(ResolutionTier::SMALL.tile_dimensions(), (8, 4));
+        assert_eq!(ResolutionTier::MEDIUM.tile_dimensions(), (12, 6));
+        assert_eq!(ResolutionTier::LARGE.tile_dimensions(), (16, 8));
+        assert_eq!(ResolutionTier::XLARGE.tile_dimensions(), (20, 10));
+        assert_eq!(ResolutionTier::ULTRA.tile_dimensions(), (28, 14));
+    }
+
+    #[test]
+    fn resolution_tier_sprite_size() {
+        assert_eq!(ResolutionTier::TINY.sprite_size(), (6, 4));
+        assert_eq!(ResolutionTier::ULTRA.sprite_size(), (28, 16));
+    }
+
+    #[test]
+    fn resolution_tier_all_contains_six() {
+        assert_eq!(ResolutionTier::ALL.len(), 6);
+    }
+
+    #[test]
+    fn sprite_new_creates_with_default_tier() {
+        let sprite = Sprite::new("idle", make_frames(3, 5));
+        assert_eq!(sprite.name, "idle");
+        assert_eq!(sprite.frame_count(), 3);
+        assert_eq!(sprite.current_index(), 0);
+        assert!(!sprite.is_paused());
+    }
+
+    #[test]
+    fn sprite_tick_advances_frame_after_duration() {
+        let frames = vec![
+            Frame::new(Grid::new(2, 2), 2),
+            Frame::new(Grid::new(2, 2), 3),
+        ];
+        let mut sprite = Sprite::new("walk", frames);
+        assert_eq!(sprite.current_index(), 0);
+
+        assert!(!sprite.tick()); // elapsed=1, duration=2
+        assert_eq!(sprite.current_index(), 0);
+
+        assert!(sprite.tick()); // elapsed=2 >= duration=2, advance
+        assert_eq!(sprite.current_index(), 1);
+
+        assert!(!sprite.tick()); // elapsed=1, duration=3
+        assert!(!sprite.tick()); // elapsed=2
+        assert!(sprite.tick()); // elapsed=3 >= duration=3, wrap to 0
+        assert_eq!(sprite.current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_tick_paused_returns_false() {
+        let mut sprite = Sprite::new("idle", make_frames(2, 1));
+        sprite.toggle_pause();
+        assert!(sprite.is_paused());
+        assert!(!sprite.tick());
+        assert_eq!(sprite.current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_reset_returns_to_first_frame() {
+        let mut sprite = Sprite::new(
+            "idle",
+            vec![
+                Frame::new(Grid::new(2, 2), 1),
+                Frame::new(Grid::new(2, 2), 1),
+                Frame::new(Grid::new(2, 2), 1),
+            ],
+        );
+        sprite.tick(); // 0->1
+        sprite.tick(); // 1->2
+        assert_eq!(sprite.current_index(), 2);
+        sprite.reset();
+        assert_eq!(sprite.current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_set_frame_clamps_to_range() {
+        let mut sprite = Sprite::new("idle", make_frames(3, 1));
+        sprite.set_frame(10);
+        assert_eq!(sprite.current_index(), 2); // clamped to len-1
+        sprite.set_frame(1);
+        assert_eq!(sprite.current_index(), 1);
+    }
+
+    #[test]
+    fn sprite_with_tier_adds_resolution() {
+        let sprite = Sprite::new("idle", make_frames(2, 1))
+            .with_tier(ResolutionTier::ULTRA, make_frames(2, 1));
+        // Should have both default (TINY) and ULTRA
+        let frame = sprite.current_frame_at(ResolutionTier::ULTRA);
+        assert_eq!(frame.width(), 2);
+    }
+
+    #[test]
+    fn sprite_set_tier_falls_back_to_lower() {
+        let sprite = Sprite::new("idle", make_frames(2, 1))
+            .with_tier(ResolutionTier::LARGE, make_frames(2, 1));
+        // No XLARGE tier, should fall back to LARGE
+        let mut s = sprite;
+        s.set_tier(ResolutionTier::XLARGE);
+        // frame_at should still work by falling back
+        assert!(s.frame_at(ResolutionTier::XLARGE, 0).is_some());
+    }
+
+    #[test]
+    fn sprite_frame_at_returns_none_for_out_of_bounds() {
+        let sprite = Sprite::new("idle", make_frames(2, 1));
+        assert!(sprite.frame_at(ResolutionTier::TINY, 5).is_none());
+    }
+
+    #[test]
+    fn sprite_sheet_add_and_get() {
+        let mut sheet = SpriteSheet::new();
+        assert!(sheet.is_empty());
+
+        sheet.add(Sprite::new("idle", make_frames(2, 1)));
+        sheet.add(Sprite::new("walk", make_frames(4, 1)));
+        assert_eq!(sheet.len(), 2);
+
+        assert!(sheet.get("idle").is_some());
+        assert!(sheet.get("walk").is_some());
+        assert!(sheet.get("attack").is_none());
+    }
+
+    #[test]
+    fn sprite_sheet_add_replaces_by_name() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("idle", make_frames(2, 1)));
+        sheet.add(Sprite::new("idle", make_frames(5, 1)));
+        assert_eq!(sheet.len(), 1);
+        assert_eq!(sheet.get("idle").unwrap().frame_count(), 5);
+    }
+
+    #[test]
+    fn sprite_sheet_remove() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("idle", make_frames(2, 1)));
+        assert!(sheet.remove("idle"));
+        assert!(sheet.is_empty());
+        assert!(!sheet.remove("idle"));
+    }
+
+    #[test]
+    fn sprite_sheet_tick_all() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("a", make_frames(2, 1)));
+        sheet.add(Sprite::new("b", make_frames(2, 1)));
+        sheet.tick_all();
+        // Both sprites should have advanced
+        assert_eq!(sheet.get("a").unwrap().current_index(), 1);
+        assert_eq!(sheet.get("b").unwrap().current_index(), 1);
+    }
+
+    #[test]
+    fn sprite_sheet_reset_all() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("a", make_frames(2, 1)));
+        sheet.add(Sprite::new("b", make_frames(2, 1)));
+        sheet.tick_all();
+        sheet.reset_all();
+        assert_eq!(sheet.get("a").unwrap().current_index(), 0);
+        assert_eq!(sheet.get("b").unwrap().current_index(), 0);
+    }
+
+    #[test]
+    fn sprite_sheet_get_mut() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("idle", make_frames(2, 1)));
+        sheet.get_mut("idle").unwrap().toggle_pause();
+        assert!(sheet.get("idle").unwrap().is_paused());
+    }
+
+    #[test]
+    fn sprite_sheet_iter() {
+        let mut sheet = SpriteSheet::new();
+        sheet.add(Sprite::new("a", make_frames(1, 1)));
+        sheet.add(Sprite::new("b", make_frames(1, 1)));
+        let names: Vec<&str> = sheet.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn frame_new_stores_grid_and_duration() {
+        let grid = Grid::new(4, 4);
+        let frame = Frame::new(grid, 10);
+        assert_eq!(frame.duration, 10);
+        assert_eq!(frame.grid.width(), 4);
+    }
+}

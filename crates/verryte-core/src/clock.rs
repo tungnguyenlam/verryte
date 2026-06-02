@@ -192,6 +192,10 @@ impl FixedTime {
             false
         }
     }
+
+    pub fn reset(&mut self) {
+        self.accumulator = Duration::ZERO;
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +342,44 @@ mod tests {
         // Should have some remainder
         assert!(fixed.accumulator > Duration::ZERO);
         assert!(!fixed.consume());
+    }
+
+    #[test]
+    fn fixed_time_new_with_duration() {
+        let fixed = FixedTime::new(Duration::from_millis(100));
+        assert_eq!(fixed.step, Duration::from_millis(100));
+        assert_eq!(fixed.accumulator, Duration::ZERO);
+    }
+
+    #[test]
+    fn fixed_time_consume_returns_false_when_empty() {
+        let mut fixed = FixedTime::from_hz(60.0);
+        assert!(!fixed.consume());
+    }
+
+    #[test]
+    fn fixed_time_consume_multiple_steps() {
+        let mut fixed = FixedTime::new(Duration::from_millis(10));
+        fixed.accumulate(Duration::from_millis(35));
+        assert!(fixed.consume()); // 35-10=25
+        assert!(fixed.consume()); // 25-10=15
+        assert!(fixed.consume()); // 15-10=5
+        assert!(!fixed.consume()); // 5 < 10
+    }
+
+    #[test]
+    fn fixed_time_reset_clears_accumulator() {
+        let mut fixed = FixedTime::from_hz(60.0);
+        fixed.accumulate(Duration::from_millis(100));
+        fixed.reset();
+        assert_eq!(fixed.accumulator, Duration::ZERO);
+        assert!(!fixed.consume());
+    }
+
+    #[test]
+    fn fixed_time_equality() {
+        let a = FixedTime::from_hz(30.0);
+        let b = FixedTime::from_hz(30.0);
+        assert_eq!(a, b);
     }
 }

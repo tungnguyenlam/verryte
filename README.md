@@ -9,13 +9,14 @@ those pieces.
 
 - `crates/verryte-core` - generational entities, component/resource storage,
   event queues, and a minimal ordered schedule. Includes `Query`, `Query2`,
-  and `Query3` iterators (with `ExactSizeIterator` support),
-  `World::query2_iter` / `World::query3_iter` for lazy multi-component
+  `Query3`, `Query4`, `Query5` iterators (with `ExactSizeIterator` support),
+  `World::query2_iter` / `World::query3_iter` / `Query4` / `Query5` for lazy multi-component
   iteration, `World::has_resource` and `World::contains` for safe resource
   and component existence checks, `World::for_each2_mut` / `World::for_each3_mut`
   for mutable two- and three-component iteration, `World::despawn_with` for bulk
   entity removal, `World::retain` for predicate-based entity filtering,
-  `World::query3` for three-component queries, `World::get_or_insert` /
+  `World::query3` / `World::query4` / `World::query5` for multi-component queries,
+  `World::get_or_insert` /
   `World::get_or_insert_with` for lazy component initialization,
   `World::resource_or_insert` / `World::resource_or_insert_with` for lazy
   resource setup,
@@ -33,12 +34,14 @@ those pieces.
   `MessageLog::with_max`, a `Tag` marker component for entity grouping and
   filtering, `Rng` (seeded xorshift64 RNG) for reproducible randomness in
   tests, replays, and procedural generation (including `weighted_pick` for
-  weighted random selection), `GameClock` for tracking elapsed ticks,
-  pause state, and real-time duration, and   `Diagnostics` with `reset()`,
+  weighted random selection),   `GameClock` for tracking elapsed ticks,
+  pause state, and real-time duration, `FixedTime` with `reset()` for fixed-timestep
+  accumulation, `Diagnostics` with `Display`, `reset()`,
   `clear()`, `remove_system()`, per-system `avg_duration()`, `min_duration`,
   `sorted_by_duration()`, `sorted_by_max_duration()`, `sorted_by_avg_duration()`,
   `sorted_by_call_count()`, `system_count()`, `total_calls()`, `total_duration()`,
-  and `snapshot()` for serializable performance summaries. `AudioEvents` type alias for
+  and `snapshot()` for serializable performance summaries, `Schedule` with `Display`,
+  O(1) `entity_count()`, and `Events` with `Clone`. `AudioEvents` type alias for
   ergonomic event channel usage.
   Optional `serde` feature enables `Serialize`/`Deserialize` on `Entity` and `DiagnosticsSnapshot`.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse/scroll
@@ -96,7 +99,7 @@ those pieces.
   `TileGrid::bounding_box_of` with `Bounds` (with `Display`) / `Bounds::clamp_point` plus
   `Bounds::intersects` / `Bounds::intersection` for spatial framing,
   `Rect::contains_rect` for full containment checks, `SpatialHash<T>`
-  for efficient proximity queries on grid-based
+  with `Display` for debug/logging output, for efficient proximity queries on grid-based
   entities, cellular automata cave
   generation
   (`TileGrid::cellular_automata_cave`) for organic procedural maps,
@@ -105,7 +108,8 @@ those pieces.
   `TileGrid::crop` for extracting rectangular sub-regions as new grids.
 - `crates/verryte-terminal` - terminal-cell data structures: colors, cells,
   grids, clipping, borders, line drawing, blitting, viewports, frame diffs,
-  plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string`), HTML
+  plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string` with
+  optimized `write!` rendering), HTML
   output (`Grid::to_html_string`) for web/debug viewing, circle drawing and
   filling (`Grid::draw_circle`, `Grid::fill_circle`), diamond/rhombus shapes
   (`Grid::draw_diamond`, `Grid::fill_diamond`), Unicode box-drawing borders

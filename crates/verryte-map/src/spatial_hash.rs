@@ -28,6 +28,18 @@ pub struct SpatialHash<T> {
     cells: HashMap<(i16, i16), Vec<(Point, T)>>,
 }
 
+impl<T> std::fmt::Display for SpatialHash<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SpatialHash(cell_size={}, cells={}, entries={})",
+            self.cell_size,
+            self.cells.len(),
+            self.len()
+        )
+    }
+}
+
 impl<T> SpatialHash<T> {
     /// Create a new spatial hash with the given cell size.
     ///
