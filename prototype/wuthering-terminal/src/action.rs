@@ -32,6 +32,7 @@ pub enum Action {
     ToggleReplayAuto,
     StepReplay,
     ToggleMinimap,
+    Undo,
 }
 
 impl Action {
@@ -105,6 +106,8 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('R'), Action::StepToSafety);
     b.bind(Key::Char('m'), Action::ToggleMinimap);
     b.bind(Key::Char('M'), Action::ToggleMinimap);
+    b.bind(Key::Char('u'), Action::Undo);
+    b.bind(Key::Char('U'), Action::Undo);
 
     b
 }
@@ -130,6 +133,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("end", Action::EndTurn);
     c.bind_name("autobattle", Action::AutoBattle);
     c.bind_name("safety", Action::StepToSafety);
+    c.bind_name("undo", Action::Undo);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('s', Action::MoveSouth);
@@ -150,6 +154,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('b', Action::AutoBattle);
     c.bind_glyph('r', Action::StepToSafety);
     c.bind_glyph('m', Action::ToggleMinimap);
+    c.bind_glyph('u', Action::Undo);
 
     c
 }
@@ -170,6 +175,10 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
 
     if token == "minimap" || token == "map" {
         return Some(Action::ToggleMinimap);
+    }
+
+    if token == "undo" {
+        return Some(Action::Undo);
     }
 
     if let Some(idx_str) = token.strip_prefix("use:") {

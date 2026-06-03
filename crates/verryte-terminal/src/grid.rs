@@ -2355,4 +2355,29 @@ mod tests {
         assert_eq!(grid.get(1, 1).unwrap().bg, Color::BLACK);
         assert_eq!(grid.get(1, 1).unwrap().attrs, attrs);
     }
+
+    #[test]
+    fn test_grid_html_and_svg() {
+        let mut grid = Grid::new(3, 2);
+        grid.put(
+            0,
+            0,
+            Cell::new('X').with_fg(Color::WHITE).with_bg(Color::BLACK),
+        );
+        grid.put(
+            1,
+            0,
+            Cell::new('<').with_fg(Color::RED).with_bg(Color::GREEN),
+        );
+
+        let html = grid.to_html_string();
+        assert!(html.contains("&lt;"));
+        assert!(html.contains("color:rgb(230,230,230)"));
+        assert!(html.contains("background:rgb(0,0,0)"));
+
+        let svg = grid.to_svg_string();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("&lt;"));
+        assert!(svg.contains("rgb(80,200,120)"));
+    }
 }

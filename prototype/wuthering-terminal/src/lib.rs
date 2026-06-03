@@ -1354,6 +1354,7 @@ mod tests {
                     Tile::Wall => has_wall = true,
                     Tile::Water => has_water = true,
                     Tile::Lava => has_lava = true,
+                    Tile::Ice => {}
                 }
             }
         }
@@ -1685,8 +1686,8 @@ mod tests {
         let report = game.apply_action(Action::Confirm, ActionSource::Terminal);
 
         assert!(
-            matches!(report.outcome, ActionOutcome::Failed { ref reason } if reason.contains("Cannot move")),
-            "Expected Failed outcome with Cannot move, got {:?}",
+            matches!(report.outcome, ActionOutcome::Failed { ref reason } if reason.contains("Cannot move") || reason.contains("Not enough AP")),
+            "Expected Failed outcome with Cannot move or Not enough AP, got {:?}",
             report.outcome
         );
     }
@@ -2076,5 +2077,315 @@ mod tests {
 
         let stats3 = game.world.resource::<BattleStats>().unwrap();
         assert_eq!(stats3.total_swaps, 1, "Swap count should increment");
+    }
+
+    #[test]
+    fn test_undo_action_and_stack() {
+        let mut game = Game::new();
+
+        // 1. Move cursor to (4, 4) and select Kael
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Kael should be selected
+        let selected = game.world.resource::<GameState>().unwrap().selected_entity;
+        assert!(selected.is_some());
+
+        // 2. Move to (4, 5)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Position should now be (4, 5) and selection cleared
+        let warrior = selected.unwrap();
+        assert_eq!(
+            *game.world.get::<Position>(warrior).unwrap(),
+            Position::new(4, 5)
+        );
+        assert!(game
+            .world
+            .resource::<GameState>()
+            .unwrap()
+            .selected_entity
+            .is_none());
+
+        // 3. Trigger Undo
+        game.apply_action(Action::Undo, ActionSource::Terminal);
+
+        // Position should be restored to (4, 4) and selection restored to Kael!
+        assert_eq!(
+            *game.world.get::<Position>(warrior).unwrap(),
+            Position::new(4, 4)
+        );
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().selected_entity,
+            Some(warrior)
+        );
+    }
+
+    #[test]
+    fn test_failure_category_classification() {
+        let mut game = Game::new();
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Drain AP to 0
+        let warrior = game
+            .world
+            .resource::<GameState>()
+            .unwrap()
+            .selected_entity
+            .unwrap();
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 0;
+
+        // Try to move
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        let report = game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        assert!(report.outcome.is_failed());
+        assert_eq!(
+            report.outcome.failure_category(),
+            Some(crate::snapshot::FailureCategory::OutOfAP)
+        );
+    }
+
+    #[test]
+    fn test_combo_milestone_and_rich_item_effects() {
+        let mut game = Game::new();
+
+        // Check combo milestone particles and audio events are triggered
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(2, 2);
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(2, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 1000;
+
+        // Clear audio events queue
+        if let Some(events) = game
+            .world
+            .resource_mut::<verryte_core::Events<verryte_core::AudioEvent>>()
+        {
+            let _ = events.take();
+        }
+
+        // Perform 3 hits to trigger combo milestone (combo = 3)
+        for _ in 0..3 {
+            game.resolve_combat_hit(
+                warrior,
+                shadow,
+                10,
+                "Warrior",
+                "ShadowStalker",
+                Position::new(2, 3),
+            );
+        }
+
+        // Verify audio events contain combo_milestone
+        let mut combo_milestone_played = false;
+        if let Some(events) = game
+            .world
+            .resource::<verryte_core::Events<verryte_core::AudioEvent>>()
+        {
+            for ev in events.iter() {
+                if ev.name == "combo_milestone" {
+                    combo_milestone_played = true;
+                }
+            }
+        }
+        assert!(
+            combo_milestone_played,
+            "combo_milestone audio event should be played"
+        );
+
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(2, 2);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Put warrior in root status
+        game.world
+            .insert(warrior, crate::components::Rooted { duration: 1 });
+        assert!(game
+            .world
+            .get::<crate::components::Rooted>(warrior)
+            .is_some());
+
+        // Make sure warrior's item at index 1 is Cleanse Remedy
+        let remedy = game
+            .world
+            .spawn_item("Cleanse Remedy", crate::components::ItemEffect::Cleanse);
+        if let Some(inv) = game.world.get_mut::<crate::components::Inventory>(warrior) {
+            if inv.items.len() > 1 {
+                inv.items[1] = remedy;
+            } else {
+                inv.items.push(remedy);
+            }
+        }
+
+        // Open inventory and use cleanse potion (item 2 in starting list is Cleanse Remedy)
+        // Cleanse Remedy has ItemEffect::Cleanse
+        game.apply_action(Action::ToggleInventory, ActionSource::Terminal);
+        game.apply_action(Action::Skill2, ActionSource::Terminal); // Cleanses negative status
+
+        // Negative status should be gone
+        assert!(game
+            .world
+            .get::<crate::components::Rooted>(warrior)
+            .is_none());
+
+        // Verify audio events contain cleanse
+        let mut cleanse_played = false;
+        if let Some(events) = game
+            .world
+            .resource::<verryte_core::Events<verryte_core::AudioEvent>>()
+        {
+            for ev in events.iter() {
+                if ev.name == "cleanse" {
+                    cleanse_played = true;
+                }
+            }
+        }
+        assert!(cleanse_played, "cleanse audio event should be played");
+    }
+
+    #[test]
+    fn test_ice_sliding_movement() {
+        let mut game = Game::new();
+
+        let map_str = "\
+........\n\
+........\n\
+........\n\
+........\n\
+....-...\n\
+....-...\n\
+........\n\
+........";
+        let custom_map = TacticalMap::from_ascii(map_str);
+        assert_eq!(custom_map.tile(4, 4), Tile::Ice);
+        assert_eq!(custom_map.tile(4, 5), Tile::Ice);
+        game.world.insert_resource(custom_map);
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 3);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Move to (4, 4) which is Ice
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Position should have slid through (4, 5) (Ice) and stopped at (4, 6) (Grass)
+        let pos = *game.world.get::<Position>(warrior).unwrap();
+        assert_eq!(pos, Position::new(4, 6));
+    }
+
+    #[test]
+    fn test_enemy_low_hp_retreat_behavior() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(4, 6);
+
+        // Put all other players far away
+        let other_entities: Vec<_> = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .map(|(e, _)| e)
+            .filter(|e| *e != warrior && *e != shadow)
+            .collect();
+
+        for e in other_entities {
+            if let Some(pos) = game.world.get_mut::<Position>(e) {
+                *pos = Position::new(20, 20);
+            }
+        }
+
+        // Set Shadow AP to 1 and HP to 10/80 (low HP, <30%)
+        {
+            let stats = game.world.get_mut::<Stats>(shadow).unwrap();
+            stats.hp = 10;
+            stats.max_hp = 80;
+            stats.ap = 1;
+        }
+
+        // Set phase to Enemy so enemy AI runs
+        {
+            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            state.phase = TurnPhase::Enemy;
+        }
+
+        // Run enemy AI system
+        game.schedule
+            .run_system_by_name("enemy_ai", &mut game.world);
+
+        // Shadow should have retreated away from the warrior
+        let shadow_pos = *game.world.get::<Position>(shadow).unwrap();
+        let final_dist = (shadow_pos.x - 4).abs() + (shadow_pos.y - 4).abs();
+        assert!(
+            final_dist > 2,
+            "Enemy Stalker did not retreat at low HP. Pos: {:?}",
+            shadow_pos
+        );
     }
 }

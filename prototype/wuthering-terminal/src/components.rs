@@ -265,3 +265,8 @@ pub struct BattleStats {
     pub max_combo_reached: u32,
     pub total_swaps: u32,
 }
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct UndoStack {
+    pub states: Vec<String>,
+}

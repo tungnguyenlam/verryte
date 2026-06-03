@@ -79,6 +79,7 @@ impl Game {
         world.insert_resource(GameClock::new());
         world.insert_resource(Rng::seed(1));
         world.insert_resource(Events::<GameEvent>::with_capacity(16));
+        world.insert_resource(Events::<verryte_core::AudioEvent>::new());
         world.insert_resource(MessageLog::with_max(50));
         world.insert_resource(verryte_input::ActionHistory::<Action>::default());
         world.insert_resource(verryte_terminal::vfx::VfxSystem::new());
@@ -89,6 +90,7 @@ impl Game {
         world.insert_resource(crate::components::BossConfig::default());
         world.insert_resource(verryte_core::Diagnostics::new());
         world.insert_resource(BattleStats::default());
+        world.insert_resource(crate::components::UndoStack::default());
 
         let mut registry = VisualRegistry::new();
         crate::generated_assets::register_assets(&mut registry);
@@ -346,6 +348,28 @@ impl Game {
                 if let Some(state) = self.world.resource_mut::<GameState>() {
                     state.concert_energy = (state.concert_energy + 10).min(100);
                     self.log("[fg:FFD700]Combo Bonus! Gained +10 Concert Energy.[/fg]".to_string());
+                }
+
+                // Combo Milestone VFX and Audio
+                self.vfx_mut()
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(0.3, 1.5));
+                self.vfx_mut().trigger_flash(Color(255, 215, 0), 0.2);
+                let (tcx, tcy) = self.get_tile_center_pixels(pos);
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        tcx,
+                        tcy,
+                        18,
+                        Color(255, 215, 0),
+                        &['*', '✦', '✧'],
+                    ));
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
+                    events.send(verryte_core::AudioEvent::play("combo_milestone"));
                 }
             }
         }
@@ -645,7 +669,8 @@ impl Game {
             pos,
             target,
             |pt, tile| {
-                matches!(tile, Tile::Grass | Tile::Water | Tile::Lava) && !occupied.contains(&pt)
+                matches!(tile, Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice)
+                    && !occupied.contains(&pt)
             },
             |_from, _to, tile| match tile {
                 Tile::Water | Tile::Lava => 2,
@@ -1724,6 +1749,12 @@ impl Game {
                         healing: 0,
                     });
                 }
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
+                    events.send(verryte_core::AudioEvent::play("shatter"));
+                }
 
                 if let Some(status) = self
                     .world
@@ -1792,6 +1823,12 @@ impl Game {
                         damage: bonus_damage,
                         healing: 0,
                     });
+                }
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
+                    events.send(verryte_core::AudioEvent::play("overgrowth"));
                 }
 
                 if let Some(status) = self
@@ -1879,6 +1916,12 @@ impl Game {
                         healing: healing_amount,
                     });
                 }
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
+                    events.send(verryte_core::AudioEvent::play("bloom"));
+                }
 
                 if let Some(status) = self
                     .world
@@ -1935,6 +1978,70 @@ impl Game {
             .resource::<MessageLog>()
             .map(|l| l.len())
             .unwrap_or(0);
+
+        if matches!(action, Action::Undo) {
+            let popped_state = if let Some(mut stack) =
+                self.world.resource_mut::<crate::components::UndoStack>()
+            {
+                stack.states.pop()
+            } else {
+                None
+            };
+            if let Some(state_bytes) = popped_state {
+                if self.load_state(&state_bytes).is_ok() {
+                    self.log("Undo successful: Restored previous state.");
+                } else {
+                    self.log("Failed to load undo state.");
+                }
+            } else {
+                self.log("Nothing to undo!");
+            }
+            self.last_outcome = ActionOutcome::StateUpdated;
+            return crate::snapshot::StepReport {
+                action,
+                source,
+                before,
+                after: self.snapshot(),
+                events: Vec::new(),
+                diagnostics: std::collections::HashMap::new(),
+                outcome: ActionOutcome::StateUpdated,
+            };
+        }
+
+        let is_undoable = !matches!(
+            action,
+            Action::Undo
+                | Action::Save
+                | Action::Load
+                | Action::Quit
+                | Action::ToggleRecording
+                | Action::ToggleReplay
+                | Action::ToggleReplayAuto
+                | Action::StepReplay
+                | Action::TogglePerf
+                | Action::ToggleMinimap
+        );
+
+        let phase_current = self
+            .world
+            .resource::<GameState>()
+            .map(|s| s.phase)
+            .unwrap_or(TurnPhase::Player);
+        if is_undoable && phase_current == TurnPhase::Player {
+            let state_bytes = self.save_state().unwrap_or_default();
+            if let Some(mut stack) = self.world.resource_mut::<crate::components::UndoStack>() {
+                stack.states.push(state_bytes);
+                if stack.states.len() > 10 {
+                    stack.states.remove(0);
+                }
+            }
+        }
+
+        if matches!(action, Action::EndTurn) {
+            if let Some(mut stack) = self.world.resource_mut::<crate::components::UndoStack>() {
+                stack.states.clear();
+            }
+        }
 
         // Record action history
         let (turn, phase, time) = {
@@ -2613,110 +2720,191 @@ impl Game {
                             }
                         }
                     } else {
-                        let reachable = self.get_reachable_tiles(sel_entity);
-                        if reachable.contains(&cursor) {
-                            if let Some(path) = self.get_path_to(sel_entity, cursor) {
-                                let (total_cost, dest_tile) = {
-                                    let map = self.world.resource::<TacticalMap>().unwrap();
-                                    let total_cost: i32 =
-                                        path.iter().skip(1).map(|p| map.movement_cost(*p)).sum();
-                                    let dest_tile = map.tile(cursor.x, cursor.y);
-                                    (total_cost, dest_tile)
-                                };
-                                let mut ap_ok = false;
-                                if let Some(sel_stats) = self.world.get_mut::<Stats>(sel_entity) {
-                                    if sel_stats.ap >= total_cost {
-                                        sel_stats.ap -= total_cost;
-                                        ap_ok = true;
-                                    }
-                                }
-                                if ap_ok {
-                                    let from_pos = *self.world.get::<Position>(sel_entity).unwrap();
-                                    if let Some(pos) = self.world.get_mut::<Position>(sel_entity) {
-                                        *pos = cursor;
-                                    }
-                                    let sel_class =
-                                        *self.world.get::<CharacterClass>(sel_entity).unwrap();
-                                    let char_name = Self::get_class_name(sel_class);
-                                    self.log(format!(
-                                        "{} moved to ({}, {}) spending {} AP.",
-                                        char_name, cursor.x, cursor.y, total_cost
-                                    ));
-
-                                    // Spawn movement particles
-                                    let (tcx, tcy) = self.get_tile_center_pixels(cursor);
-                                    self.vfx_mut()
-                                        .particles
-                                        .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 5));
-
-                                    if let Some(log) =
-                                        self.world.resource_mut::<Events<GameEvent>>()
+                        let mut has_ap = true;
+                        if let Some(stats) = self.world.get::<Stats>(sel_entity) {
+                            if stats.ap <= 0 {
+                                has_ap = false;
+                            }
+                        }
+                        if !has_ap {
+                            self.log("Not enough AP to move there!");
+                        } else {
+                            let reachable = self.get_reachable_tiles(sel_entity);
+                            if reachable.contains(&cursor) {
+                                if let Some(path) = self.get_path_to(sel_entity, cursor) {
+                                    let (total_cost, dest_tile) = {
+                                        let map = self.world.resource::<TacticalMap>().unwrap();
+                                        let total_cost: i32 = path
+                                            .iter()
+                                            .skip(1)
+                                            .map(|p| map.movement_cost(*p))
+                                            .sum();
+                                        let dest_tile = map.tile(cursor.x, cursor.y);
+                                        (total_cost, dest_tile)
+                                    };
+                                    let mut ap_ok = false;
+                                    if let Some(sel_stats) = self.world.get_mut::<Stats>(sel_entity)
                                     {
-                                        log.send(GameEvent::Moved {
-                                            entity: sel_entity,
-                                            from: from_pos,
-                                            to: cursor,
-                                        });
+                                        if sel_stats.ap >= total_cost {
+                                            sel_stats.ap -= total_cost;
+                                            ap_ok = true;
+                                        }
                                     }
+                                    if ap_ok {
+                                        let from_pos =
+                                            *self.world.get::<Position>(sel_entity).unwrap();
 
-                                    // Check for Lava damage on player movement
-                                    if dest_tile == Tile::Lava {
-                                        let mut final_hp = 0;
-                                        let mut defeated = false;
-                                        if let Some(stats) = self.world.get_mut::<Stats>(sel_entity)
-                                        {
-                                            stats.hp = std::cmp::max(0, stats.hp - 20);
-                                            final_hp = stats.hp;
-                                            if stats.hp <= 0 {
-                                                defeated = true;
+                                        // Ice slide logic
+                                        let mut final_dest = cursor;
+                                        let occupied: Vec<Position> = self
+                                            .world
+                                            .query2::<Position, Team>()
+                                            .iter()
+                                            .filter(|(e, _, _)| *e != sel_entity)
+                                            .map(|(_, p, _)| **p)
+                                            .collect();
+                                        if dest_tile == Tile::Ice {
+                                            if path.len() >= 2 {
+                                                let p_last = path[path.len() - 1];
+                                                let p_prev = path[path.len() - 2];
+                                                let dx = p_last.x - p_prev.x;
+                                                let dy = p_last.y - p_prev.y;
+
+                                                let mut curr = cursor;
+                                                let map =
+                                                    self.world.resource::<TacticalMap>().unwrap();
+                                                loop {
+                                                    let next_pt =
+                                                        Position::new(curr.x + dx, curr.y + dy);
+                                                    if next_pt.x < 0
+                                                        || next_pt.x >= map.width as i16
+                                                        || next_pt.y < 0
+                                                        || next_pt.y >= map.height as i16
+                                                    {
+                                                        break;
+                                                    }
+                                                    if occupied.contains(&next_pt) {
+                                                        break;
+                                                    }
+                                                    let next_tile = map.tile(next_pt.x, next_pt.y);
+                                                    if next_tile == Tile::Wall {
+                                                        break;
+                                                    }
+                                                    curr = next_pt;
+                                                    if next_tile != Tile::Ice {
+                                                        break;
+                                                    }
+                                                }
+                                                final_dest = curr;
                                             }
                                         }
+
+                                        if let Some(pos) =
+                                            self.world.get_mut::<Position>(sel_entity)
+                                        {
+                                            *pos = final_dest;
+                                        }
+                                        let sel_class =
+                                            *self.world.get::<CharacterClass>(sel_entity).unwrap();
+                                        let char_name = Self::get_class_name(sel_class);
                                         self.log(format!(
-                                            "{} stepped into LAVA and took 20 damage! (HP: {})",
-                                            char_name, final_hp
+                                            "{} moved to ({}, {}) spending {} AP.",
+                                            char_name, cursor.x, cursor.y, total_cost
                                         ));
 
-                                        // Spawn fire/lava particles
-                                        let (tcx, tcy) = self.get_tile_center_pixels(cursor);
-                                        self.vfx_mut().particles.extend(
-                                            verryte_terminal::vfx::emit_burst(
-                                                tcx,
-                                                tcy,
-                                                15,
-                                                Color(255, 60, 0),
-                                                &['*', '·', '✦'],
-                                            ),
-                                        );
-                                        self.vfx_mut().shakes.push(
-                                            verryte_terminal::vfx::ScreenShake::new_eased(
-                                                1.5,
-                                                0.3,
-                                                verryte_terminal::vfx::EasingMode::QuadOut,
-                                            ),
-                                        );
-
-                                        if defeated {
-                                            self.handle_defeat(
-                                                sel_entity,
-                                                char_name,
-                                                sel_class,
-                                                cursor,
+                                        if final_dest != cursor {
+                                            self.log(format!(
+                                                "Ice slide! Slid to ({}, {}).",
+                                                final_dest.x, final_dest.y
+                                            ));
+                                            let (tcx, tcy) =
+                                                self.get_tile_center_pixels(final_dest);
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_burst(
+                                                    tcx,
+                                                    tcy,
+                                                    15,
+                                                    Color(150, 220, 255),
+                                                    &['*', '✦', '·'],
+                                                ),
                                             );
                                         }
+
+                                        // Spawn movement particles
+                                        let (tcx, tcy) = self.get_tile_center_pixels(final_dest);
+                                        self.vfx_mut()
+                                            .particles
+                                            .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 5));
+
+                                        if let Some(log) =
+                                            self.world.resource_mut::<Events<GameEvent>>()
+                                        {
+                                            log.send(GameEvent::Moved {
+                                                entity: sel_entity,
+                                                from: from_pos,
+                                                to: final_dest,
+                                            });
+                                        }
+
+                                        let map = self.world.resource::<TacticalMap>().unwrap();
+                                        let final_dest_tile = map.tile(final_dest.x, final_dest.y);
+                                        // Check for Lava damage on player movement
+                                        if final_dest_tile == Tile::Lava {
+                                            let mut final_hp = 0;
+                                            let mut defeated = false;
+                                            if let Some(stats) =
+                                                self.world.get_mut::<Stats>(sel_entity)
+                                            {
+                                                stats.hp = std::cmp::max(0, stats.hp - 20);
+                                                final_hp = stats.hp;
+                                                if stats.hp <= 0 {
+                                                    defeated = true;
+                                                }
+                                            }
+                                            self.log(format!(
+                                                "{} stepped into LAVA and took 20 damage! (HP: {})",
+                                                char_name, final_hp
+                                            ));
+
+                                            // Spawn fire/lava particles
+                                            let (tcx, tcy) = self.get_tile_center_pixels(cursor);
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_burst(
+                                                    tcx,
+                                                    tcy,
+                                                    15,
+                                                    Color(255, 60, 0),
+                                                    &['*', '·', '✦'],
+                                                ),
+                                            );
+                                            self.vfx_mut().shakes.push(
+                                                verryte_terminal::vfx::ScreenShake::new_eased(
+                                                    1.5,
+                                                    0.3,
+                                                    verryte_terminal::vfx::EasingMode::QuadOut,
+                                                ),
+                                            );
+
+                                            if defeated {
+                                                self.handle_defeat(
+                                                    sel_entity, char_name, sel_class, cursor,
+                                                );
+                                            }
+                                        }
+
+                                        self.try_absorb_echo(cursor);
+
+                                        self.world
+                                            .resource_mut::<GameState>()
+                                            .unwrap()
+                                            .selected_entity = None;
+                                    } else {
+                                        self.log("Not enough AP to move there!");
                                     }
-
-                                    self.try_absorb_echo(cursor);
-
-                                    self.world
-                                        .resource_mut::<GameState>()
-                                        .unwrap()
-                                        .selected_entity = None;
-                                } else {
-                                    self.log("Not enough AP to move there!");
                                 }
+                            } else {
+                                self.log("Cannot move to that tile!");
                             }
-                        } else {
-                            self.log("Cannot move to that tile!");
                         }
                     }
                 } else {
@@ -2852,6 +3040,12 @@ impl Game {
                                             self.vfx_mut().particles.extend(
                                                 verryte_terminal::vfx::emit_heal(tcx, tcy, 20),
                                             );
+                                            if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events.send(verryte_core::AudioEvent::play("heal"));
+                                            }
                                         }
                                     }
                                     crate::components::ItemEffect::ReplenishAp(amount) => {
@@ -2859,6 +3053,26 @@ impl Game {
                                             stats.ap =
                                                 std::cmp::min(stats.max_ap, stats.ap + amount);
                                             self.log(format!("Replenished {} AP.", amount));
+                                            let (tcx, tcy) = self.get_tile_center_pixels(
+                                                *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_burst(
+                                                    tcx,
+                                                    tcy,
+                                                    12,
+                                                    Color(255, 255, 100),
+                                                    &['+', '⚡'],
+                                                ),
+                                            );
+                                            if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events.send(verryte_core::AudioEvent::play(
+                                                    "replenish_ap",
+                                                ));
+                                            }
                                         }
                                     }
                                     crate::components::ItemEffect::Cleanse => {
@@ -2869,6 +3083,19 @@ impl Game {
                                         self.world.remove::<crate::components::Rooted>(entity);
                                         self.world.remove::<crate::components::Stunned>(entity);
                                         self.log("All negative statuses cleansed!");
+                                        let (tcx, tcy) = self.get_tile_center_pixels(
+                                            *self.world.get::<Position>(entity).unwrap(),
+                                        );
+                                        self.vfx_mut().particles.extend(
+                                            verryte_terminal::vfx::emit_bloom(tcx, tcy, 18),
+                                        );
+                                        self.vfx_mut().trigger_flash(Color(100, 255, 100), 0.25);
+                                        if let Some(events) = self
+                                            .world
+                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                        {
+                                            events.send(verryte_core::AudioEvent::play("cleanse"));
+                                        }
                                     }
                                     crate::components::ItemEffect::RestoreShield(
                                         shield_type,
@@ -2892,6 +3119,12 @@ impl Game {
                                         self.vfx_mut()
                                             .particles
                                             .extend(verryte_terminal::vfx::emit_ice(tcx, tcy, 15));
+                                        if let Some(events) = self
+                                            .world
+                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                        {
+                                            events.send(verryte_core::AudioEvent::play("shield"));
+                                        }
                                     }
                                 }
 
@@ -3410,6 +3643,7 @@ impl Game {
                     Tile::Wall => Color(60, 60, 60),
                     Tile::Water => Color(30, 30, 100),
                     Tile::Lava => Color(120, 20, 10),
+                    Tile::Ice => Color(100, 180, 200),
                 };
 
                 if matches!(vis, verryte_map::Visibility::Explored) {
@@ -3446,8 +3680,13 @@ impl Game {
                                     }
                                 }
                                 _ => {
+                                    let is_ice = matches!(tile, Tile::Ice);
                                     if dx == 0 || dy == 0 {
-                                        '·'
+                                        if is_ice {
+                                            '-'
+                                        } else {
+                                            '·'
+                                        }
                                     } else {
                                         ' '
                                     }
@@ -3456,6 +3695,7 @@ impl Game {
                             let mut fg = match tile {
                                 Tile::Water => Color(80, 80, 180),
                                 Tile::Lava => Color(240, 100, 20),
+                                Tile::Ice => Color(200, 240, 255),
                                 _ => Color(40, 40, 40),
                             };
                             if matches!(vis, verryte_map::Visibility::Explored) {
@@ -3826,6 +4066,14 @@ impl Game {
             self.world
                 .insert_resource(Events::<GameEvent>::with_capacity(16));
         }
+        if self
+            .world
+            .resource::<Events<verryte_core::AudioEvent>>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(Events::<verryte_core::AudioEvent>::new());
+        }
 
         // Sync camera from resource
         if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {
@@ -3956,6 +4204,14 @@ impl Game {
         if self.world.resource::<Events<GameEvent>>().is_none() {
             self.world
                 .insert_resource(Events::<GameEvent>::with_capacity(16));
+        }
+        if self
+            .world
+            .resource::<Events<verryte_core::AudioEvent>>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(Events::<verryte_core::AudioEvent>::new());
         }
 
         // Sync camera from resource

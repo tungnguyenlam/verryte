@@ -268,4 +268,12 @@ mod tests {
         // No Events<AudioEvent> resource — should return early
         audio_system(&mut world);
     }
+
+    #[test]
+    fn test_audio_player_registration() {
+        if let Ok((mut player, _stream)) = AudioPlayer::try_new() {
+            player.register("jump", vec![1, 2, 3]);
+            assert_eq!(player.registry.get("jump"), Some(&vec![1, 2, 3]));
+        }
+    }
 }

@@ -82,6 +82,40 @@ pub enum ActionOutcome {
     GameOver { outcome: Outcome },
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FailureCategory {
+    OutOfAP,
+    OutOfRange,
+    TileBlocked,
+    NoSelection,
+    Other,
+}
+
+impl ActionOutcome {
+    pub fn is_failed(&self) -> bool {
+        matches!(self, ActionOutcome::Failed { .. })
+    }
+
+    pub fn failure_category(&self) -> Option<FailureCategory> {
+        match self {
+            ActionOutcome::Failed { reason } => {
+                if reason.starts_with("Not enough AP") {
+                    Some(FailureCategory::OutOfAP)
+                } else if reason.starts_with("Target is out of") {
+                    Some(FailureCategory::OutOfRange)
+                } else if reason.starts_with("Cannot move") {
+                    Some(FailureCategory::TileBlocked)
+                } else if reason.starts_with("Select a character") {
+                    Some(FailureCategory::NoSelection)
+                } else {
+                    Some(FailureCategory::Other)
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
 pub fn create_registry() -> WorldRegistry {
     let mut reg = WorldRegistry::new();
 

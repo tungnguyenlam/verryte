@@ -171,6 +171,7 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         Tile::Wall => "Wall",
         Tile::Water => "Water",
         Tile::Lava => "Lava",
+        Tile::Ice => "Ice",
     };
 
     let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
@@ -482,6 +483,7 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
                     };
                     (glyph, Color(180, 40, 20))
                 }
+                Tile::Ice => ('-', Color(150, 220, 255)),
             };
             grid.put(
                 inner_x + tx,

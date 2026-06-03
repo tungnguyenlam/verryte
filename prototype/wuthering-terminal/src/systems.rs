@@ -548,80 +548,181 @@ pub fn enemy_ai_system(world: &mut World) {
                     break;
                 }
 
+                let is_low_hp = (enemy_stats.hp as f32 / enemy_stats.max_hp as f32) < 0.3;
                 let (target_tile, move_cost, dest_tile) = {
                     let map = world
                         .resource::<TacticalMap>()
                         .expect("TacticalMap must be registered");
 
-                    // Generate Dijkstra map towards all players using weighted movement costs
-                    let d_map = verryte_map::DijkstraMap::compute_weighted(
-                        map.width,
-                        map.height,
-                        &player_positions,
-                        |pt| {
-                            if pt.x < 0
-                                || pt.x >= map.width as i16
-                                || pt.y < 0
-                                || pt.y >= map.height as i16
+                    if is_low_hp {
+                        let mut best_retreat_tile = None;
+                        let mut max_dist = player_positions
+                            .iter()
+                            .map(|p| (enemy_pos.x - p.x).abs() + (enemy_pos.y - p.y).abs())
+                            .min()
+                            .unwrap_or(0);
+
+                        for neighbor in enemy_pos.neighbors4() {
+                            if neighbor.x >= 0
+                                && neighbor.x < map.width as i16
+                                && neighbor.y >= 0
+                                && neighbor.y < map.height as i16
                             {
-                                return false;
-                            }
-                            let tile = map.tiles.get(pt).expect("point passed bounds check");
-                            matches!(tile, Tile::Grass | Tile::Water | Tile::Lava)
-                                && !is_occupied_except(world, pt, enemy_entity)
-                        },
-                        |_, to| map.movement_cost(to) as u32,
-                        false, // 4-way movement
-                    );
-
-                    // Find neighbor with lowest distance
-                    let mut best_move = None;
-                    let mut min_d = d_map.get(enemy_pos).unwrap_or(u32::MAX);
-
-                    for neighbor in enemy_pos.neighbors4() {
-                        if let Some(dist) = d_map.get(neighbor) {
-                            if dist < min_d {
-                                min_d = dist;
-                                best_move = Some(neighbor);
+                                let tile = map.tile(neighbor.x, neighbor.y);
+                                let passable =
+                                    matches!(
+                                        tile,
+                                        Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice
+                                    ) && !is_occupied_except(world, neighbor, enemy_entity);
+                                if passable {
+                                    let min_player_dist = player_positions
+                                        .iter()
+                                        .map(|p| {
+                                            (neighbor.x - p.x).abs() + (neighbor.y - p.y).abs()
+                                        })
+                                        .min()
+                                        .unwrap_or(0);
+                                    if min_player_dist > max_dist {
+                                        let move_cost = map.movement_cost(neighbor);
+                                        if enemy_stats.ap >= move_cost {
+                                            max_dist = min_player_dist;
+                                            best_retreat_tile = Some((neighbor, move_cost));
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
-
-                    if let Some(target_tile) = best_move {
-                        let move_cost = map.movement_cost(target_tile);
-                        let dest_tile = map.tile(target_tile.x, target_tile.y);
-                        (Some(target_tile), move_cost, dest_tile)
+                        if let Some((target_tile, move_cost)) = best_retreat_tile {
+                            let dest_tile = map.tile(target_tile.x, target_tile.y);
+                            (Some(target_tile), move_cost, dest_tile)
+                        } else {
+                            (None, 0, Tile::Grass)
+                        }
                     } else {
-                        (None, 0, Tile::Grass)
+                        // Generate Dijkstra map towards all players using weighted movement costs
+                        let d_map = verryte_map::DijkstraMap::compute_weighted(
+                            map.width,
+                            map.height,
+                            &player_positions,
+                            |pt| {
+                                if pt.x < 0
+                                    || pt.x >= map.width as i16
+                                    || pt.y < 0
+                                    || pt.y >= map.height as i16
+                                {
+                                    return false;
+                                }
+                                let tile = map.tiles.get(pt).expect("point passed bounds check");
+                                matches!(tile, Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice)
+                                    && !is_occupied_except(world, pt, enemy_entity)
+                            },
+                            |_, to| map.movement_cost(to) as u32,
+                            false, // 4-way movement
+                        );
+
+                        // Find neighbor with lowest distance
+                        let mut best_move = None;
+                        let mut min_d = d_map.get(enemy_pos).unwrap_or(u32::MAX);
+
+                        for neighbor in enemy_pos.neighbors4() {
+                            if let Some(dist) = d_map.get(neighbor) {
+                                if dist < min_d {
+                                    min_d = dist;
+                                    best_move = Some(neighbor);
+                                }
+                            }
+                        }
+
+                        if let Some(target_tile) = best_move {
+                            let move_cost = map.movement_cost(target_tile);
+                            let dest_tile = map.tile(target_tile.x, target_tile.y);
+                            (Some(target_tile), move_cost, dest_tile)
+                        } else {
+                            (None, 0, Tile::Grass)
+                        }
                     }
                 };
 
-                if let Some(target_tile) = target_tile {
+                let mut final_dest = target_tile;
+                let mut final_dest_tile = dest_tile;
+                if let Some(target_tile_pos) = target_tile {
+                    let map = world
+                        .resource::<TacticalMap>()
+                        .expect("TacticalMap must be registered");
+                    if dest_tile == Tile::Ice {
+                        let dx = target_tile_pos.x - enemy_pos.x;
+                        let dy = target_tile_pos.y - enemy_pos.y;
+                        let mut curr = target_tile_pos;
+                        loop {
+                            let next_pt = Position::new(curr.x + dx, curr.y + dy);
+                            if next_pt.x < 0
+                                || next_pt.x >= map.width as i16
+                                || next_pt.y < 0
+                                || next_pt.y >= map.height as i16
+                            {
+                                break;
+                            }
+                            if is_occupied_except(world, next_pt, enemy_entity) {
+                                break;
+                            }
+                            let next_tile = map.tile(next_pt.x, next_pt.y);
+                            if next_tile == Tile::Wall {
+                                break;
+                            }
+                            curr = next_pt;
+                            if next_tile != Tile::Ice {
+                                break;
+                            }
+                        }
+                        final_dest = Some(curr);
+                        final_dest_tile = map.tile(curr.x, curr.y);
+                    }
+                }
+
+                if let Some(final_tile) = final_dest {
                     if let Some(pos) = world.get_mut::<Position>(enemy_entity) {
-                        *pos = target_tile;
+                        *pos = final_tile;
                     }
                     if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
                         stats.ap -= move_cost;
                     }
                     let enemy_name = Game::get_class_name(enemy_class);
-                    log(
-                        world,
-                        format!(
-                            "{} moved closer to player at ({}, {}).",
-                            enemy_name, target_tile.x, target_tile.y
-                        ),
-                    );
+                    if final_dest.unwrap() != target_tile.unwrap() {
+                        log(
+                            world,
+                            format!(
+                                "{} slid on ice to ({}, {}).",
+                                enemy_name, final_tile.x, final_tile.y
+                            ),
+                        );
+                    } else if is_low_hp {
+                        log(
+                            world,
+                            format!(
+                                "{} (Low HP) retreated from player to ({}, {}).",
+                                enemy_name, final_tile.x, final_tile.y
+                            ),
+                        );
+                    } else {
+                        log(
+                            world,
+                            format!(
+                                "{} moved closer to player at ({}, {}).",
+                                enemy_name, final_tile.x, final_tile.y
+                            ),
+                        );
+                    }
 
                     if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
                         events.send(GameEvent::Moved {
                             entity: enemy_entity,
                             from: enemy_pos,
-                            to: target_tile,
+                            to: final_tile,
                         });
                     }
 
                     // Check for Lava damage on normal move
-                    if dest_tile == Tile::Lava {
+                    if final_dest_tile == Tile::Lava {
                         let mut final_hp = 0;
                         let mut defeated = false;
                         if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
@@ -639,7 +740,7 @@ pub fn enemy_ai_system(world: &mut World) {
                             ),
                         );
 
-                        let (tcx, tcy) = get_tile_center_pixels(world, target_tile);
+                        let (tcx, tcy) = get_tile_center_pixels(world, final_tile);
                         let vfx = world
                             .resource_mut::<VfxSystem>()
                             .expect("VfxSystem registered");
@@ -658,13 +759,7 @@ pub fn enemy_ai_system(world: &mut World) {
                             ));
 
                         if defeated {
-                            handle_defeat(
-                                world,
-                                enemy_entity,
-                                enemy_name,
-                                enemy_class,
-                                target_tile,
-                            );
+                            handle_defeat(world, enemy_entity, enemy_name, enemy_class, final_tile);
                         }
                     }
                 } else {
@@ -710,6 +805,9 @@ pub fn turn_management_system(world: &mut World) {
                 state.phase = TurnPhase::Enemy;
                 state.selected_entity = None;
                 state.combo_count = 0;
+            }
+            if let Some(mut stack) = world.resource_mut::<crate::components::UndoStack>() {
+                stack.states.clear();
             }
             log(world, "[fg:FFA500][b]Enemy Phase starts![/][/fg]");
             if let Some(events) = world.resource_mut::<Events<GameEvent>>() {

@@ -6,6 +6,7 @@ pub enum Tile {
     Wall,
     Water,
     Lava,
+    Ice,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -36,6 +37,7 @@ impl TacticalMap {
                     '#' => Tile::Wall,
                     '~' => Tile::Water,
                     '^' => Tile::Lava,
+                    '-' => Tile::Ice,
                     _ => Tile::Grass,
                 };
                 tiles.set(Point::new(x as i16, y as i16), tile);
@@ -59,13 +61,13 @@ impl TacticalMap {
     pub fn is_walkable(&self, pt: Point) -> bool {
         matches!(
             self.tile(pt.x, pt.y),
-            Tile::Grass | Tile::Water | Tile::Lava
+            Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice
         )
     }
 
     pub fn movement_cost(&self, pt: Point) -> i32 {
         match self.tile(pt.x, pt.y) {
-            Tile::Grass => 1,
+            Tile::Grass | Tile::Ice => 1,
             Tile::Water | Tile::Lava => 2,
             Tile::Wall => 999,
         }

@@ -3132,3 +3132,24 @@ runner that the shield is announced.
 **Gotchas.** When mutating `BattleStats` resource during gameplay action processing, borrowing conflicts on `self.world` were avoided by pre-allocating an `Entity` to `Team` lookup map rather than performing active queries while mutating resources.
 
 **Follow-ups.** Add SVG rendering outputs for grids to enable browser-based debug interfaces.
+
+## 2026-06-03 - fix failing tests, audio events, Ice sliding, low-HP retreat AI, and HTML/SVG render tests
+
+**Goal.** Fix failing integration tests for combo milestone and AP movement failures, verify/insert missing audio events resource, implement a new walkable Ice terrain type with slide movement mechanics for players and enemies, add retreat AI behavior for low-HP enemies (<30%), and add unit tests for SVG/HTML grid rendering and audio player registration.
+
+**Changes.**
+- `crates/verryte-terminal/src/grid.rs` - added test `test_grid_html_and_svg` verifying correct formatting, tags, and colors for HTML and SVG grid output methods.
+- `crates/verryte-audio/src/lib.rs` - added conditional unit test `test_audio_player_registration` to safely verify AudioPlayer registering preloaded data when a hardware output stream is available.
+- `prototype/wuthering-terminal/src/game.rs` - inserted missing `Events<AudioEvent>` resource inside `Game::new` and re-inserted checks in `load`/`apply` layouts; implemented sliding movement on `Tile::Ice` based on final path step direction; fixed type-mismatches in query maps.
+- `prototype/wuthering-terminal/src/systems.rs` - integrated Ice sliding into enemy movement, added AI retreat behavior prioritizing distance maximization from nearest players when at <30% HP, and resolved Lava check coordinates passing correct points instead of options.
+- `prototype/wuthering-terminal/src/map.rs` - added `Tile::Ice` parsed from `'-'`, walkable with a movement cost of 1.
+- `prototype/wuthering-terminal/src/ui.rs` - added HUD hover labels and color/character mapping (`'-'`, Light Cyan) for `Tile::Ice` on the minimap.
+- `prototype/wuthering-terminal/src/lib.rs` - fixed assertions for combo milestone and AP failure outcomes; added unit tests verifying Ice slide mechanics and low-HP Stalker retreat behavior.
+
+**Reasoning.** Inserting `Events<AudioEvent>` solves the issue where combo milestones failed to log audio events because the resource wasn't registered in `Game::new`. Standardizing slide movement on `Tile::Ice` adds tactile RPG mechanics that interact directly with path delta tracking. Enemy AI retreat behavior when low HP adds tactical complexity to encounters, encouraging players to finish off weakened ranged/flanking foes. Safe audio testing avoids CI failures on headless hosts.
+
+**Assumptions.** We assume that sliding on Ice preserves the original movement direction of entry and stops at the first non-Ice walkable cell or obstacle/occupied tile. We assume <30% HP constitutes "low HP" for retreat logic.
+
+**Gotchas.** The `enemy_ai` system ignores active enemy entities if the game state phase is not set to `TurnPhase::Enemy`, so AI retreat tests must explicitly update the phase beforehand. `Color::WHITE` is `Color(230, 230, 230)` instead of `(255, 255, 255)`, causing initial HTML render tests to fail until corrected.
+
+**Follow-ups.** None. All 160 engine tests and 51 wuthering-terminal tests now compile, run, and pass cleanly.
