@@ -3020,3 +3020,23 @@ variant for invalid action attempts (out-of-range, no AP). The
 on movement for large grids. The boss's Phase 2 shield doesn't yet
 appear in the terminal UI render path; verify visually with the TTY
 runner that the shield is announced.
+
+## 2026-06-03 - Shield rendering, failed action classification, and outcome trace serialization
+
+**Goal.** Implement elemental shield rendering on the tactical grid, classify failed action outcomes (such as out-of-AP or out-of-range actions) via message log checking, and serialize these outcomes directly inside trace history records.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/snapshot.rs:75` - added `ActionOutcome::Failed { reason: String }` variant.
+- `prototype/wuthering-terminal/src/game.rs:1914` - serialized the computed `ActionOutcome` back into each `ActionRecord`'s metadata under the key `"outcome"`.
+- `prototype/wuthering-terminal/src/game.rs:1945` - updated `compute_outcome` signature to accept `before_log_len` and check for failed action message logs.
+- `prototype/wuthering-terminal/src/game.rs:3410` - added shield bar rendering right above the HP bar, color-coded by elemental shield type.
+- `prototype/wuthering-terminal/src/lib.rs:1650` - added unit tests for failed AP actions, out-of-range skills, history metadata outcome validation, and shield grid rendering.
+- `AGENTS.md:85` - documented the new `Failed` outcome and trace record outcome serialization.
+
+**Reasoning.** Drawing the shield bar on the tactical grid directly above the HP bar ensures visual clarity for players when fighting enemies with shields (such as Phase 2 boss). Adding a `Failed` variant to `ActionOutcome` and checking log messages provides immediate feedback when actions cannot execute. Mutating the last `ActionRecord` in `ActionHistory` to attach the computed JSON outcome makes the recorded trace self-describing without requiring agents or replays to re-derive the classification from raw events.
+
+**Assumptions.** I assumed a character attempting to move with 0 AP will trigger a `"Cannot move to that tile!"` failure because `get_reachable_tiles()` returns an empty list, which is checked and classified as `ActionOutcome::Failed`.
+
+**Gotchas.** In `test_failed_action_out_of_ap`, the character must be selected *before* setting their AP to 0. If AP is set to 0 before selection, the confirm action will not select them due to selection criteria checking for positive AP, causing the subsequent movement confirm to result in a no-op instead of a failed movement.
+
+**Follow-ups.** Future prototypes could extend `ActionOutcome` with more granular failed action classifications (e.g. invalid target type, target blocked by terrain) or add support for undoing failed actions.
