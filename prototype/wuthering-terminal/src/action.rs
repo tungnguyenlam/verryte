@@ -31,6 +31,7 @@ pub enum Action {
     ToggleReplay,
     ToggleReplayAuto,
     StepReplay,
+    ToggleMinimap,
 }
 
 impl Action {
@@ -102,6 +103,8 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('B'), Action::AutoBattle);
     b.bind(Key::Char('r'), Action::StepToSafety);
     b.bind(Key::Char('R'), Action::StepToSafety);
+    b.bind(Key::Char('m'), Action::ToggleMinimap);
+    b.bind(Key::Char('M'), Action::ToggleMinimap);
 
     b
 }
@@ -146,6 +149,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph(',', Action::ClearCursor);
     c.bind_glyph('b', Action::AutoBattle);
     c.bind_glyph('r', Action::StepToSafety);
+    c.bind_glyph('m', Action::ToggleMinimap);
 
     c
 }
@@ -162,6 +166,10 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
 
     if token == "inventory" || token == "items" {
         return Some(Action::ToggleInventory);
+    }
+
+    if token == "minimap" || token == "map" {
+        return Some(Action::ToggleMinimap);
     }
 
     if let Some(idx_str) = token.strip_prefix("use:") {

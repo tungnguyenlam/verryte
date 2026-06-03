@@ -113,6 +113,12 @@ pub struct GameState {
     pub show_perf: bool,
     pub auto_battle: bool,
     pub is_recording: bool,
+    #[serde(default = "default_true")]
+    pub show_minimap: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

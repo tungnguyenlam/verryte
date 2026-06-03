@@ -1346,18 +1346,21 @@ mod tests {
         let mut has_grass = false;
         let mut has_wall = false;
         let mut has_water = false;
+        let mut has_lava = false;
         for y in 0..map.height {
             for x in 0..map.width {
                 match map.tile(x as i16, y as i16) {
                     Tile::Grass => has_grass = true,
                     Tile::Wall => has_wall = true,
                     Tile::Water => has_water = true,
+                    Tile::Lava => has_lava = true,
                 }
             }
         }
         assert!(has_grass, "Map should have grass tiles");
         assert!(has_wall, "Map should have wall tiles");
         assert!(has_water, "Map should have water tiles");
+        assert!(has_lava, "Map should have lava tiles");
     }
 
     #[test]
@@ -1778,6 +1781,141 @@ mod tests {
         assert!(
             found_shield_cell,
             "Shield rendering should produce '-' cells on the grid"
+        );
+    }
+
+    #[test]
+    fn test_minimap_toggle() {
+        let mut game = Game::new();
+
+        // Minimap should start as shown (true)
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert!(state.show_minimap);
+        }
+
+        // Toggle it off
+        game.apply_action(Action::ToggleMinimap, ActionSource::Terminal);
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert!(!state.show_minimap);
+        }
+
+        // Toggle it back on
+        game.apply_action(Action::ToggleMinimap, ActionSource::Terminal);
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert!(state.show_minimap);
+        }
+    }
+
+    #[test]
+    fn test_cursed_sentinel_retreat_behavior() {
+        let mut game = Game::new();
+
+        // Find/prepare a player character (Warrior) at (4, 4)
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+
+        // Move other players far away
+        let other_players: Vec<_> = game
+            .world
+            .query2::<Team, CharacterClass>()
+            .into_iter()
+            .filter(|(_e, t, c)| **t == Team::Player && **c != CharacterClass::Warrior)
+            .map(|(e, _, _)| e)
+            .collect();
+        for p in other_players {
+            *game.world.get_mut::<Position>(p).unwrap() = Position::new(0, 15);
+        }
+
+        // Find a CursedSentinel
+        let sentinel = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::CursedSentinel)
+            .map(|(e, _)| e)
+            .unwrap();
+        // Place the sentinel close (distance = 2) at (4, 6)
+        *game.world.get_mut::<Position>(sentinel).unwrap() = Position::new(4, 6);
+        // Ensure it has exactly 1 AP to move (so it doesn't try to move back closer in the same turn loop)
+        game.world.get_mut::<Stats>(sentinel).unwrap().ap = 1;
+
+        // Force Enemy Phase
+        game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+
+        // Move all other enemies far away so they don't block
+        let enemies: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(e, t)| **t == Team::Enemy && *e != sentinel)
+            .map(|(e, _)| e)
+            .collect();
+        for e in enemies {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(0, 15);
+        }
+
+        // Run enemy AI
+        crate::systems::enemy_ai_system(&mut game.world);
+
+        // Sentinel should have moved to increase distance (should be at distance > 2, e.g., (4, 7) or similar)
+        let final_pos = *game.world.get::<Position>(sentinel).unwrap();
+        let final_dist = (final_pos.x - 4).abs() + (final_pos.y - 4).abs();
+        assert!(
+            final_dist > 2,
+            "CursedSentinel should retreat from player, final distance was {}",
+            final_dist
+        );
+    }
+
+    #[test]
+    fn test_lava_entry_damage() {
+        let mut game = Game::new();
+
+        // Place warrior at (15, 11)
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(15, 11);
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+        let initial_hp = game.world.get::<Stats>(warrior).unwrap().hp;
+
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(15, 11);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Move to (16, 11) which is lava
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(16, 11);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Verify the warrior is at (16, 11)
+        let pos = *game.world.get::<Position>(warrior).unwrap();
+        assert_eq!(pos, Position::new(16, 11));
+
+        // Verify the warrior took 20 damage
+        let stats = game.world.get::<Stats>(warrior).unwrap();
+        assert_eq!(
+            stats.hp,
+            initial_hp - 20,
+            "Warrior should take 20 damage from entering Lava"
         );
     }
 }

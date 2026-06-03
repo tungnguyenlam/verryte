@@ -155,6 +155,7 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         Tile::Grass => "Grass",
         Tile::Wall => "Wall",
         Tile::Water => "Water",
+        Tile::Lava => "Lava",
     };
 
     let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
@@ -438,6 +439,9 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
     let inner_x = mm_x + 1;
     let inner_y = mm_y + 1;
 
+    let clock = world.resource::<verryte_core::GameClock>().unwrap();
+    let ticks = clock.elapsed_ticks();
+
     for ty in 0..map.height {
         for tx in 0..map.width {
             let pt = crate::Position::new(tx as i16, ty as i16);
@@ -445,7 +449,24 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
             let (ch, fg) = match tile {
                 Tile::Grass => ('·', Color(30, 60, 30)),
                 Tile::Wall => ('#', Color(80, 80, 80)),
-                Tile::Water => ('~', Color(40, 40, 120)),
+                Tile::Water => {
+                    let phase = ((ticks + (tx as u64) * 3 + (ty as u64) * 7) / 10) % 3;
+                    let glyph = match phase {
+                        0 => '~',
+                        1 => '≈',
+                        _ => '∽',
+                    };
+                    (glyph, Color(40, 40, 120))
+                }
+                Tile::Lava => {
+                    let phase = ((ticks + (tx as u64) * 3 + (ty as u64) * 7) / 8) % 3;
+                    let glyph = match phase {
+                        0 => '^',
+                        1 => 'v',
+                        _ => '*',
+                    };
+                    (glyph, Color(180, 40, 20))
+                }
             };
             grid.put(
                 inner_x + tx,

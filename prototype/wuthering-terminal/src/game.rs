@@ -71,6 +71,7 @@ impl Game {
             show_perf: false,
             auto_battle: false,
             is_recording: false,
+            show_minimap: true,
         });
         world.insert_resource(crate::components::TelegraphZone::default());
         world.insert_resource(verryte_map::VisibilityMap::new(width, height));
@@ -598,9 +599,11 @@ impl Game {
         map.tiles.shortest_path4_weighted(
             pos,
             target,
-            |pt, tile| matches!(tile, Tile::Grass | Tile::Water) && !occupied.contains(&pt),
+            |pt, tile| {
+                matches!(tile, Tile::Grass | Tile::Water | Tile::Lava) && !occupied.contains(&pt)
+            },
             |_from, _to, tile| match tile {
-                Tile::Water => 2,
+                Tile::Water | Tile::Lava => 2,
                 _ => 1,
             },
         )
@@ -2055,6 +2058,7 @@ impl Game {
                 | Action::Skill3
                 | Action::ToggleInventory
                 | Action::TogglePerf
+                | Action::ToggleMinimap
                 | Action::AutoBattle
         ) {
             return ActionOutcome::StateUpdated;
@@ -2472,9 +2476,13 @@ impl Game {
                         let reachable = self.get_reachable_tiles(sel_entity);
                         if reachable.contains(&cursor) {
                             if let Some(path) = self.get_path_to(sel_entity, cursor) {
-                                let map = self.world.resource::<TacticalMap>().unwrap();
-                                let total_cost: i32 =
-                                    path.iter().skip(1).map(|p| map.movement_cost(*p)).sum();
+                                let (total_cost, dest_tile) = {
+                                    let map = self.world.resource::<TacticalMap>().unwrap();
+                                    let total_cost: i32 =
+                                        path.iter().skip(1).map(|p| map.movement_cost(*p)).sum();
+                                    let dest_tile = map.tile(cursor.x, cursor.y);
+                                    (total_cost, dest_tile)
+                                };
                                 let mut ap_ok = false;
                                 if let Some(sel_stats) = self.world.get_mut::<Stats>(sel_entity) {
                                     if sel_stats.ap >= total_cost {
@@ -2509,6 +2517,52 @@ impl Game {
                                             from: from_pos,
                                             to: cursor,
                                         });
+                                    }
+
+                                    // Check for Lava damage on player movement
+                                    if dest_tile == Tile::Lava {
+                                        let mut final_hp = 0;
+                                        let mut defeated = false;
+                                        if let Some(stats) = self.world.get_mut::<Stats>(sel_entity)
+                                        {
+                                            stats.hp = std::cmp::max(0, stats.hp - 20);
+                                            final_hp = stats.hp;
+                                            if stats.hp <= 0 {
+                                                defeated = true;
+                                            }
+                                        }
+                                        self.log(format!(
+                                            "{} stepped into LAVA and took 20 damage! (HP: {})",
+                                            char_name, final_hp
+                                        ));
+
+                                        // Spawn fire/lava particles
+                                        let (tcx, tcy) = self.get_tile_center_pixels(cursor);
+                                        self.vfx_mut().particles.extend(
+                                            verryte_terminal::vfx::emit_burst(
+                                                tcx,
+                                                tcy,
+                                                15,
+                                                Color(255, 60, 0),
+                                                &['*', '·', '✦'],
+                                            ),
+                                        );
+                                        self.vfx_mut().shakes.push(
+                                            verryte_terminal::vfx::ScreenShake::new_eased(
+                                                1.5,
+                                                0.3,
+                                                verryte_terminal::vfx::EasingMode::QuadOut,
+                                            ),
+                                        );
+
+                                        if defeated {
+                                            self.handle_defeat(
+                                                sel_entity,
+                                                &char_name.to_string(),
+                                                sel_class,
+                                                cursor,
+                                            );
+                                        }
                                     }
 
                                     self.try_absorb_echo(cursor);
@@ -2770,6 +2824,18 @@ impl Game {
             Action::TogglePerf => {
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.show_perf = !state.show_perf;
+            }
+            Action::ToggleMinimap => {
+                let show = {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.show_minimap = !state.show_minimap;
+                    state.show_minimap
+                };
+                if show {
+                    self.log("Minimap enabled.");
+                } else {
+                    self.log("Minimap disabled.");
+                }
             }
             Action::AutoBattle => {
                 let current = self.world.resource::<GameState>().unwrap().auto_battle;
@@ -3179,6 +3245,7 @@ impl Game {
                     Tile::Grass => Color(30, 80, 30),
                     Tile::Wall => Color(60, 60, 60),
                     Tile::Water => Color(30, 30, 100),
+                    Tile::Lava => Color(120, 20, 10),
                 };
 
                 if matches!(vis, verryte_map::Visibility::Explored) {
@@ -3186,6 +3253,7 @@ impl Game {
                 }
 
                 let (sx, sy) = viewport.world_to_screen(tx as f32, ty as f32);
+                let ticks = clock.elapsed_ticks();
 
                 // Draw tile background/border
                 for dy in 0..tile_h {
@@ -3194,8 +3262,38 @@ impl Game {
                         let ty_abs = sy + dy as i32;
 
                         if viewport.rect.contains(tx_abs as u16, ty_abs as u16) {
-                            let glyph = if dx == 0 || dy == 0 { '·' } else { ' ' };
-                            let mut fg = Color(40, 40, 40);
+                            let glyph = match tile {
+                                Tile::Water => {
+                                    let phase =
+                                        ((ticks + (tx as u64) * 3 + (ty as u64) * 7) / 10) % 3;
+                                    match phase {
+                                        0 => '~',
+                                        1 => '≈',
+                                        _ => '∽',
+                                    }
+                                }
+                                Tile::Lava => {
+                                    let phase =
+                                        ((ticks + (tx as u64) * 3 + (ty as u64) * 7) / 8) % 3;
+                                    match phase {
+                                        0 => '^',
+                                        1 => 'v',
+                                        _ => '*',
+                                    }
+                                }
+                                _ => {
+                                    if dx == 0 || dy == 0 {
+                                        '·'
+                                    } else {
+                                        ' '
+                                    }
+                                }
+                            };
+                            let mut fg = match tile {
+                                Tile::Water => Color(80, 80, 180),
+                                Tile::Lava => Color(240, 100, 20),
+                                _ => Color(40, 40, 40),
+                            };
                             if matches!(vis, verryte_map::Visibility::Explored) {
                                 fg = verryte_terminal::vfx::blend_color(fg, Color::BLACK, 0.6);
                             }
@@ -3506,7 +3604,9 @@ impl Game {
         }
 
         // 8. Minimap
-        crate::ui::render_minimap(&mut screen, &self.world, board_h);
+        if state.show_minimap {
+            crate::ui::render_minimap(&mut screen, &self.world, board_h);
+        }
 
         // 9. HUD
         crate::ui::render_hud(&mut screen, &self.world, term_w, term_h);
