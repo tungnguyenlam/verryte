@@ -29,6 +29,8 @@ Three heroes descend into the heart of the corruption to seal its source.
 - **QTE team swap**: spend concert energy for instant swap with intro skill
 - **Boss phases**: multi-phase fight with stat boosts and new attack patterns
 - **Inventory**: healing potions, energy elixirs, cleanse remedies, aegis elixirs
+- **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`
+- **Floor progression**: stairs spawn upon defeating enemies, triggering descent to Floor 2 (using `Action::NextFloor` or keyboard key `>`) which features a procedural BSP dungeon layout
 - **Elemental shields**: absorb damage before HP
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
 - **Battle stats**: tracks total damage dealt, taken, healing done, kills, swaps, turns, and maximum combo reached, serialized in snapshots for agent observability.
@@ -94,11 +96,11 @@ rendered frames, state summaries, and event outcomes after each action.
 
 Movement: `north`, `south`, `east`, `west` (or `n`, `s`, `e`, `w`)
 
-Combat: `skill1`, `skill2`, `skill3`, `confirm`, `cancel`, `end`, `wait`
+Combat: `skill1`, `skill2`, `skill3`, `confirm`, `cancel`, `end`, `wait`, `craft:<idx1>,<idx2>` (1-indexed, e.g. `craft:1,2`), `use:<idx>` (1-indexed)
 
 Swap: `swap1`, `swap2`, `swap3` (or `4`, `5`, `6`)
 
-Other: `autobattle`, `safety`, `quit`
+Other: `autobattle`, `safety`, `stairs`/`next_floor`/`>`, `quit`
 
 ## Adaptive Sprites
 

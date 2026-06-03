@@ -33,6 +33,8 @@ pub enum Action {
     StepReplay,
     ToggleMinimap,
     Undo,
+    NextFloor,
+    CraftItem(usize, usize),
 }
 
 impl Action {
@@ -108,6 +110,7 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('M'), Action::ToggleMinimap);
     b.bind(Key::Char('u'), Action::Undo);
     b.bind(Key::Char('U'), Action::Undo);
+    b.bind(Key::Char('>'), Action::NextFloor);
 
     b
 }
@@ -134,6 +137,8 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("autobattle", Action::AutoBattle);
     c.bind_name("safety", Action::StepToSafety);
     c.bind_name("undo", Action::Undo);
+    c.bind_name("stairs", Action::NextFloor);
+    c.bind_name("next_floor", Action::NextFloor);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('s', Action::MoveSouth);
@@ -179,6 +184,21 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
 
     if token == "undo" {
         return Some(Action::Undo);
+    }
+
+    if token == "stairs" || token == "next_floor" {
+        return Some(Action::NextFloor);
+    }
+
+    if let Some(craft_str) = token.strip_prefix("craft:") {
+        if let Some((idx1_str, idx2_str)) = craft_str.split_once(',') {
+            if let (Ok(idx1), Ok(idx2)) = (idx1_str.parse::<usize>(), idx2_str.parse::<usize>()) {
+                return Some(Action::CraftItem(
+                    idx1.saturating_sub(1),
+                    idx2.saturating_sub(1),
+                ));
+            }
+        }
     }
 
     if let Some(idx_str) = token.strip_prefix("use:") {

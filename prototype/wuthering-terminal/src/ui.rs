@@ -100,7 +100,7 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         }
     }
 
-    let turn_label = format!("TURN: {:02} | ", state.turn);
+    let turn_label = format!("FLOOR: {} | TURN: {:02} | ", state.floor, state.turn);
     let phase_label = format!("PHASE: {:<12}", phase_str);
 
     let combo_label = if state.combo_count > 0 {
@@ -172,6 +172,7 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         Tile::Water => "Water",
         Tile::Lava => "Lava",
         Tile::Ice => "Ice",
+        Tile::Stairs => "Stairs",
     };
 
     let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
@@ -396,6 +397,9 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
                         crate::components::ItemEffect::RestoreShield(st, v) => {
                             format!("(Shield +{} {:?})", v, st)
                         }
+                        crate::components::ItemEffect::Combined(heal, ap) => {
+                            format!("(+{} HP, +{} AP)", heal, ap)
+                        }
                     };
                     grid.write_str(panel_rect.x + 25, y, &effect_str, Color::GREY, panel_bg);
                 }
@@ -484,6 +488,7 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
                     (glyph, Color(180, 40, 20))
                 }
                 Tile::Ice => ('-', Color(150, 220, 255)),
+                Tile::Stairs => ('>', Color(255, 215, 0)),
             };
             grid.put(
                 inner_x + tx,

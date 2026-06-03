@@ -36,6 +36,12 @@ pub struct Snapshot {
     pub combo_count: u32,
     #[serde(default)]
     pub battle_stats: BattleStats,
+    #[serde(default = "default_floor_one")]
+    pub floor: u32,
+}
+
+fn default_floor_one() -> u32 {
+    1
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -117,6 +117,12 @@ pub struct GameState {
     pub show_minimap: bool,
     #[serde(default)]
     pub combo_count: u32,
+    #[serde(default = "default_floor")]
+    pub floor: u32,
+}
+
+fn default_floor() -> u32 {
+    1
 }
 
 fn default_true() -> bool {
@@ -213,6 +219,7 @@ pub enum ItemEffect {
     ReplenishAp(i32),
     Cleanse,
     RestoreShield(ShieldType, i32),
+    Combined(i32, i32), // heal, ap
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

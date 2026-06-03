@@ -12,8 +12,8 @@ those pieces.
   `Query3`, `Query4`, `Query5` iterators (with `ExactSizeIterator` support),
   `World::query2_iter` / `World::query3_iter` / `Query4` / `Query5` for lazy multi-component
   iteration, `World::has_resource` and `World::contains` for safe resource
-  and component existence checks, `World::for_each2_mut` / `World::for_each3_mut`
-  for mutable two- and three-component iteration, `World::despawn_with` for bulk
+  and component existence checks, `World::for_each2_mut` / `World::for_each3_mut` / `World::for_each4_mut`
+  for mutable two-, three-, and four-component iteration, `World::despawn_with` for bulk
   entity removal, `World::retain` for predicate-based entity filtering,
   `World::query3` / `World::query4` / `World::query5` for multi-component queries,
   `World::get_or_insert` /
@@ -111,7 +111,7 @@ those pieces.
   plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string` with
   optimized `write!` rendering), HTML
   output (`Grid::to_html_string`) for web/debug viewing, circle drawing and
-  filling (`Grid::draw_circle`, `Grid::fill_circle`), diamond/rhombus shapes
+  filling (`Grid::draw_circle`, `Grid::fill_circle`), circular sector filling (`Grid::fill_sector`), diamond/rhombus shapes
   (`Grid::draw_diamond`, `Grid::fill_diamond`), Unicode box-drawing borders
   (`draw_border_rounded`, `draw_rounded_panel`, `draw_text_box`), horizontal/vertical lines
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
@@ -142,7 +142,7 @@ those pieces.
   `image_to_grid_with_chroma_key` adds transparency support for sprite loading.
   The `vfx` module provides a reusable visual effects system: particles
   (fire, ice, lightning, slash, heal, burst, bloom, shatter), screen shake,
-  flash overlays, floating damage text, and AoE ring indicators — all rendered
+  flash overlays, floating damage text, AoE ring indicators, and clear operations (`VfxSystem::clear`) — all rendered
   directly into a `Grid` with emitter presets. All VFX types (`ScreenShake`,
   `FloatingText`, `AoeRing`, `VfxSystem`, `blend_color`, emit functions) are
   re-exported at the crate root for convenience.
@@ -155,7 +155,7 @@ those pieces.
   `terminal_size()` for querying the current terminal dimensions.
 - `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
   Features team-swapping, Echo absorption, telegraphed enemy attacks with
-  parry/dodge, and an adaptive resolution sprite system that scales visual
+  parry/dodge, an alchemy crafting system for item combinations, floor-by-floor progression with procedural BSP dungeon generation, and an adaptive resolution sprite system that scales visual
   fidelity to the user's terminal size. Sprites are compiled from PNG pixel
   art into static Rust arrays at build time using half-block sub-pixel packing.
 - `prototype/vfx-demo` - interactive terminal VFX demo proving real-time

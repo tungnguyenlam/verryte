@@ -20,7 +20,9 @@ pub use verryte_map::Point as Position;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::{BattleStats, CharacterClass, GameState, Stats, Team, TurnPhase};
+    use crate::components::{
+        BattleStats, CharacterClass, GameState, Inventory, Stats, Team, TurnPhase,
+    };
     use crate::map::{TacticalMap, Tile};
     use verryte_input::ActionSource;
 
@@ -1378,7 +1380,7 @@ mod tests {
                     Tile::Wall => has_wall = true,
                     Tile::Water => has_water = true,
                     Tile::Lava => has_lava = true,
-                    Tile::Ice => {}
+                    Tile::Ice | Tile::Stairs => {}
                 }
             }
         }
@@ -2453,7 +2455,7 @@ mod tests {
 
         // Manually corrupt the expected outcome of the next step to force a mismatch
         {
-            let mut replay_mut = game2
+            let replay_mut = game2
                 .world
                 .resource_mut::<crate::components::ReplayState>()
                 .unwrap();
@@ -2476,5 +2478,100 @@ mod tests {
             "Should log verification error when outcomes mismatch"
         );
         assert!(replay.verification_errors[0].contains("outcome mismatch"));
+    }
+
+    #[test]
+    fn test_crafting_system() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query3::<Position, Team, CharacterClass>()
+            .iter()
+            .find(|(_, _, team, class)| {
+                **team == Team::Player && **class == CharacterClass::Warrior
+            })
+            .map(|(e, _, _, _)| *e)
+            .unwrap();
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(kael);
+        }
+
+        let new_potion = game
+            .world
+            .spawn_item("Healing Potion", crate::components::ItemEffect::Heal(30));
+        {
+            let inv = game.world.get_mut::<Inventory>(kael).unwrap();
+            inv.items.push(new_potion);
+        }
+
+        game.apply_action(Action::CraftItem(0, 3), ActionSource::Terminal);
+
+        let inv = game.world.get::<Inventory>(kael).unwrap();
+        let has_mega_potion = inv.items.iter().any(|&item_ent| {
+            if let Some(item) = game.world.get::<crate::components::Item>(item_ent) {
+                item.name == "Mega Potion"
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_mega_potion,
+            "Inventory should contain the crafted Mega Potion"
+        );
+        assert!(!game.world.is_alive(new_potion));
+    }
+
+    #[test]
+    fn test_floor_transition_and_bsp_generation() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query3::<Position, Team, CharacterClass>()
+            .iter()
+            .find(|(_, _, team, class)| {
+                **team == Team::Player && **class == CharacterClass::Warrior
+            })
+            .map(|(e, _, _, _)| *e)
+            .unwrap();
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(kael);
+        }
+
+        let player_pos = *game.world.get::<Position>(kael).unwrap();
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(player_pos, Tile::Stairs);
+        }
+
+        assert_eq!(game.world.resource::<GameState>().unwrap().floor, 1);
+
+        game.apply_action(Action::NextFloor, ActionSource::Terminal);
+
+        let state = game.world.resource::<GameState>().unwrap();
+        assert_eq!(state.floor, 2);
+
+        let map = game.world.resource::<TacticalMap>().unwrap();
+        let mut has_grass = false;
+        let mut has_wall = false;
+        for &tile in map.tiles.tiles() {
+            match tile {
+                Tile::Grass => has_grass = true,
+                Tile::Wall => has_wall = true,
+                _ => {}
+            }
+        }
+        assert!(has_grass);
+        assert!(has_wall);
+
+        let enemy_boss_exists = game
+            .world
+            .query2::<CharacterClass, Team>()
+            .iter()
+            .any(|(_, class, team)| **class == CharacterClass::Boss && **team == Team::Enemy);
+        assert!(enemy_boss_exists, "Floor 2 must contain the boss");
     }
 }

@@ -73,6 +73,7 @@ impl Game {
             is_recording: false,
             show_minimap: true,
             combo_count: 0,
+            floor: 1,
         });
         world.insert_resource(crate::components::TelegraphZone::default());
         world.insert_resource(verryte_map::VisibilityMap::new(width, height));
@@ -669,8 +670,10 @@ impl Game {
             pos,
             target,
             |pt, tile| {
-                matches!(tile, Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice)
-                    && !occupied.contains(&pt)
+                matches!(
+                    tile,
+                    Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice | Tile::Stairs
+                ) && !occupied.contains(&pt)
             },
             |_from, _to, tile| match tile {
                 Tile::Water | Tile::Lava => 2,
@@ -909,8 +912,23 @@ impl Game {
             .next()
             .is_some();
         if !enemy_exists && !echo_exists {
-            self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
-            self.log("Victory! All enemies defeated.");
+            let floor = self
+                .world
+                .resource::<GameState>()
+                .map(|s| s.floor)
+                .unwrap_or(1);
+            if floor == 1 {
+                if let Some(map) = self.world.resource_mut::<TacticalMap>() {
+                    map.tiles.set(pos, Tile::Stairs);
+                }
+                self.log(format!(
+                    "All enemies defeated on Floor 1! A staircase has appeared at {},{}. Stand on it and press '>' or type 'stairs' to descend.",
+                    pos.x, pos.y
+                ));
+            } else {
+                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+                self.log("Victory! All enemies defeated and Floor 2 conquered!");
+            }
         }
     }
 
@@ -1965,6 +1983,134 @@ impl Game {
                 }
             }
         }
+    }
+
+    pub fn transition_to_next_floor(&mut self) {
+        let mut floor = 1;
+        if let Some(state) = self.world.resource_mut::<GameState>() {
+            state.floor += 1;
+            floor = state.floor;
+        }
+
+        self.log(format!("Descending to Floor {}...", floor));
+
+        // 1. Clear VFX
+        self.vfx_mut().clear();
+        self.vfx_mut().trigger_shake(4.0, 0.8);
+        self.vfx_mut().trigger_flash(Color(255, 255, 255), 0.5);
+        if let Some(events) = self
+            .world
+            .resource_mut::<Events<verryte_core::AudioEvent>>()
+        {
+            events.send(verryte_core::AudioEvent::play("cleanse"));
+        }
+
+        // 2. Despawn all old enemies and EchoItems
+        let mut to_despawn = Vec::new();
+        for (e, team) in self.world.query::<Team>() {
+            if *team == Team::Enemy {
+                to_despawn.push(e);
+            }
+        }
+        for (e, _) in self.world.query::<crate::components::EchoItem>() {
+            to_despawn.push(e);
+        }
+        for e in to_despawn {
+            self.world.despawn(e);
+        }
+
+        // 3. Generate a new map! (using BSP algorithm)
+        let width = 24;
+        let height = 16;
+        let mut map = TacticalMap::new(width, height);
+        // Generate BSP dungeon
+        let seed = 100 + floor as u64;
+        let room_centers = map
+            .tiles
+            .generate_bsp_dungeon(Tile::Wall, Tile::Grass, 4, seed);
+
+        // Ensure map boundaries are set
+        map.width = width;
+        map.height = height;
+
+        self.world.insert_resource(map);
+
+        // 4. Position players in the first room center
+        let player_spawn = room_centers.first().copied().unwrap_or(Position::new(4, 4));
+        let mut player_entities = Vec::new();
+        for (e, team) in self.world.query::<Team>() {
+            if *team == Team::Player {
+                player_entities.push(e);
+            }
+        }
+        for (i, p_ent) in player_entities.iter().enumerate() {
+            let dx = (i % 2) as i16;
+            let dy = (i / 2) as i16;
+            if let Some(pos) = self.world.get_mut::<Position>(*p_ent) {
+                *pos = Position::new(player_spawn.x + dx, player_spawn.y + dy);
+            }
+            if let Some(stats) = self.world.get_mut::<Stats>(*p_ent) {
+                stats.ap = stats.max_ap;
+            }
+        }
+
+        // 5. Spawn enemies in other rooms
+        for (i, &room_center) in room_centers.iter().enumerate().skip(1) {
+            if i == room_centers.len() - 1 {
+                self.world
+                    .spawn_character(room_center, Team::Enemy, CharacterClass::Boss);
+                if let Some(boss_ent) = self
+                    .world
+                    .query2::<CharacterClass, Team>()
+                    .into_iter()
+                    .find(|(_, class, team)| {
+                        **class == CharacterClass::Boss && **team == Team::Enemy
+                    })
+                    .map(|(e, _, _)| e)
+                {
+                    self.world.insert(
+                        boss_ent,
+                        crate::components::ElementalShield {
+                            shield_type: crate::components::ShieldType::Ice,
+                            amount: 150,
+                            max_amount: 150,
+                        },
+                    );
+                }
+            } else {
+                if i % 2 == 0 {
+                    self.world.spawn_character(
+                        room_center,
+                        Team::Enemy,
+                        CharacterClass::ShadowStalker,
+                    );
+                } else {
+                    self.world.spawn_character(
+                        room_center,
+                        Team::Enemy,
+                        CharacterClass::CorruptedSpore,
+                    );
+                }
+            }
+        }
+
+        // 6. Reset GameState parameters for next floor
+        if let Some(state) = self.world.resource_mut::<GameState>() {
+            state.cursor = player_spawn;
+            state.selected_entity = None;
+            state.boss_phase = crate::components::BossPhase::Phase1;
+            state.turn = 1;
+        }
+
+        self.world
+            .insert_resource(verryte_map::VisibilityMap::new(width, height));
+        self.camera
+            .look_at(player_spawn.x as f32, player_spawn.y as f32);
+
+        self.log(format!(
+            "Welcome to Floor {}! Conquer this final level.",
+            floor
+        ));
     }
 
     pub fn apply_action(
@@ -3047,6 +3193,37 @@ impl Game {
                                             }
                                         }
                                     }
+                                    crate::components::ItemEffect::Combined(heal, ap) => {
+                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
+                                            stats.hp = std::cmp::min(stats.max_hp, stats.hp + heal);
+                                            stats.ap = std::cmp::min(stats.max_ap, stats.ap + ap);
+                                            self.log(format!("Combined effect! Healed for {} HP and replenished {} AP.", heal, ap));
+                                            let (tcx, tcy) = self.get_tile_center_pixels(
+                                                *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_heal(tcx, tcy, 20),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_burst(
+                                                    tcx,
+                                                    tcy,
+                                                    12,
+                                                    Color(255, 255, 100),
+                                                    &['+', '⚡'],
+                                                ),
+                                            );
+                                            if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events.send(verryte_core::AudioEvent::play("heal"));
+                                                events.send(verryte_core::AudioEvent::play(
+                                                    "replenish_ap",
+                                                ));
+                                            }
+                                        }
+                                    }
                                     crate::components::ItemEffect::ReplenishAp(amount) => {
                                         if let Some(stats) = self.world.get_mut::<Stats>(entity) {
                                             stats.ap =
@@ -3425,6 +3602,113 @@ impl Game {
                     self.log(m);
                 }
             }
+            Action::NextFloor => {
+                let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
+                if let Some(entity) = sel_entity {
+                    let pos = *self.world.get::<Position>(entity).unwrap();
+                    let tile = self
+                        .world
+                        .resource::<TacticalMap>()
+                        .unwrap()
+                        .tile(pos.x, pos.y);
+                    if tile == Tile::Stairs {
+                        self.transition_to_next_floor();
+                    } else {
+                        self.log("You must stand on a staircase to descend!");
+                    }
+                } else {
+                    self.log("Select a character first!");
+                }
+            }
+            Action::CraftItem(idx1, idx2) => {
+                let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
+                if let Some(entity) = sel_entity {
+                    let items_to_craft = {
+                        if let Some(inv) = self.world.get::<crate::components::Inventory>(entity) {
+                            if idx1 < inv.items.len() && idx2 < inv.items.len() && idx1 != idx2 {
+                                Some((inv.items[idx1], inv.items[idx2]))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some((item1_ent, item2_ent)) = items_to_craft {
+                        let item1_name = self
+                            .world
+                            .get::<crate::components::Item>(item1_ent)
+                            .map(|i| i.name.clone());
+                        let item2_name = self
+                            .world
+                            .get::<crate::components::Item>(item2_ent)
+                            .map(|i| i.name.clone());
+                        if let (Some(name1), Some(name2)) = (item1_name, item2_name) {
+                            let (matched, new_name, new_effect) = match (&name1[..], &name2[..]) {
+                                ("Healing Potion", "Healing Potion") => (
+                                    true,
+                                    "Mega Potion".to_string(),
+                                    crate::components::ItemEffect::Heal(75),
+                                ),
+                                ("Energy Elixir", "Energy Elixir") => (
+                                    true,
+                                    "Mega Energy Elixir".to_string(),
+                                    crate::components::ItemEffect::ReplenishAp(4),
+                                ),
+                                ("Healing Potion", "Energy Elixir")
+                                | ("Energy Elixir", "Healing Potion") => (
+                                    true,
+                                    "Elixir of Life".to_string(),
+                                    crate::components::ItemEffect::Combined(40, 2),
+                                ),
+                                _ => (false, String::new(), crate::components::ItemEffect::Cleanse),
+                            };
+
+                            if matched {
+                                if let Some(inv) =
+                                    self.world.get_mut::<crate::components::Inventory>(entity)
+                                {
+                                    inv.items.retain(|&e| e != item1_ent && e != item2_ent);
+                                }
+                                self.world.despawn(item1_ent);
+                                self.world.despawn(item2_ent);
+
+                                let new_item_ent = self.world.spawn_item(&new_name, new_effect);
+                                if let Some(inv) =
+                                    self.world.get_mut::<crate::components::Inventory>(entity)
+                                {
+                                    inv.items.push(new_item_ent);
+                                }
+
+                                self.log(format!(
+                                    "Alchemy success! Crafted {} from {} and {}.",
+                                    new_name, name1, name2
+                                ));
+
+                                let (tcx, tcy) = self.get_tile_center_pixels(
+                                    *self.world.get::<Position>(entity).unwrap(),
+                                );
+                                self.vfx_mut()
+                                    .particles
+                                    .extend(verryte_terminal::vfx::emit_bloom(tcx, tcy, 20));
+                                if let Some(events) = self
+                                    .world
+                                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                {
+                                    events.send(verryte_core::AudioEvent::play("cleanse"));
+                                }
+                            } else {
+                                self.log("No valid recipe for those items!");
+                            }
+                        }
+                    } else {
+                        self.log("Invalid crafting slots chosen!");
+                    }
+                } else {
+                    self.log("Select a character first!");
+                }
+            }
             _ => {}
         }
         let mut rng = *self.world.resource::<Rng>().unwrap();
@@ -3694,6 +3978,7 @@ impl Game {
                     Tile::Water => Color(30, 30, 100),
                     Tile::Lava => Color(120, 20, 10),
                     Tile::Ice => Color(100, 180, 200),
+                    Tile::Stairs => Color(160, 120, 40),
                 };
 
                 if matches!(vis, verryte_map::Visibility::Explored) {
@@ -3731,9 +4016,12 @@ impl Game {
                                 }
                                 _ => {
                                     let is_ice = matches!(tile, Tile::Ice);
+                                    let is_stairs = matches!(tile, Tile::Stairs);
                                     if dx == 0 || dy == 0 {
                                         if is_ice {
                                             '-'
+                                        } else if is_stairs {
+                                            '>'
                                         } else {
                                             '·'
                                         }
@@ -3746,6 +4034,7 @@ impl Game {
                                 Tile::Water => Color(80, 80, 180),
                                 Tile::Lava => Color(240, 100, 20),
                                 Tile::Ice => Color(200, 240, 255),
+                                Tile::Stairs => Color(255, 215, 0),
                                 _ => Color(40, 40, 40),
                             };
                             if matches!(vis, verryte_map::Visibility::Explored) {
@@ -4189,6 +4478,7 @@ impl Game {
             selected_can_act,
             combo_count: state.combo_count,
             battle_stats,
+            floor: state.floor,
         }
     }
 

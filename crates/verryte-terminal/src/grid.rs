@@ -1082,6 +1082,58 @@ impl Grid {
         }
     }
 
+    /// Fills a circular sector (pie slice/wedge) between start and end angles (in radians, clockwise from positive X axis).
+    pub fn fill_sector(
+        &mut self,
+        cx: i32,
+        cy: i32,
+        radius: u16,
+        start_angle: f32,
+        end_angle: f32,
+        cell: Cell,
+    ) {
+        if radius == 0 {
+            return;
+        }
+        let two_pi = std::f32::consts::TAU;
+        let start = start_angle.rem_euclid(two_pi);
+        let mut end = end_angle.rem_euclid(two_pi);
+        if end < start {
+            end += two_pi;
+        }
+
+        let is_angle_between = |angle: f32| -> bool {
+            let a = angle.rem_euclid(two_pi);
+            let a_plus = a + two_pi;
+            (start <= a && a <= end) || (start <= a_plus && a_plus <= end)
+        };
+
+        let r = radius as i32;
+        let r2 = r * r;
+
+        for dy in -r..=r {
+            let dx_max = ((r2 - dy * dy) as f64).sqrt() as i32;
+            let py = cy + dy;
+            if py < 0 || py >= self.height as i32 {
+                continue;
+            }
+            let x_start = (cx - dx_max).max(0) as u16;
+            let x_end = ((cx + dx_max).min(self.width as i32 - 1)) as u16;
+            for px in x_start..=x_end {
+                let dx = px as i32 - cx;
+                let dy_val = py as i32 - cy;
+                if dx == 0 && dy_val == 0 {
+                    self.put(px, py as u16, cell);
+                } else {
+                    let angle = (dy_val as f32).atan2(dx as f32);
+                    if is_angle_between(angle) {
+                        self.put(px, py as u16, cell);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn draw_diamond(&mut self, cx: i32, cy: i32, radius: u16, cell: Cell) {
         if radius == 0 {
             return;
@@ -2513,5 +2565,25 @@ mod tests {
         assert_eq!(grid2.get(3, 0).unwrap().glyph, ' ');
         assert_eq!(grid2.get(4, 0).unwrap().glyph, '*');
         assert_eq!(grid2.get(5, 0).unwrap().glyph, '*');
+    }
+
+    #[test]
+    fn test_grid_fill_sector() {
+        let mut grid = Grid::new(10, 10);
+        let cell = Cell::new('*');
+        // Fill a 90-degree sector in the positive quadrant (0 to PI/2 radians, which is down-right since y is down in terminal grid)
+        // Center at (5, 5), radius 3
+        grid.fill_sector(5, 5, 3, 0.0, std::f32::consts::FRAC_PI_2, cell);
+
+        // Center must be filled
+        assert_eq!(grid.get(5, 5).unwrap().glyph, '*');
+        // Point at (6, 5) is angle 0.0, within radius -> filled
+        assert_eq!(grid.get(6, 5).unwrap().glyph, '*');
+        // Point at (5, 6) is angle PI/2, within radius -> filled
+        assert_eq!(grid.get(5, 6).unwrap().glyph, '*');
+        // Point at (6, 6) is angle PI/4, within radius -> filled
+        assert_eq!(grid.get(6, 6).unwrap().glyph, '*');
+        // Point at (4, 5) is angle PI, not in [0, PI/2] -> empty
+        assert_eq!(grid.get(4, 5).unwrap().glyph, ' ');
     }
 }

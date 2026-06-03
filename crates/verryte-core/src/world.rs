@@ -1807,6 +1807,129 @@ impl World {
         true
     }
 
+    /// Visit every live entity that has `A`, `B`, `C`, and `D`, yielding mutable
+    /// references to all four components.
+    ///
+    /// Returns `false` immediately if any two types are the same. Uses the
+    /// same column-swap pattern as `for_each3_mut` to get owned access for
+    /// safe downcasting.
+    pub fn for_each4_mut<A, B, C, D, F>(&mut self, mut f: F) -> bool
+    where
+        A: 'static + Send + Sync,
+        B: 'static + Send + Sync,
+        C: 'static + Send + Sync,
+        D: 'static + Send + Sync,
+        F: FnMut(Entity, &mut A, &mut B, &mut C, &mut D),
+    {
+        let id_a = TypeId::of::<A>();
+        let id_b = TypeId::of::<B>();
+        let id_c = TypeId::of::<C>();
+        let id_d = TypeId::of::<D>();
+
+        if id_a == id_b
+            || id_a == id_c
+            || id_a == id_d
+            || id_b == id_c
+            || id_b == id_d
+            || id_c == id_d
+        {
+            return false;
+        }
+
+        let Some(col_a) = self.columns.get(&id_a) else {
+            return false;
+        };
+        let Some(col_b) = self.columns.get(&id_b) else {
+            return false;
+        };
+        let Some(col_c) = self.columns.get(&id_c) else {
+            return false;
+        };
+        let Some(col_d) = self.columns.get(&id_d) else {
+            return false;
+        };
+        let Some(typed_a) = col_a.as_any().downcast_ref::<TypedColumn<A>>() else {
+            return false;
+        };
+        let Some(typed_b) = col_b.as_any().downcast_ref::<TypedColumn<B>>() else {
+            return false;
+        };
+        let Some(typed_c) = col_c.as_any().downcast_ref::<TypedColumn<C>>() else {
+            return false;
+        };
+        let Some(typed_d) = col_d.as_any().downcast_ref::<TypedColumn<D>>() else {
+            return false;
+        };
+        let alive = &self.alive;
+        let len = typed_a
+            .slots
+            .len()
+            .min(typed_b.slots.len())
+            .min(typed_c.slots.len())
+            .min(typed_d.slots.len())
+            .min(alive.len());
+
+        let indices: Vec<usize> = (0..len)
+            .filter(|&i| {
+                if !alive[i] {
+                    return false;
+                }
+                let Some((ga, _)) = typed_a.slots[i].as_ref() else {
+                    return false;
+                };
+                let Some((gb, _)) = typed_b.slots[i].as_ref() else {
+                    return false;
+                };
+                let Some((gc, _)) = typed_c.slots[i].as_ref() else {
+                    return false;
+                };
+                let Some((gd, _)) = typed_d.slots[i].as_ref() else {
+                    return false;
+                };
+                ga == gb && ga == gc && ga == gd
+            })
+            .collect();
+
+        if indices.is_empty() {
+            return true;
+        }
+
+        let mut columns = std::mem::take(&mut self.columns);
+        let col_a = columns.remove(&id_a).unwrap();
+        let col_b = columns.remove(&id_b).unwrap();
+        let col_c = columns.remove(&id_c).unwrap();
+        let col_d = columns.remove(&id_d).unwrap();
+
+        let any_a = col_a.into_any();
+        let any_b = col_b.into_any();
+        let any_c = col_c.into_any();
+        let any_d = col_d.into_any();
+        let mut typed_a = any_a.downcast::<TypedColumn<A>>().unwrap();
+        let mut typed_b = any_b.downcast::<TypedColumn<B>>().unwrap();
+        let mut typed_c = any_c.downcast::<TypedColumn<C>>().unwrap();
+        let mut typed_d = any_d.downcast::<TypedColumn<D>>().unwrap();
+
+        for i in indices {
+            let gen = typed_a.slots[i].as_ref().unwrap().0;
+            let (_, val_a) = typed_a.slots[i].as_mut().unwrap();
+            let (_, val_b) = typed_b.slots[i].as_mut().unwrap();
+            let (_, val_c) = typed_c.slots[i].as_mut().unwrap();
+            let (_, val_d) = typed_d.slots[i].as_mut().unwrap();
+            let entity = Entity {
+                index: i as u32,
+                generation: gen,
+            };
+            f(entity, val_a, val_b, val_c, val_d);
+        }
+
+        columns.insert(id_a, typed_a);
+        columns.insert(id_b, typed_b);
+        columns.insert(id_c, typed_c);
+        columns.insert(id_d, typed_d);
+        self.columns = columns;
+        true
+    }
+
     /// Install a resource of type `R`. Returns the previous value if present.
     pub fn insert_resource<R: 'static + Send + Sync>(&mut self, resource: R) -> Option<R> {
         let type_id = TypeId::of::<R>();
@@ -3048,6 +3171,44 @@ mod tests {
         // All three columns exist, so it returns true even though there are matches.
         let result = world.for_each3_mut::<Pos, Tag, Counter, _>(|_, _, _, _| {});
         assert!(result);
+    }
+
+    #[test]
+    fn for_each4_mut_visits_entities_with_all_four_components() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.insert(a, Pos(0, 0));
+        world.insert(a, Tag("alpha"));
+        world.insert(a, Counter(1));
+        world.insert(a, 42u32); // u32 as 4th component
+
+        world.insert(b, Pos(1, 1));
+        world.insert(b, Tag("beta"));
+        world.insert(b, Counter(2));
+        // b has no u32.
+
+        world.for_each4_mut::<Pos, Tag, Counter, u32, _>(|_, pos, tag, counter, extra| {
+            pos.0 += 10;
+            counter.0 += 100;
+            *extra += 1000;
+            assert!(!tag.0.is_empty());
+        });
+
+        assert_eq!(world.get::<Pos>(a), Some(&Pos(10, 0)));
+        assert_eq!(world.get::<Counter>(a), Some(&Counter(101)));
+        assert_eq!(world.get::<u32>(a), Some(&1042));
+        assert_eq!(world.get::<Pos>(b), Some(&Pos(1, 1)));
+    }
+
+    #[test]
+    fn for_each4_mut_returns_false_for_duplicate_types() {
+        let mut world = World::new();
+        let a = world.spawn();
+        world.insert(a, Counter(5));
+
+        let result = world.for_each4_mut::<Counter, Counter, Pos, Tag, _>(|_, _, _, _, _| {});
+        assert!(!result);
     }
 
     #[test]

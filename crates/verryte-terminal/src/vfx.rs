@@ -694,6 +694,16 @@ impl VfxSystem {
         }
     }
 
+    /// Clears all active visual effects (particles, shakes, flashes, floating texts, aoe rings, highlights).
+    pub fn clear(&mut self) {
+        self.particles.clear();
+        self.shakes.clear();
+        self.flashes.clear();
+        self.floating_texts.clear();
+        self.aoe_rings.clear();
+        self.highlights.clear();
+    }
+
     pub fn update(&mut self, dt: f32) {
         for p in &mut self.particles {
             let progress = (1.0 - p.alpha_ratio()).clamp(0.0, 1.0);
@@ -1486,5 +1496,18 @@ mod tests {
         assert_eq!(vfx.floating_texts.len(), 1);
         assert_eq!(vfx.aoe_rings.len(), 1);
         assert_eq!(vfx.highlights.len(), 1);
+    }
+
+    #[test]
+    fn test_vfx_system_clear() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_shake(2.0, 0.5);
+        vfx.trigger_flash(Color::RED, 0.2);
+        assert_eq!(vfx.shakes.len(), 1);
+        assert_eq!(vfx.flashes.len(), 1);
+
+        vfx.clear();
+        assert_eq!(vfx.shakes.len(), 0);
+        assert_eq!(vfx.flashes.len(), 0);
     }
 }
