@@ -78,4 +78,3 @@ fn test_bindings_queries() {
         vec![ScrollDirection::Up]
     );
 }
-

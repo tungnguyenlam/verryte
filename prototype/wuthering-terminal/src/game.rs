@@ -9,6 +9,14 @@ use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, Schedule, World};
 use verryte_input::{ActionSource, InputRouter};
 use verryte_terminal::{Camera, Cell, Color, Grid, VisualRegistry};
 
+fn saves_dir() -> &'static str {
+    if std::path::Path::new("prototype/wuthering-terminal").exists() {
+        "prototype/wuthering-terminal/saves"
+    } else {
+        "saves"
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum MapError {
     Empty,
@@ -71,6 +79,8 @@ impl Game {
         world.insert_resource(crate::components::EquippedEchoes::default());
         world.insert_resource(crate::components::TurnTransition::default());
         world.insert_resource(crate::components::ReplayState::default());
+        world.insert_resource(crate::components::BossConfig::default());
+        world.insert_resource(verryte_core::Diagnostics::new());
 
         let mut registry = VisualRegistry::new();
         crate::generated_assets::register_assets(&mut registry);
@@ -258,6 +268,7 @@ impl Game {
 
     pub fn resolve_combat_hit(
         &mut self,
+        attacker: Entity,
         target: Entity,
         base_damage: i32,
         attacker_name: &str,
@@ -361,21 +372,22 @@ impl Game {
 
         // --- ECHO ABILITIES (Target) ---
         if !defeated && self.world.get::<Team>(target) == Some(&Team::Player) {
-            let abilities = self
-                .world
-                .resource::<crate::components::EquippedEchoes>()
-                .unwrap();
-            if abilities
-                .abilities
-                .contains(&crate::components::EchoAbility::Thorns)
-            {
-                // Reflect 20% damage
+            let has_thorns = {
+                let abilities = self
+                    .world
+                    .resource::<crate::components::EquippedEchoes>()
+                    .unwrap();
+                abilities
+                    .abilities
+                    .contains(&crate::components::EchoAbility::Thorns)
+            };
+            if has_thorns {
                 let reflect = (damage as f32 * 0.2) as i32;
                 if reflect > 0 {
-                    self.log(format!("Thorns reflected {} damage back!", reflect));
-                    // Note: Attacker is not explicitly passed here, so we skip for now
-                    // or I should refactor to include attacker.
-                    // For this run, I'll just log it.
+                    if let Some(atk_stats) = self.world.get_mut::<Stats>(attacker) {
+                        atk_stats.hp -= reflect;
+                        self.log(format!("Thorns reflected {} damage back!", reflect));
+                    }
                 }
             }
         }
@@ -385,14 +397,24 @@ impl Game {
         let phase = self.world.resource::<GameState>().unwrap().phase;
         if phase == TurnPhase::Player {
             if let Some(_sel_ent) = self.world.resource::<GameState>().unwrap().selected_entity {
-                let abilities = self
-                    .world
-                    .resource::<crate::components::EquippedEchoes>()
-                    .unwrap();
-                if abilities
-                    .abilities
-                    .contains(&crate::components::EchoAbility::Frostbite)
-                {
+                let (has_frostbite, has_stun, has_lifesteal) = {
+                    let abilities = self
+                        .world
+                        .resource::<crate::components::EquippedEchoes>()
+                        .unwrap();
+                    (
+                        abilities
+                            .abilities
+                            .contains(&crate::components::EchoAbility::Frostbite),
+                        abilities
+                            .abilities
+                            .contains(&crate::components::EchoAbility::Stun),
+                        abilities
+                            .abilities
+                            .contains(&crate::components::EchoAbility::Lifesteal),
+                    )
+                };
+                if has_frostbite {
                     let mut apply_ice = false;
                     {
                         let rng = self.world.resource_mut::<Rng>().unwrap();
@@ -406,6 +428,32 @@ impl Game {
                             target,
                             crate::components::ElementalStatus::Ice { duration: 2 },
                         );
+                    }
+                }
+                if has_stun {
+                    let mut apply_stun = false;
+                    {
+                        let rng = self.world.resource_mut::<Rng>().unwrap();
+                        if rng.chance(0.15) {
+                            apply_stun = true;
+                        }
+                    }
+                    if apply_stun {
+                        self.log("Stun Echo triggered! Target is stunned for 1 turn.");
+                        self.world
+                            .insert(target, crate::components::Stunned { duration: 1 });
+                    }
+                }
+                if has_lifesteal {
+                    let heal = (damage as f32 * 0.15) as i32;
+                    if heal > 0 {
+                        let attacker = self.world.resource::<GameState>().unwrap().selected_entity;
+                        if let Some(ae) = attacker {
+                            if let Some(stats) = self.world.get_mut::<Stats>(ae) {
+                                stats.hp = (stats.hp + heal).min(stats.max_hp);
+                                self.log(format!("Lifesteal healed attacker for {} HP!", heal));
+                            }
+                        }
                     }
                 }
             }
@@ -605,297 +653,6 @@ impl Game {
         }
     }
 
-    pub fn run_enemy_ai(&mut self) {
-        let mut enemies = Vec::new();
-        for (e, team) in self.world.query::<Team>() {
-            if *team == Team::Enemy {
-                enemies.push(e);
-            }
-        }
-
-        // Replenish enemy AP on start of enemy turn
-        for e in &enemies {
-            let mut is_rooted = false;
-            let mut root_remains = false;
-            if let Some(rooted) = self.world.get_mut::<crate::components::Rooted>(*e) {
-                if rooted.duration > 0 {
-                    rooted.duration -= 1;
-                    is_rooted = true;
-                    if rooted.duration > 0 {
-                        root_remains = true;
-                    }
-                }
-            }
-            if is_rooted {
-                if !root_remains {
-                    self.world.remove::<crate::components::Rooted>(*e);
-                }
-                if let Some(stats) = self.world.get_mut::<Stats>(*e) {
-                    stats.ap = 0;
-                }
-                let class = *self.world.get::<CharacterClass>(*e).unwrap();
-                self.log(format!(
-                    "{} is rooted and cannot act this turn!",
-                    Self::get_class_name(class)
-                ));
-            } else {
-                if let Some(stats) = self.world.get_mut::<Stats>(*e) {
-                    stats.ap = stats.max_ap;
-                }
-            }
-        }
-
-        for enemy_entity in enemies {
-            loop {
-                let outcome = self.world.resource::<GameState>().unwrap().outcome;
-                if outcome != Outcome::Playing {
-                    break;
-                }
-
-                let (enemy_pos, enemy_stats, enemy_class) = {
-                    let pos = self.world.get::<Position>(enemy_entity);
-                    let stats = self.world.get::<Stats>(enemy_entity);
-                    let class = self.world.get::<CharacterClass>(enemy_entity);
-                    if let (Some(p), Some(s), Some(c)) = (pos, stats, class) {
-                        (*p, s.clone(), *c)
-                    } else {
-                        break;
-                    }
-                };
-
-                if enemy_stats.ap <= 0 {
-                    break;
-                }
-
-                let mut nearest_player: Option<(Entity, Position, Stats, CharacterClass)> = None;
-                let mut min_dist = i16::MAX;
-
-                for (pe, p, team) in self.world.query2::<Position, Team>() {
-                    if *team == Team::Player {
-                        let dist = (enemy_pos.x - p.x).abs() + (enemy_pos.y - p.y).abs();
-                        if dist < min_dist {
-                            if let (Some(stats), Some(class)) = (
-                                self.world.get::<Stats>(pe),
-                                self.world.get::<CharacterClass>(pe),
-                            ) {
-                                min_dist = dist;
-                                nearest_player = Some((pe, *p, stats.clone(), *class));
-                            }
-                        }
-                    }
-                }
-
-                let Some((player_entity, player_pos, player_stats, player_class)) = nearest_player
-                else {
-                    self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Defeat;
-                    self.log("Defeat! All player characters defeated.");
-                    break;
-                };
-
-                let range = if enemy_class == CharacterClass::Boss {
-                    2
-                } else {
-                    1
-                };
-                if min_dist <= range {
-                    // Boss is next to a player. Let's decide whether to telegraph or normal attack!
-                    let rng_val = {
-                        let rng = self.world.resource_mut::<Rng>().unwrap();
-                        rng.next_u32(100)
-                    };
-
-                    let telegraph_active = {
-                        let telegraph_zone = self
-                            .world
-                            .resource::<crate::components::TelegraphZone>()
-                            .unwrap();
-                        !telegraph_zone.tiles.is_empty()
-                    };
-
-                    let is_phase_2 = {
-                        let state = self.world.resource::<GameState>().unwrap();
-                        state.boss_phase == crate::components::BossPhase::Phase2
-                    };
-                    let telegraph_rate = if is_phase_2 { 60 } else { 40 };
-
-                    if !telegraph_active
-                        && enemy_class == CharacterClass::Boss
-                        && rng_val < telegraph_rate
-                    {
-                        // Boss chooses to telegraph!
-                        let mut tiles = Vec::new();
-                        if is_phase_2 {
-                            // Star shape: center + cardinal paths (length 2) + diagonals (length 1)
-                            tiles.push(player_pos);
-                            for d in 1..=2 {
-                                tiles.push(Position::new(player_pos.x, player_pos.y - d));
-                                tiles.push(Position::new(player_pos.x, player_pos.y + d));
-                                tiles.push(Position::new(player_pos.x - d, player_pos.y));
-                                tiles.push(Position::new(player_pos.x + d, player_pos.y));
-                            }
-                            tiles.push(Position::new(player_pos.x - 1, player_pos.y - 1));
-                            tiles.push(Position::new(player_pos.x + 1, player_pos.y - 1));
-                            tiles.push(Position::new(player_pos.x - 1, player_pos.y + 1));
-                            tiles.push(Position::new(player_pos.x + 1, player_pos.y + 1));
-                        } else {
-                            // 3x3 square
-                            for dy in -1..=1 {
-                                for dx in -1..=1 {
-                                    let tx = player_pos.x + dx;
-                                    let ty = player_pos.y + dy;
-                                    tiles.push(Position::new(tx, ty));
-                                }
-                            }
-                        }
-
-                        let map_w = {
-                            let map = self.world.resource::<TacticalMap>().unwrap();
-                            map.width as i16
-                        };
-                        let map_h = {
-                            let map = self.world.resource::<TacticalMap>().unwrap();
-                            map.height as i16
-                        };
-                        tiles.retain(|p| p.x >= 0 && p.x < map_w && p.y >= 0 && p.y < map_h);
-
-                        let damage = if is_phase_2 { 80 } else { 50 };
-
-                        {
-                            let telegraph_zone = self
-                                .world
-                                .resource_mut::<crate::components::TelegraphZone>()
-                                .unwrap();
-                            telegraph_zone.tiles = tiles;
-                            telegraph_zone.damage = damage;
-                        }
-
-                        if let Some(stats) = self.world.get_mut::<Stats>(enemy_entity) {
-                            stats.ap = 0; // Spends all AP to telegraph
-                        }
-
-                        if is_phase_2 {
-                            self.log("Blight Sovereign is charging Celestial Ruin! Star-shaped area telegraphed in RED.");
-                        } else {
-                            self.log("Blight Sovereign is charging Dark Annihilation! Area telegraphed in RED.");
-                        }
-
-                        // Spawn dark particles
-                        let (ex, ey) = self.get_tile_center_pixels(enemy_pos);
-                        self.vfx_mut()
-                            .particles
-                            .extend(verryte_terminal::vfx::emit_burst(
-                                ex,
-                                ey,
-                                30,
-                                Color(120, 20, 180),
-                                &['░', '▓', '✦', '¤'],
-                            ));
-                        self.vfx_mut()
-                            .shakes
-                            .push(verryte_terminal::vfx::ScreenShake::new(2.5, 0.4));
-                        break;
-                    }
-
-                    let mut ap_ok = false;
-                    if let Some(stats) = self.world.get_mut::<Stats>(enemy_entity) {
-                        if stats.ap >= 1 {
-                            stats.ap -= 1;
-                            ap_ok = true;
-                        }
-                    }
-                    if ap_ok {
-                        let base_damage = std::cmp::max(1, enemy_stats.atk - player_stats.def);
-                        let enemy_name = Self::get_class_name(enemy_class);
-                        let player_name = Self::get_class_name(player_class);
-                        let (damage, defeated) = self.resolve_combat_hit(
-                            player_entity,
-                            base_damage,
-                            enemy_name,
-                            player_name,
-                            player_pos,
-                        );
-
-                        if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
-                            log.send(GameEvent::Attacked {
-                                attacker: enemy_entity,
-                                target: player_entity,
-                                damage,
-                            });
-                        }
-
-                        if defeated {
-                            let name_str = player_name.to_string();
-                            self.handle_defeat(player_entity, &name_str, player_class, player_pos);
-
-                            let mut player_exists = false;
-                            for (_e, team) in self.world.query::<Team>() {
-                                if *team == Team::Player {
-                                    player_exists = true;
-                                    break;
-                                }
-                            }
-                            if !player_exists {
-                                self.world.resource_mut::<GameState>().unwrap().outcome =
-                                    Outcome::Defeat;
-                                self.log("Defeat! All player characters defeated.");
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    let map = self.world.resource::<TacticalMap>().unwrap();
-                    let path_opt = map.tiles.shortest_path4(enemy_pos, player_pos, |pt, tile| {
-                        matches!(tile, Tile::Grass)
-                            && (pt == player_pos || !self.is_occupied_except(pt, enemy_entity))
-                    });
-
-                    if let Some(path) = path_opt {
-                        if path.len() >= 2 {
-                            let steps = std::cmp::min(enemy_stats.ap as usize, path.len() - 2);
-                            let mut final_steps = steps;
-                            while final_steps > 0 {
-                                let candidate = path[final_steps];
-                                if !self.is_occupied_except(candidate, enemy_entity) {
-                                    break;
-                                }
-                                final_steps -= 1;
-                            }
-
-                            if final_steps > 0 {
-                                let target_tile = path[final_steps];
-                                if let Some(pos) = self.world.get_mut::<Position>(enemy_entity) {
-                                    *pos = target_tile;
-                                }
-                                if let Some(stats) = self.world.get_mut::<Stats>(enemy_entity) {
-                                    stats.ap -= final_steps as i32;
-                                }
-                                let enemy_name = Self::get_class_name(enemy_class);
-                                self.log(format!(
-                                    "{} moved closer to player at ({}, {}).",
-                                    enemy_name, target_tile.x, target_tile.y
-                                ));
-
-                                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
-                                    log.send(GameEvent::Moved {
-                                        entity: enemy_entity,
-                                        from: enemy_pos,
-                                        to: target_tile,
-                                    });
-                                }
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
     pub fn try_absorb_echo(&mut self, pos: Position) {
         let mut absorbed = None;
         for (e, p, echo) in self.world.query2::<Position, crate::components::EchoItem>() {
@@ -961,14 +718,19 @@ impl Game {
                 phase = state.boss_phase;
             }
             if phase == crate::components::BossPhase::Phase1 {
+                let config = self
+                    .world
+                    .resource::<crate::components::BossConfig>()
+                    .cloned()
+                    .unwrap_or_default();
                 if let Some(stats) = self.world.get_mut::<Stats>(entity) {
-                    stats.max_hp = 500;
-                    stats.hp = 500;
-                    stats.atk += 10;
-                    stats.def += 5;
-                    stats.spd += 2;
-                    stats.max_ap = 7;
-                    stats.ap = 7;
+                    stats.max_hp = config.phase2_max_hp;
+                    stats.hp = config.phase2_max_hp;
+                    stats.atk += config.phase2_atk_bonus;
+                    stats.def += config.phase2_def_bonus;
+                    stats.spd += config.phase2_spd_bonus;
+                    stats.max_ap = config.phase2_max_ap;
+                    stats.ap = config.phase2_max_ap;
                 }
 
                 if let Some(state) = self.world.resource_mut::<GameState>() {
@@ -1612,8 +1374,14 @@ impl Game {
                 } else {
                     let base_damage =
                         std::cmp::max(1, value - self.world.get::<Stats>(te).unwrap().def);
-                    let (damage, mut defeated) =
-                        self.resolve_combat_hit(te, base_damage, caster_name, target_name, t_pos);
+                    let (damage, mut defeated) = self.resolve_combat_hit(
+                        caster,
+                        te,
+                        base_damage,
+                        caster_name,
+                        target_name,
+                        t_pos,
+                    );
 
                     if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
                         log.send(GameEvent::Attacked {
@@ -1690,20 +1458,28 @@ impl Game {
                 phase = state.boss_phase;
             }
 
-            if phase == crate::components::BossPhase::Phase1 && current_hp <= 250 && current_hp > 0
+            let config = self
+                .world
+                .resource::<crate::components::BossConfig>()
+                .cloned()
+                .unwrap_or_default();
+
+            if phase == crate::components::BossPhase::Phase1
+                && current_hp <= config.phase2_hp_threshold
+                && current_hp > 0
             {
                 transition = true;
             }
 
             if transition {
                 if let Some(stats) = self.world.get_mut::<Stats>(be) {
-                    stats.max_hp = 500;
-                    stats.hp = 500;
-                    stats.atk += 10;
-                    stats.def += 5;
-                    stats.spd += 2;
-                    stats.max_ap = 7;
-                    stats.ap = 7;
+                    stats.max_hp = config.phase2_max_hp;
+                    stats.hp = config.phase2_max_hp;
+                    stats.atk += config.phase2_atk_bonus;
+                    stats.def += config.phase2_def_bonus;
+                    stats.spd += config.phase2_spd_bonus;
+                    stats.max_ap = config.phase2_max_ap;
+                    stats.ap = config.phase2_max_ap;
                 }
 
                 if let Some(state) = self.world.resource_mut::<GameState>() {
@@ -2340,6 +2116,7 @@ impl Game {
                                     let attacker_name = Self::get_class_name(sel_class);
                                     let target_name = Self::get_class_name(target_class);
                                     let (damage, mut defeated) = self.resolve_combat_hit(
+                                        sel_entity,
                                         target_entity,
                                         base_damage,
                                         attacker_name,
@@ -2795,11 +2572,7 @@ impl Game {
                 self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Quit;
             }
             Action::Save => {
-                let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists() {
-                    "prototype/wuthering-terminal/saves"
-                } else {
-                    "saves"
-                };
+                let base_path = saves_dir();
                 let _ = std::fs::create_dir_all(base_path);
 
                 if let Ok(state) = self.save_state() {
@@ -2820,11 +2593,7 @@ impl Game {
                 }
             }
             Action::Load => {
-                let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists() {
-                    "prototype/wuthering-terminal/saves"
-                } else {
-                    "saves"
-                };
+                let base_path = saves_dir();
                 let path = format!("{}/quicksave.json", base_path);
                 if let Ok(state_str) = std::fs::read_to_string(&path) {
                     if self.load_state(&state_str).is_ok() {
@@ -2858,12 +2627,7 @@ impl Game {
                     self.world.resource_mut::<GameState>().unwrap().is_recording = false;
                     self.log("Action recording STOPPED.");
                     // Save history to a file
-                    let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists()
-                    {
-                        "prototype/wuthering-terminal/saves"
-                    } else {
-                        "saves"
-                    };
+                    let base_path = saves_dir();
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -2876,12 +2640,7 @@ impl Game {
                     }
                 } else {
                     self.router.clear_history();
-                    let base_path = if std::path::Path::new("prototype/wuthering-terminal").exists()
-                    {
-                        "prototype/wuthering-terminal/saves"
-                    } else {
-                        "saves"
-                    };
+                    let base_path = saves_dir();
                     let path = format!("{}/last_recording.json", base_path);
                     self.router.start_recording(path);
                     self.world.resource_mut::<GameState>().unwrap().is_recording = true;
@@ -2899,12 +2658,7 @@ impl Game {
                         (false, "Replay mode DISABLED.".to_string())
                     } else {
                         // Try to load last_recording.json
-                        let base_path =
-                            if std::path::Path::new("prototype/wuthering-terminal").exists() {
-                                "prototype/wuthering-terminal/saves"
-                            } else {
-                                "saves"
-                            };
+                        let base_path = saves_dir();
                         let path = format!("{}/last_recording.json", base_path);
                         if let Ok(history) =
                             verryte_input::InputRouter::<Action>::load_history_from_file(&path)

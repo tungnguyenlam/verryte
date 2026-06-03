@@ -30,6 +30,7 @@
 
 use crate::diagnostics::Diagnostics;
 use crate::world::World;
+use std::fmt;
 use std::time::Duration;
 
 pub type System = fn(&mut World);
@@ -531,6 +532,12 @@ impl Schedule {
 impl Default for Schedule {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl fmt::Display for Schedule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.describe())
     }
 }
 

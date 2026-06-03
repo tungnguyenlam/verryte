@@ -170,6 +170,7 @@ pub struct World {
     resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     resource_ticks: HashMap<TypeId, u64>,
     change_tick: u64,
+    live_count: usize,
 }
 
 impl World {
@@ -183,6 +184,7 @@ impl World {
             resources: HashMap::new(),
             resource_ticks: HashMap::new(),
             change_tick: 1,
+            live_count: 0,
         }
     }
 
@@ -221,7 +223,7 @@ impl World {
 
     /// Allocate a fresh [`Entity`].
     pub fn spawn(&mut self) -> Entity {
-        if let Some(index) = self.free.pop() {
+        let entity = if let Some(index) = self.free.pop() {
             let idx = index as usize;
             self.alive[idx] = true;
             self.generations[idx] = self.generations[idx].wrapping_add(1).max(1);
@@ -237,7 +239,9 @@ impl World {
                 index,
                 generation: 1,
             }
-        }
+        };
+        self.live_count += 1;
+        entity
     }
 
     /// Force allocate an entity at a specific ID slot with a specific generation.
@@ -258,6 +262,8 @@ impl World {
             for column in self.columns.values_mut() {
                 column.clear_index(idx);
             }
+        } else {
+            self.live_count += 1;
         }
 
         self.generations[idx] = entity.generation;
@@ -294,6 +300,7 @@ impl World {
 
         let idx = entity.index as usize;
         self.alive[idx] = false;
+        self.live_count -= 1;
         for column in self.columns.values_mut() {
             column.clear_index(idx);
         }
@@ -346,7 +353,7 @@ impl World {
     }
 
     pub fn entity_count(&self) -> usize {
-        self.alive.iter().filter(|a| **a).count()
+        self.live_count
     }
 
     /// Despawn every live entity in the world, dropping all their components.
@@ -414,6 +421,7 @@ impl World {
                 self.free.push(idx as u32);
             }
         }
+        self.live_count = 0;
     }
 
     /// Clear all state: entities, components, and resources. Returns to a fresh world.

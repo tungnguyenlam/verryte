@@ -1428,9 +1428,22 @@ mod tests {
             .map(|(e, _)| e)
             .unwrap();
 
-        // Move wraith next to warrior
+        // Move wraith next to warrior and far from others
         *game.world.get_mut::<Position>(wraith).unwrap() = Position::new(5, 4);
         *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        // Move other players far away so warrior is the clear target
+        let others: Vec<_> = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .filter(|(_, c)| **c == CharacterClass::Mage || **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .collect();
+        for e in others {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(0, 15);
+        }
+        // Lower warrior HP so it's the priority target even with healer bonus
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 50;
 
         // Give wraith AP and force enemy phase
         game.world.get_mut::<Stats>(wraith).unwrap().ap = 3;

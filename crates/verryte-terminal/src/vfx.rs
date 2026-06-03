@@ -746,7 +746,8 @@ impl VfxSystem {
 
     /// Add an eased screen shake effect.
     pub fn trigger_shake_eased(&mut self, intensity: f32, duration: f32, easing: EasingMode) {
-        self.shakes.push(ScreenShake::new_eased(intensity, duration, easing));
+        self.shakes
+            .push(ScreenShake::new_eased(intensity, duration, easing));
     }
 
     /// Add a full screen flash effect.
@@ -761,17 +762,29 @@ impl VfxSystem {
 
     /// Add a floating text indicator.
     pub fn trigger_floating_text(&mut self, x: f32, y: f32, text: &str, fg: Color, bold: bool) {
-        self.floating_texts.push(FloatingText::new(x, y, text, fg, bold));
+        self.floating_texts
+            .push(FloatingText::new(x, y, text, fg, bold));
     }
 
     /// Add an AoE ring effect.
-    pub fn trigger_aoe_ring(&mut self, cx: i32, cy: i32, max_radius: f32, color: Color, duration: f32) {
+    pub fn trigger_aoe_ring(
+        &mut self,
+        cx: i32,
+        cy: i32,
+        max_radius: f32,
+        color: Color,
+        duration: f32,
+    ) {
         self.aoe_rings.push(AoeRing {
             cx,
             cy,
             max_radius,
             current_radius: 0.0,
-            expand_speed: if duration > 0.0 { max_radius / duration } else { max_radius },
+            expand_speed: if duration > 0.0 {
+                max_radius / duration
+            } else {
+                max_radius
+            },
             color,
             lifetime: duration,
             max_lifetime: duration,
@@ -779,7 +792,14 @@ impl VfxSystem {
     }
 
     /// Add a spatial highlight.
-    pub fn trigger_highlight(&mut self, points: Vec<(i32, i32)>, color: Color, glyph: Option<char>, bg_alpha: f32, lifetime: f32) {
+    pub fn trigger_highlight(
+        &mut self,
+        points: Vec<(i32, i32)>,
+        color: Color,
+        glyph: Option<char>,
+        bg_alpha: f32,
+        lifetime: f32,
+    ) {
         self.highlights.push(SpatialHighlight {
             points,
             color,

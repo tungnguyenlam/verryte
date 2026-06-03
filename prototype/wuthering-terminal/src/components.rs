@@ -56,6 +56,37 @@ pub enum BossPhase {
     Phase2,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct BossConfig {
+    pub phase2_hp_threshold: i32,
+    pub phase2_max_hp: i32,
+    pub phase2_atk_bonus: i32,
+    pub phase2_def_bonus: i32,
+    pub phase2_spd_bonus: i32,
+    pub phase2_max_ap: i32,
+    pub telegraph_damage_phase1: i32,
+    pub telegraph_damage_phase2: i32,
+    pub telegraph_rate_phase1: u32,
+    pub telegraph_rate_phase2: u32,
+}
+
+impl Default for BossConfig {
+    fn default() -> Self {
+        Self {
+            phase2_hp_threshold: 250,
+            phase2_max_hp: 500,
+            phase2_atk_bonus: 10,
+            phase2_def_bonus: 5,
+            phase2_spd_bonus: 2,
+            phase2_max_ap: 7,
+            telegraph_damage_phase1: 50,
+            telegraph_damage_phase2: 80,
+            telegraph_rate_phase1: 40,
+            telegraph_rate_phase2: 60,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UIState {
     Normal,

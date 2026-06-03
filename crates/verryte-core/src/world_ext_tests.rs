@@ -47,4 +47,3 @@ fn test_world_tag_helpers() {
     assert!(!world.is_alive(e3));
     assert!(world.is_alive(e1));
 }
-

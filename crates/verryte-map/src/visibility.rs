@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::{Point, TileGrid};
 
 /// Visibility state of a tile in a [`VisibilityMap`].
@@ -8,6 +10,16 @@ pub enum Visibility {
     Hidden, // Never seen
     Explored, // Seen in the past, but not currently visible
     Visible,  // Currently in line of sight
+}
+
+impl fmt::Display for Visibility {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Visibility::Hidden => write!(f, "Hidden"),
+            Visibility::Explored => write!(f, "Explored"),
+            Visibility::Visible => write!(f, "Visible"),
+        }
+    }
 }
 
 /// Tracks field-of-view and exploration state for a grid.

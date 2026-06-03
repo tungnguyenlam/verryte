@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::color::Color;
 use crate::layout::{Alignment, BorderStyle, Rect};
 
@@ -108,6 +110,34 @@ impl CellAttrs {
     }
 }
 
+impl fmt::Display for CellAttrs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        macro_rules! flag {
+            ($name:expr, $field:expr) => {
+                if $field {
+                    if !first {
+                        write!(f, "+")?;
+                    }
+                    write!(f, $name)?;
+                    first = false;
+                }
+            };
+        }
+        flag!("bold", self.bold);
+        flag!("dim", self.dim);
+        flag!("italic", self.italic);
+        flag!("underline", self.underline);
+        flag!("blink", self.blink);
+        flag!("reverse", self.reverse);
+        if first {
+            write!(f, "none")
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// One terminal cell.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -172,6 +202,20 @@ impl Cell {
 
     pub fn is_transparent(&self) -> bool {
         self.glyph == ' '
+    }
+}
+
+impl fmt::Display for Cell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.attrs.is_empty() {
+            write!(f, "'{}' fg={} bg={}", self.glyph, self.fg, self.bg)
+        } else {
+            write!(
+                f,
+                "'{}' fg={} bg={} attrs={}",
+                self.glyph, self.fg, self.bg, self.attrs
+            )
+        }
     }
 }
 
@@ -1324,6 +1368,7 @@ impl Grid {
     }
 
     pub fn to_ansi_string(&self) -> String {
+        use std::fmt::Write;
         let mut out = String::with_capacity(self.cells.len() * 20 + self.height as usize * 10);
         let mut last_fg: Option<Color> = None;
         let mut last_bg: Option<Color> = None;
@@ -1345,17 +1390,11 @@ impl Grid {
                     last_attrs = Some(cell.attrs);
                 }
                 if last_fg != Some(cell.fg) {
-                    out.push_str(&format!(
-                        "\x1b[38;2;{};{};{}m",
-                        cell.fg.0, cell.fg.1, cell.fg.2
-                    ));
+                    let _ = write!(out, "\x1b[38;2;{};{};{}m", cell.fg.0, cell.fg.1, cell.fg.2);
                     last_fg = Some(cell.fg);
                 }
                 if last_bg != Some(cell.bg) {
-                    out.push_str(&format!(
-                        "\x1b[48;2;{};{};{}m",
-                        cell.bg.0, cell.bg.1, cell.bg.2
-                    ));
+                    let _ = write!(out, "\x1b[48;2;{};{};{}m", cell.bg.0, cell.bg.1, cell.bg.2);
                     last_bg = Some(cell.bg);
                 }
                 out.push(cell.glyph);

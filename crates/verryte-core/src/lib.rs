@@ -45,7 +45,9 @@ pub use schedule::{NamedSystem, Schedule, System};
 #[cfg(feature = "serde")]
 pub use snapshot::{EntitySnapshot, WorldRegistry, WorldSnapshot};
 pub use tag::Tag;
-pub use world::{Children, Parent, Query, Query2, Query3, World};
+pub use world::{
+    Children, Parent, Query, Query2, Query3, Query4, Query5, QueryMut4Guard, QueryMut5Guard, World,
+};
 
 /// A request to play a specific sound by name.
 #[derive(Clone, Debug, PartialEq)]

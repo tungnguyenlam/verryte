@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
 
 /// Runtime performance metrics for a single ECS system.
@@ -163,6 +164,25 @@ impl Diagnostics {
             total_duration_ns: self.total_duration().as_nanos() as u64,
             systems,
         }
+    }
+}
+
+impl fmt::Display for Diagnostics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sorted = self.sorted_by_avg_duration();
+        writeln!(f, "Diagnostics ({} systems):", self.systems.len())?;
+        for (name, metrics) in sorted {
+            writeln!(
+                f,
+                "  {}: {} calls, avg {:?}, max {:?}, last {:?}",
+                name,
+                metrics.call_count,
+                metrics.avg_duration(),
+                metrics.max_duration,
+                metrics.last_duration
+            )?;
+        }
+        Ok(())
     }
 }
 
