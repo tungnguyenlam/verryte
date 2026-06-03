@@ -3064,3 +3064,26 @@ runner that the shield is announced.
 **Gotchas.** In `test_cursed_sentinel_retreat_behavior`, other player characters (like Lyra at column 4, row 8) must be moved far away to prevent the Sentinel from choosing not to retreat, as distance is computed against the closest player. Additionally, the Sentinel's AP must be exactly 1 to prevent it from retreating and then using its remaining AP to move back closer in the same turn's AI loop.
 
 **Follow-ups.** Verify the visual ripple animation flows smoothly under high load or varying tick rates in TTY.
+
+## 2026-06-03 - Weighted DijkstraMap, dialogue themes, text input undo status, ECS search helpers, and terminal region fills
+
+**Goal.** Implement 8 meaningful improvements across the engine crates and prototype to support weighted distance fields, refactored dialogue styles, text input undo states, entity searching, region cell tinting, and terrain-aware AI movement.
+
+**Changes.**
+- `crates/verryte-map/src/dijkstra.rs:274` - Added `DijkstraMap::compute_weighted` using a BinaryHeap for weighted edge pathing, and `DijkstraMap::to_ascii_string` for formatting distance values.
+- `crates/verryte-map/src/tests.rs:1703` - Added unit tests verifying weighted detours and ASCII formatting correctness.
+- `crates/verryte-core/src/world.rs:775` - Added `World::find_where` and `World::find_mut_where` to retrieve the first matching entity + component reference.
+- `crates/verryte-core/src/world_ext_tests.rs:51` - Added unit tests validating search querying.
+- `crates/verryte-input/src/text_input.rs:484` - Added `TextInput::can_undo` and `TextInput::can_redo` checking state stacks.
+- `crates/verryte-input/src/lib.rs:1366` - Added assertions testing can_undo/can_redo states.
+- `crates/verryte-terminal/src/grid.rs:687` - Added `Grid::fill_rect_bg` and `Grid::fill_rect_fg` for region cell attribute coloring, and tests at `:2304`.
+- `crates/verryte-terminal/src/dialogue.rs:24` - Added `theme_color`, `title_color`, and `bg_color` accessors to `DialogueTheme`, refactoring `DialogueBox::with_theme` to leverage them.
+- `prototype/wuthering-terminal/src/systems.rs:557` - Refactored enemy target finder to use `compute_weighted` mapping terrain movement costs (Water/Lava tiles as 2 AP instead of 1 AP).
+
+**Reasoning.** Non-uniform movement costs on maps require weighted distance fields so enemy pathfinding optimizes around water/lava terrain correctly instead of routing directly through them. ECS helpers collapse repeated search boilerplate. `can_undo`/`can_redo` expose text stack states for UI components. Region cell coloring enables color overlays without destroying existing character graphics.Dialogue getters centralize style configurations.
+
+**Assumptions.** We assume cost functions return values >= 1 so priority queue traversal is guaranteed to terminate.
+
+**Gotchas.** In `compute_weighted`, cardinal and diagonal neighbors returned arrays of different sizes (`[Point; 4]` vs `[Point; 8]`), which cannot be bound to the same variable in a conditional branch. Resolved by using a local helper closure capturing pathfinder mutables and applying it to each iterated neighbor.
+
+**Follow-ups.** None. All 158 engine tests and 43 tactical RPG integration tests compile and pass cleanly.
