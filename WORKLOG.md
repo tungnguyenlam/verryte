@@ -3177,3 +3177,25 @@ runner that the shield is announced.
 **Gotchas.** In `StepReplay` outcome verification, calling `self.log` inside a block holding a mutable borrow of `ReplayState` caused borrow checker conflicts because `log` mutably borrows `self`. Resolved by scoping the read of `expected_outcomes` and the mutation of `verification_errors` into separate, non-overlapping blocks.
 
 **Follow-ups.** None. All workspace tests (including newly added pathfinding, dashed rendering, save-header validation, and replay outcome tests) compile and pass cleanly.
+
+## 2026-06-04 - Floor-by-floor progression, alchemy crafting, and new engine helper utilities
+
+**Goal.** Implement floor progression with BSP dungeons, alchemy crafting with recipe matching, and new engine primitives (`Grid::fill_sector`, `World::for_each4_mut`, and `VfxSystem::clear`).
+
+**Changes.**
+- `crates/verryte-terminal/src/grid.rs:1086` - Added `Grid::fill_sector` for filling circular sector slices using scanline rendering. Added unit test `test_grid_fill_sector` at `:2571`.
+- `crates/verryte-core/src/world.rs:1816` - Added `World::for_each4_mut` to mutably iterate over 4 component types for live entities. Added unit test `for_each4_mut_visits_entities_with_all_four_components` at `:3177`.
+- `crates/verryte-terminal/src/vfx.rs:698` - Added `VfxSystem::clear` to remove all active VFX elements. Added unit test `test_vfx_system_clear` at `:1221`.
+- `prototype/wuthering-terminal/src/components.rs:184` - Extended `GameState` and `Snapshot` with a `floor` level field.
+- `prototype/wuthering-terminal/src/game.rs:3605` - Mapped key `>` and command `"stairs"`/`"next_floor"` to transition to Floor 2 if on Floor 1 with stairs spawned (stairs spawn automatically once all Floor 1 enemies/echoes are defeated).
+- `prototype/wuthering-terminal/src/game.rs:3623` - Added `CraftItem` logic to combine items (recipe matches: 2x Healing Potion -> 1x Mega Potion, 2x Energy Elixir -> 1x Mega Energy Elixir, Potion + Elixir -> Elixir of Life) in inventory.
+- `prototype/wuthering-terminal/src/ui.rs:430` - Display active Floor level in HUD.
+- `prototype/wuthering-terminal/src/lib.rs:2484` - Added unit tests `test_crafting_system` and `test_floor_transition_and_bsp_generation`.
+
+**Reasoning.** Dynamic floor progression and alchemy item crafting significantly increase the gameplay depth and simulation complexity of the tactical RPG prototype. Floor 2 layout generation via the BSP dungeon generator validates procedural content capabilities on top of Verryte. Engine additions provide robust primitives (`for_each4_mut` to queries, `fill_sector` to scanline rendering, and `clear` to VFX control) that keep the codebase modular, fast, and terminal-native.
+
+**Assumptions.** We assumed recipe matching should consume both reactant items and replace them with the crafted result in the player's inventory, displaying a bloom particle VFX and playing a cleansing audio event.
+
+**Gotchas.** The `let mut state = ...` and `let mut map = ...` resource handles from `world.resource_mut` inside tests caused compiler warnings because `Mut` implements `DerefMut` and does not require local variable mutability; resolved by removing `mut` keywords. Also, the `Inventory` struct was not imported in the test module, which caused compilation errors.
+
+**Follow-ups.** None. All 160 engine tests and 55 wuthering-terminal tests now compile, run, and pass cleanly.
