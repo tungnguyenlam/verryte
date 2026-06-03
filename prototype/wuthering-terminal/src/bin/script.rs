@@ -184,10 +184,11 @@ fn print_frame(game: &Game) {
 
 fn print_report(i: usize, report: &wuthering_terminal::StepReport) {
     println!(
-        "--- step {i:>3}: {:?} source={:?} events={} ---",
+        "--- step {i:>3}: {:?} source={:?} events={} outcome={:?} ---",
         report.action,
         report.source,
-        report.events.len()
+        report.events.len(),
+        report.outcome
     );
     for event in &report.events {
         println!("  event: {:?}", event);

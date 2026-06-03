@@ -68,6 +68,10 @@ pub struct BossConfig {
     pub telegraph_damage_phase2: i32,
     pub telegraph_rate_phase1: u32,
     pub telegraph_rate_phase2: u32,
+    /// Shield amount applied to boss on entering phase 2.
+    pub phase2_shield_amount: i32,
+    /// Shield type applied to boss on entering phase 2.
+    pub phase2_shield_type: ShieldType,
 }
 
 impl Default for BossConfig {
@@ -83,6 +87,8 @@ impl Default for BossConfig {
             telegraph_damage_phase2: 80,
             telegraph_rate_phase1: 40,
             telegraph_rate_phase2: 60,
+            phase2_shield_amount: 100,
+            phase2_shield_type: ShieldType::Physical,
         }
     }
 }

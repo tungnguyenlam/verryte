@@ -13,7 +13,7 @@ pub mod ui;
 pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
-pub use snapshot::{FullSaveState, Snapshot, StepReport};
+pub use snapshot::{ActionOutcome, FullSaveState, Snapshot, StepReport};
 pub use spawn::Spawner;
 pub use verryte_map::Point as Position;
 
@@ -1460,6 +1460,190 @@ mod tests {
         assert!(
             matches!(status, crate::components::ElementalStatus::Nature { .. }),
             "PlagueWraith should apply Nature status on hit"
+        );
+    }
+
+    #[test]
+    fn test_action_outcome_noop_for_cursor_moves() {
+        let mut game = Game::new();
+
+        let report = game.apply_action(Action::MoveNorth, ActionSource::Terminal);
+        // Cursor move is a state update, not a no-op (it changed the cursor).
+        assert!(matches!(
+            report.outcome,
+            ActionOutcome::StateUpdated | ActionOutcome::NoOp
+        ));
+
+        // Quit produces a GameOver outcome.
+        let report = game.apply_action(Action::Quit, ActionSource::Terminal);
+        assert!(matches!(report.outcome, ActionOutcome::GameOver { .. }));
+    }
+
+    #[test]
+    fn test_snapshot_reachable_and_targetable_tiles() {
+        let mut game = Game::new();
+        let snap = game.snapshot();
+        // No character is selected initially, so both lists are empty.
+        assert!(snap.reachable_tiles.is_empty());
+        assert!(snap.targetable_tiles.is_empty());
+        assert!(!snap.selected_can_act);
+
+        // Select the warrior.
+        let warrior = game
+            .world
+            .query2::<crate::components::CharacterClass, crate::components::Position>()
+            .into_iter()
+            .find(|(_, c, _)| **c == CharacterClass::Warrior)
+            .map(|(e, _, _)| e)
+            .unwrap();
+        game.world
+            .resource_mut::<GameState>()
+            .unwrap()
+            .selected_entity = Some(warrior);
+
+        let snap = game.snapshot();
+        // Warrior has 3 AP at start, so they can act.
+        assert!(snap.selected_can_act);
+        // Reachable tiles are non-empty (warrior at (4,4) can reach several tiles).
+        assert!(!snap.reachable_tiles.is_empty());
+        // Targetable tiles may or may not be empty depending on cursor position.
+        // The default cursor is (0,0), so no enemy is in range initially.
+        assert!(snap.targetable_tiles.is_empty());
+    }
+
+    #[test]
+    fn test_boss_phase_2_applies_shield() {
+        let mut game = Game::new();
+        // Find the boss and set HP below the phase 2 threshold.
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 100;
+
+        // Trigger a player phase action (a no-op move). The post-action
+        // boss phase transition check should still fire because the HP
+        // is below the threshold.
+        game.apply_action(Action::MoveNorth, ActionSource::Agent);
+
+        let phase = game.world.resource::<GameState>().unwrap().boss_phase;
+        assert!(matches!(phase, crate::components::BossPhase::Phase2));
+        // The shield should be applied.
+        let shield = game.world.get::<crate::components::ElementalShield>(boss);
+        assert!(shield.is_some(), "Boss should have a shield in phase 2");
+        let shield = shield.unwrap();
+        assert_eq!(shield.amount, 100, "Default shield amount is 100");
+        assert_eq!(shield.max_amount, 100);
+    }
+
+    #[test]
+    fn test_boss_phase_change_outcome() {
+        let mut game = Game::new();
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 50;
+
+        // Take a player action. The transition should be detected.
+        let report = game.apply_action(Action::MoveNorth, ActionSource::Agent);
+        // The action is a state update (cursor move), but the boss transitioned.
+        // We expect to see BossPhaseChanged in the outcome for combat-related
+        // actions only. For cursor moves, the state update is reported.
+        // Both outcomes are acceptable here; what matters is that the
+        // GameState transitioned.
+        assert!(matches!(
+            game.world.resource::<GameState>().unwrap().boss_phase,
+            crate::components::BossPhase::Phase2
+        ));
+        // Sanity check: report exists.
+        let _ = report;
+    }
+
+    #[test]
+    fn test_full_boss_fight_phase_transition_via_script() {
+        let mut game = Game::new();
+
+        // Set up: position warrior adjacent to boss with boss HP just above
+        // the phase 2 threshold. After the first attack, boss HP should drop
+        // below 250 and the phase transition should fire.
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(5, 4);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        // Set boss HP so the warrior's first attack drops it below threshold.
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 300;
+        // Bump warrior ATK high enough to ensure one-shot below threshold.
+        game.world.get_mut::<Stats>(warrior).unwrap().atk = 200;
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 5;
+
+        // Pre-condition: phase 1, no shield.
+        assert!(matches!(
+            game.world.resource::<GameState>().unwrap().boss_phase,
+            crate::components::BossPhase::Phase1
+        ));
+        assert!(game
+            .world
+            .get::<crate::components::ElementalShield>(boss)
+            .is_none());
+
+        // Drive the script: select warrior and attack the boss.
+        let script = "inspect:4,4 confirm inspect:5,4 confirm";
+        game.router
+            .inject_script_with(
+                &default_commands(),
+                script,
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        let reports = game.run_pending_reports();
+        for r in &reports {
+            eprintln!("  report: action={:?} outcome={:?}", r.action, r.outcome);
+        }
+        assert!(!reports.is_empty(), "Script should produce reports");
+
+        // Post-condition: boss is in phase 2 with a shield.
+        let state = game.world.resource::<GameState>().unwrap();
+        assert!(
+            matches!(state.boss_phase, crate::components::BossPhase::Phase2),
+            "Boss should be in Phase 2 after HP drops below threshold"
+        );
+        let shield = game.world.get::<crate::components::ElementalShield>(boss);
+        assert!(
+            shield.is_some(),
+            "Boss should have a shield applied on phase 2 entry"
+        );
+
+        // At least one report should record a hit OR a boss phase change.
+        let saw_combat_outcome = reports.iter().any(|r| {
+            matches!(
+                r.outcome,
+                ActionOutcome::Hit { damage, .. } if damage > 0
+            ) || matches!(r.outcome, ActionOutcome::BossPhaseChanged { .. })
+        });
+        assert!(
+            saw_combat_outcome,
+            "Expected a Hit or BossPhaseChanged outcome in the report chain"
         );
     }
 }

@@ -3,6 +3,7 @@ use crate::components::{
     CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team, TurnPhase,
 };
 use crate::map::{TacticalMap, Tile};
+use crate::snapshot::ActionOutcome;
 use crate::spawn::Spawner;
 use std::collections::HashSet;
 use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, Schedule, World};
@@ -37,6 +38,10 @@ pub struct Game {
     pub schedule: Schedule,
     pub router: InputRouter<Action>,
     pub camera: Camera,
+    pub last_outcome: ActionOutcome,
+    /// Set to true by `check_boss_phase_transition` when the boss crossed into
+    /// phase 2 during this step. Reset by `apply_action` at the start of each step.
+    pub boss_transitioned: bool,
 }
 
 impl Default for Game {
@@ -96,6 +101,8 @@ impl Game {
             schedule,
             router: InputRouter::new(default_bindings()),
             camera: Camera::new(5.0, 5.0).with_smooth(0.15),
+            last_outcome: ActionOutcome::NoOp,
+            boss_transitioned: false,
         };
 
         game.world
@@ -1472,6 +1479,7 @@ impl Game {
             }
 
             if transition {
+                self.boss_transitioned = true;
                 if let Some(stats) = self.world.get_mut::<Stats>(be) {
                     stats.max_hp = config.phase2_max_hp;
                     stats.hp = config.phase2_max_hp;
@@ -1480,6 +1488,18 @@ impl Game {
                     stats.spd += config.phase2_spd_bonus;
                     stats.max_ap = config.phase2_max_ap;
                     stats.ap = config.phase2_max_ap;
+                }
+
+                // Apply phase 2 shield from BossConfig.
+                if config.phase2_shield_amount > 0 {
+                    self.world.insert(
+                        be,
+                        crate::components::ElementalShield {
+                            shield_type: config.phase2_shield_type,
+                            amount: config.phase2_shield_amount,
+                            max_amount: config.phase2_shield_amount,
+                        },
+                    );
                 }
 
                 if let Some(state) = self.world.resource_mut::<GameState>() {
@@ -1879,9 +1899,16 @@ impl Game {
             history.push(record);
         }
 
+        // Reset outcome for this action.
+        self.last_outcome = ActionOutcome::NoOp;
+        self.boss_transitioned = false;
         self.apply_action_internal(action);
         self.check_boss_phase_transition();
+
+        // Promote outcome based on observable state changes.
         let after = self.snapshot();
+        let outcome = self.compute_outcome(action, &before, &after, phase);
+        self.last_outcome = outcome.clone();
 
         let mut diagnostics = std::collections::HashMap::new();
         if let Some(diags) = self.world.resource::<verryte_core::Diagnostics>() {
@@ -1897,7 +1924,107 @@ impl Game {
             after,
             events: self.take_events(),
             diagnostics,
+            outcome,
         }
+    }
+
+    /// Derive an `ActionOutcome` summary from the before/after state delta.
+    fn compute_outcome(
+        &self,
+        action: Action,
+        before: &crate::snapshot::Snapshot,
+        after: &crate::snapshot::Snapshot,
+        _phase_before: TurnPhase,
+    ) -> ActionOutcome {
+        if matches!(action, Action::Quit) {
+            return ActionOutcome::GameOver {
+                outcome: after.outcome,
+            };
+        }
+        if !matches!(after.outcome, Outcome::Playing) {
+            return ActionOutcome::GameOver {
+                outcome: after.outcome,
+            };
+        }
+        // Boss phase transitions are detected via the boss_phase resource
+        // (the transition check runs at the end of every apply_action).
+        if matches!(self.boss_phase(), crate::components::BossPhase::Phase2)
+            && !matches!(action, Action::EndTurn)
+        {
+            // Heuristic: a phase transition only happens during combat resolution,
+            // and we just took a Player phase action that caused the boss HP to
+            // cross the threshold. We confirm by checking the boss state BEFORE
+            // this action — but since the snapshot doesn't carry it, we use the
+            // fact that Phase2 is set and the action was a combat-related one.
+            let is_combat_action = matches!(
+                action,
+                Action::Confirm
+                    | Action::Skill1
+                    | Action::Skill2
+                    | Action::Skill3
+                    | Action::EndTurn
+            );
+            if is_combat_action && self.boss_just_transitioned() {
+                return ActionOutcome::BossPhaseChanged {
+                    phase: "Phase2".to_string(),
+                };
+            }
+        }
+        if before.phase != after.phase {
+            return ActionOutcome::PhaseChanged;
+        }
+        if before.turn != after.turn {
+            return ActionOutcome::TurnAdvanced;
+        }
+        // Look at events for combat signals.
+        if let Some(log) = self.world.resource::<Events<GameEvent>>() {
+            for event in log.iter() {
+                if let GameEvent::Attacked { damage, target, .. } = event {
+                    let _ = target;
+                    if *damage > 0 {
+                        return ActionOutcome::Hit {
+                            damage: *damage,
+                            target: String::new(),
+                            was_critical: false,
+                            was_blocked: false,
+                        };
+                    }
+                }
+                if let GameEvent::Healed { amount, target, .. } = event {
+                    let _ = target;
+                    if *amount > 0 {
+                        return ActionOutcome::Healed {
+                            amount: *amount,
+                            target: String::new(),
+                        };
+                    }
+                }
+                if let GameEvent::PhaseChanged(_) = event {
+                    return ActionOutcome::PhaseChanged;
+                }
+            }
+        }
+        // Cursor-only move actions are state updates.
+        if matches!(
+            action,
+            Action::MoveNorth
+                | Action::MoveSouth
+                | Action::MoveEast
+                | Action::MoveWest
+                | Action::Inspect(_)
+                | Action::ClearCursor
+                | Action::NextCharacter
+                | Action::PrevCharacter
+                | Action::Skill1
+                | Action::Skill2
+                | Action::Skill3
+                | Action::ToggleInventory
+                | Action::TogglePerf
+                | Action::AutoBattle
+        ) {
+            return ActionOutcome::StateUpdated;
+        }
+        ActionOutcome::NoOp
     }
 
     pub fn run_pending_reports(&mut self) -> Vec<crate::snapshot::StepReport> {
@@ -3381,6 +3508,19 @@ impl Game {
         Ok(())
     }
 
+    /// Snapshot boss phase directly (helper for the outcome derivation).
+    fn boss_phase(&self) -> crate::components::BossPhase {
+        self.world
+            .resource::<GameState>()
+            .map(|s| s.boss_phase)
+            .unwrap_or(crate::components::BossPhase::Phase1)
+    }
+
+    /// True iff the boss crossed into Phase2 during the most recent action.
+    fn boss_just_transitioned(&self) -> bool {
+        self.boss_transitioned
+    }
+
     pub fn snapshot(&self) -> crate::snapshot::Snapshot {
         let state = self.world.resource::<GameState>().unwrap();
 
@@ -3405,6 +3545,38 @@ impl Game {
             summary.max_hp += stats.max_hp;
         }
 
+        let (reachable_tiles, targetable_tiles, selected_can_act) =
+            if let Some(sel) = state.selected_entity {
+                let reachable = self.get_reachable_tiles(sel);
+                let attack_range = self
+                    .world
+                    .get::<CharacterClass>(sel)
+                    .map(|c| match c {
+                        CharacterClass::Warrior => 1,
+                        CharacterClass::Mage => 3,
+                        CharacterClass::Healer => 2,
+                        _ => 1,
+                    })
+                    .unwrap_or(1);
+                let can_act = self
+                    .world
+                    .get::<Stats>(sel)
+                    .map(|s| s.ap > 0)
+                    .unwrap_or(false);
+                let mut targets: Vec<Position> = Vec::new();
+                for (_, team, pos) in self.world.query2::<Team, Position>() {
+                    if team == &Team::Enemy {
+                        let dist = (pos.x - state.cursor.x).abs() + (pos.y - state.cursor.y).abs();
+                        if dist <= attack_range {
+                            targets.push(*pos);
+                        }
+                    }
+                }
+                (reachable, targets, can_act)
+            } else {
+                (Vec::new(), Vec::new(), false)
+            };
+
         crate::snapshot::Snapshot {
             turn: state.turn,
             phase: state.phase,
@@ -3412,6 +3584,9 @@ impl Game {
             cursor: state.cursor,
             player_team,
             enemy_team,
+            reachable_tiles,
+            targetable_tiles,
+            selected_can_act,
         }
     }
 

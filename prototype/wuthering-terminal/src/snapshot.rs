@@ -23,6 +23,15 @@ pub struct Snapshot {
     pub cursor: Position,
     pub player_team: TeamSummary,
     pub enemy_team: TeamSummary,
+    /// Tiles the currently selected character can reach with movement.
+    #[serde(default)]
+    pub reachable_tiles: Vec<Position>,
+    /// Tiles the currently selected character can attack (within attack range).
+    #[serde(default)]
+    pub targetable_tiles: Vec<Position>,
+    /// True iff there is a character selected who still has AP to act.
+    #[serde(default)]
+    pub selected_can_act: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -33,6 +42,38 @@ pub struct StepReport {
     pub after: Snapshot,
     pub events: Vec<GameEvent>,
     pub diagnostics: std::collections::HashMap<String, f64>, // ms
+    pub outcome: ActionOutcome,
+}
+
+/// Summary of what an action actually did, for agent and script observability.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ActionOutcome {
+    /// No-op or non-advancing action (cursor move, state update).
+    #[default]
+    NoOp,
+    /// The player turn advanced (turn counter incremented).
+    TurnAdvanced,
+    /// The phase changed (Player -> Enemy or Enemy -> Player).
+    PhaseChanged,
+    /// A combat hit was applied; carries damage dealt and target name.
+    Hit {
+        damage: i32,
+        target: String,
+        was_critical: bool,
+        was_blocked: bool,
+    },
+    /// A heal was applied.
+    Healed { amount: i32, target: String },
+    /// The action moved an entity between tiles.
+    Moved { entity: String, to: Position },
+    /// The action used a consumable item.
+    ItemUsed { name: String },
+    /// The action triggered a boss phase transition.
+    BossPhaseChanged { phase: String },
+    /// The action triggered a state-only change (selection, cursor, inventory).
+    StateUpdated,
+    /// The action ended the game.
+    GameOver { outcome: Outcome },
 }
 
 pub fn create_registry() -> WorldRegistry {
