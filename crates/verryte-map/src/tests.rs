@@ -647,6 +647,39 @@ fn shortest_path8_returns_none_when_blocked() {
 }
 
 #[test]
+fn test_shortest_path_to_predicate() {
+    let grid = TileGrid::from_vec(
+        5,
+        5,
+        vec![
+            '.', '.', '.', '#', '.', '.', '#', '.', '#', '.', '.', '#', '.', '.', '.', '.', '#',
+            '#', '#', '.', '.', '.', '.', '.', 'G',
+        ],
+    )
+    .unwrap();
+
+    // pathfind to 'G' cardinally
+    let path4 = grid
+        .shortest_path_to_predicate4(
+            Point::new(0, 0),
+            |_, tile| *tile == 'G',
+            |_, tile| *tile != '#',
+        )
+        .unwrap();
+    assert_eq!(*path4.last().unwrap(), Point::new(4, 4));
+
+    // pathfind to 'G' 8-directionally
+    let path8 = grid
+        .shortest_path_to_predicate8(
+            Point::new(0, 0),
+            |_, tile| *tile == 'G',
+            |_, tile| *tile != '#',
+        )
+        .unwrap();
+    assert_eq!(*path8.last().unwrap(), Point::new(4, 4));
+}
+
+#[test]
 fn nearest_path8_chooses_closest_target_diagonally() {
     let grid = TileGrid::from_vec(5, 5, vec!['.'; 25]).unwrap();
 

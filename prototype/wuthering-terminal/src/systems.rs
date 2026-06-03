@@ -806,7 +806,7 @@ pub fn turn_management_system(world: &mut World) {
                 state.selected_entity = None;
                 state.combo_count = 0;
             }
-            if let Some(mut stack) = world.resource_mut::<crate::components::UndoStack>() {
+            if let Some(stack) = world.resource_mut::<crate::components::UndoStack>() {
                 stack.states.clear();
             }
             log(world, "[fg:FFA500][b]Enemy Phase starts![/][/fg]");

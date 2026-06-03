@@ -3153,3 +3153,27 @@ runner that the shield is announced.
 **Gotchas.** The `enemy_ai` system ignores active enemy entities if the game state phase is not set to `TurnPhase::Enemy`, so AI retreat tests must explicitly update the phase beforehand. `Color::WHITE` is `Color(230, 230, 230)` instead of `(255, 255, 255)`, causing initial HTML render tests to fail until corrected.
 
 **Follow-ups.** None. All 160 engine tests and 51 wuthering-terminal tests now compile, run, and pass cleanly.
+
+## 2026-06-03 - Dashed rendering, predicate pathfinding, save-format verification, and replay validation of outcomes
+
+**Goal.** Implement 5 meaningful improvements across the engine crates and prototype: dashed rendering primitives, predicate-targeted pathfinding, magic-header save file validation, replay outcome validation with error tracking, and a spiral vortex particle preset.
+
+**Changes.**
+- `crates/verryte-terminal/src/grid.rs:895` - Added `Grid::draw_dashed_hline`, `draw_dashed_vline`, and `draw_dashed_border` and unit tests at `:2445`.
+- `crates/verryte-map/src/grid.rs:561` - Added BFS-based `TileGrid::shortest_path_to_predicate4` and `shortest_path_to_predicate8` helpers, with tests in `tests.rs:650`.
+- `crates/verryte-terminal/src/vfx.rs:373` - Added `emit_vortex` using `Trajectory::Spiral` for swirling particle effects.
+- `prototype/wuthering-terminal/src/snapshot.rs:155` - Extended `FullSaveState` with `magic`, `version`, and `timestamp` fields.
+- `prototype/wuthering-terminal/src/game.rs:4038` - Refactored file `save`/`load` to delegate to in-memory `save_state`/`load_state`, and added validation checks for magic header and format version during load operations.
+- `prototype/wuthering-terminal/src/game.rs:3250` - ToggleRecording now serializes the prototype's `ActionHistory` resource (which includes outcome metadata) directly to last_recording.json.
+- `prototype/wuthering-terminal/src/game.rs:3282` - ToggleReplay loads the recording as `ActionHistory` and extracts expected step outcomes into `ReplayState::expected_outcomes`.
+- `prototype/wuthering-terminal/src/game.rs:3331` - StepReplay runs each action and compares its returned step report outcome against the expected outcome, logging validation errors and recording them in `ReplayState::verification_errors`.
+- `crates/verryte-input/src/router.rs:634` - Fixed `load_history_from_file` to properly deserialize `ActionHistory` struct before mapping records to `Vec<QueuedAction>`, correcting a runtime type mismatch.
+- `prototype/wuthering-terminal/src/lib.rs:98` - Added unit tests for save validation errors and replay outcome verification.
+
+**Reasoning.** Replay validation ensures that the simulation runs exactly identically under replay without any drift. Performing outcome comparison on each step of replay validation makes any behavior changes instantly noticeable and prevents regressions. Dashed line/border rendering simplifies non-solid or range UI indications on the grid. Predicate-targeted pathfinding collapses AI boilerplate for target selection where the end location isn't known beforehand (e.g. running to the nearest cover tile). Correcting the `load_history` parsing ensures engine recordings deserialize correctly.
+
+**Assumptions.** We assume that if `magic` or `version` mismatches on loading, the entire operation should fail cleanly before applying any registry/entity changes to prevent state corruption.
+
+**Gotchas.** In `StepReplay` outcome verification, calling `self.log` inside a block holding a mutable borrow of `ReplayState` caused borrow checker conflicts because `log` mutably borrows `self`. Resolved by scoping the read of `expected_outcomes` and the mutation of `verification_errors` into separate, non-overlapping blocks.
+
+**Follow-ups.** None. All workspace tests (including newly added pathfinding, dashed rendering, save-header validation, and replay outcome tests) compile and pass cleanly.

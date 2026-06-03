@@ -233,6 +233,10 @@ pub struct ReplayState {
     pub auto: bool,
     pub trace: verryte_input::ActionTrace<Action>,
     pub next_index: usize,
+    #[serde(default)]
+    pub verification_errors: Vec<String>,
+    #[serde(default)]
+    pub expected_outcomes: Vec<crate::snapshot::ActionOutcome>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]

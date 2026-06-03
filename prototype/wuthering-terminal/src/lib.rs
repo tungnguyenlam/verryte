@@ -97,6 +97,30 @@ mod tests {
     }
 
     #[test]
+    fn test_save_load_validation() {
+        let mut game = Game::new();
+        let valid_save = game.save_state().unwrap();
+
+        // Missing magic signature
+        let corrupt_json = r#"{"world":{"entities":[],"resources":[]}}"#;
+        let res = game.load_state(corrupt_json);
+        assert!(res.is_err());
+
+        // Incorrect magic signature
+        let invalid_magic =
+            valid_save.replace("\"magic\":\"VERRYTE_SAVE\"", "\"magic\":\"BAD_MAGIC\"");
+        let res = game.load_state(&invalid_magic);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("magic"));
+
+        // Unsupported version
+        let invalid_version = valid_save.replace("\"version\":1", "\"version\":99");
+        let res = game.load_state(&invalid_version);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("version"));
+    }
+
+    #[test]
     fn test_selection_and_movement() {
         let mut game = Game::new();
 
@@ -2371,7 +2395,7 @@ mod tests {
 
         // Set phase to Enemy so enemy AI runs
         {
-            let mut state = game.world.resource_mut::<GameState>().unwrap();
+            let state = game.world.resource_mut::<GameState>().unwrap();
             state.phase = TurnPhase::Enemy;
         }
 
@@ -2387,5 +2411,70 @@ mod tests {
             "Enemy Stalker did not retreat at low HP. Pos: {:?}",
             shadow_pos
         );
+    }
+
+    #[test]
+    fn test_replay_outcome_validation() {
+        let mut game = Game::new();
+        // Start recording
+        game.apply_action(Action::ToggleRecording, ActionSource::Terminal);
+
+        // Select warrior at (4, 4)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Move north (to 4, 3)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 3);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Stop recording
+        game.apply_action(Action::ToggleRecording, ActionSource::Terminal);
+
+        // Reset game state and load the recording for replay
+        let mut game2 = Game::new();
+        game2.apply_action(Action::ToggleReplay, ActionSource::Terminal);
+
+        // Step 1 of replay: selection confirm (expected: StateUpdated)
+        game2.apply_action(Action::StepReplay, ActionSource::Terminal);
+        let replay = game2
+            .world
+            .resource::<crate::components::ReplayState>()
+            .unwrap();
+        assert!(
+            replay.verification_errors.is_empty(),
+            "Selection step should match original StateUpdated outcome"
+        );
+
+        // Manually corrupt the expected outcome of the next step to force a mismatch
+        {
+            let mut replay_mut = game2
+                .world
+                .resource_mut::<crate::components::ReplayState>()
+                .unwrap();
+            let outcomes = &mut *replay_mut;
+            if let Some(expected) = outcomes.expected_outcomes.get_mut(1) {
+                *expected = ActionOutcome::Failed {
+                    reason: "Forced test failure".to_string(),
+                };
+            }
+        }
+
+        // Step 2 of replay: movement confirm (actual: Moved, expected: Failed)
+        game2.apply_action(Action::StepReplay, ActionSource::Terminal);
+        let replay = game2
+            .world
+            .resource::<crate::components::ReplayState>()
+            .unwrap();
+        assert!(
+            !replay.verification_errors.is_empty(),
+            "Should log verification error when outcomes mismatch"
+        );
+        assert!(replay.verification_errors[0].contains("outcome mismatch"));
     }
 }

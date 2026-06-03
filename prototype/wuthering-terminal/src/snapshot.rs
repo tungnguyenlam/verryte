@@ -153,5 +153,8 @@ pub fn create_registry() -> WorldRegistry {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FullSaveState {
+    pub magic: String,
+    pub version: u32,
+    pub timestamp: String,
     pub world: WorldSnapshot,
 }

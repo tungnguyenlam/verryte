@@ -370,6 +370,34 @@ pub fn emit_shatter(cx: f32, cy: f32, count: usize) -> Vec<Particle> {
     particles
 }
 
+/// Emit a swirling vortex of spiral particles.
+pub fn emit_vortex(cx: f32, cy: f32, count: usize, color: Color) -> Vec<Particle> {
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['@', '✦', '·', '∘', '∗'];
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let speed = 1.5 + (i as f32 * 0.23) % 2.0;
+        let lifetime = 1.0 + (i as f32 * 0.11) % 0.6;
+        particles.push(Particle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed * 0.5,
+            glyph: glyphs[i % glyphs.len()],
+            fg: color,
+            bg: Color::BLACK,
+            lifetime,
+            max_lifetime: lifetime,
+            attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Spiral {
+                speed: 4.0,
+                radius: 5.0,
+            },
+        });
+    }
+    particles
+}
+
 // ── Screen Shake ──────────────────────────────────────────────────────────────
 
 /// A screen shake effect with sinusoidal offset and decay.
@@ -1316,6 +1344,12 @@ mod tests {
 
         let shatter = emit_shatter(5.0, 5.0, 8);
         assert_eq!(shatter.len(), 8);
+
+        let vortex = emit_vortex(5.0, 5.0, 12, Color::GREEN);
+        assert_eq!(vortex.len(), 12);
+        for p in &vortex {
+            assert!(matches!(p.trajectory, Trajectory::Spiral { .. }));
+        }
     }
 
     #[test]

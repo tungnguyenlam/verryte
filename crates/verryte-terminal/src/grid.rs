@@ -891,6 +891,107 @@ impl Grid {
         count
     }
 
+    pub fn draw_dashed_hline(
+        &mut self,
+        x1: u16,
+        x2: u16,
+        y: u16,
+        dash_len: u16,
+        gap_len: u16,
+        cell: Cell,
+    ) -> u16 {
+        if y >= self.height || dash_len == 0 {
+            return 0;
+        }
+        let start = x1.min(x2);
+        let end = x1.max(x2).min(self.width - 1);
+        let mut count = 0;
+        let period = dash_len + gap_len;
+        for x in start..=end {
+            let offset = x - start;
+            if (offset % period) < dash_len {
+                self.put(x, y, cell);
+                count += 1;
+            }
+        }
+        count
+    }
+
+    pub fn draw_dashed_vline(
+        &mut self,
+        x: u16,
+        y1: u16,
+        y2: u16,
+        dash_len: u16,
+        gap_len: u16,
+        cell: Cell,
+    ) -> u16 {
+        if x >= self.width || dash_len == 0 {
+            return 0;
+        }
+        let start = y1.min(y2);
+        let end = y1.max(y2).min(self.height - 1);
+        let mut count = 0;
+        let period = dash_len + gap_len;
+        for y in start..=end {
+            let offset = y - start;
+            if (offset % period) < dash_len {
+                self.put(x, y, cell);
+                count += 1;
+            }
+        }
+        count
+    }
+
+    pub fn draw_dashed_border(
+        &mut self,
+        rect: Rect,
+        dash_len: u16,
+        gap_len: u16,
+        cell: Cell,
+    ) -> u16 {
+        if rect.is_empty() || dash_len == 0 {
+            return 0;
+        }
+        let mut count = 0;
+        // Top edge
+        count += self.draw_dashed_hline(rect.x, rect.right() - 1, rect.y, dash_len, gap_len, cell);
+        // Bottom edge
+        if rect.height > 1 {
+            count += self.draw_dashed_hline(
+                rect.x,
+                rect.right() - 1,
+                rect.bottom() - 1,
+                dash_len,
+                gap_len,
+                cell,
+            );
+        }
+        // Left edge
+        if rect.height > 2 {
+            count += self.draw_dashed_vline(
+                rect.x,
+                rect.y + 1,
+                rect.bottom() - 2,
+                dash_len,
+                gap_len,
+                cell,
+            );
+        }
+        // Right edge
+        if rect.width > 1 && rect.height > 2 {
+            count += self.draw_dashed_vline(
+                rect.right() - 1,
+                rect.y + 1,
+                rect.bottom() - 2,
+                dash_len,
+                gap_len,
+                cell,
+            );
+        }
+        count
+    }
+
     pub fn draw_line(&mut self, start: (i32, i32), end: (i32, i32), cell: Cell) -> u16 {
         let (mut x0, mut y0) = start;
         let (x1, y1) = end;
@@ -2379,5 +2480,38 @@ mod tests {
         assert!(svg.contains("<svg"));
         assert!(svg.contains("&lt;"));
         assert!(svg.contains("rgb(80,200,120)"));
+    }
+
+    #[test]
+    fn test_grid_dashed_lines_and_border() {
+        let mut grid = Grid::new(5, 5);
+        let cell = Cell::new('*');
+
+        // Horizontal dashed line: 1-1-1-1 pattern (dash=1, gap=1)
+        grid.draw_dashed_hline(0, 4, 0, 1, 1, cell);
+        assert_eq!(grid.get(0, 0).unwrap().glyph, '*');
+        assert_eq!(grid.get(1, 0).unwrap().glyph, ' ');
+        assert_eq!(grid.get(2, 0).unwrap().glyph, '*');
+        assert_eq!(grid.get(3, 0).unwrap().glyph, ' ');
+        assert_eq!(grid.get(4, 0).unwrap().glyph, '*');
+
+        // Vertical dashed line: 1-1-1-1 pattern
+        grid.draw_dashed_vline(0, 0, 4, 1, 1, cell);
+        assert_eq!(grid.get(0, 0).unwrap().glyph, '*');
+        assert_eq!(grid.get(0, 1).unwrap().glyph, ' ');
+        assert_eq!(grid.get(0, 2).unwrap().glyph, '*');
+        assert_eq!(grid.get(0, 3).unwrap().glyph, ' ');
+        assert_eq!(grid.get(0, 4).unwrap().glyph, '*');
+
+        // Dashed border: 2-2 pattern (dash=2, gap=2)
+        let mut grid2 = Grid::new(6, 6);
+        grid2.draw_dashed_border(Rect::new(0, 0, 6, 6), 2, 2, cell);
+        // Top edge: index 0,1 set; 2,3 space; 4,5 set
+        assert_eq!(grid2.get(0, 0).unwrap().glyph, '*');
+        assert_eq!(grid2.get(1, 0).unwrap().glyph, '*');
+        assert_eq!(grid2.get(2, 0).unwrap().glyph, ' ');
+        assert_eq!(grid2.get(3, 0).unwrap().glyph, ' ');
+        assert_eq!(grid2.get(4, 0).unwrap().glyph, '*');
+        assert_eq!(grid2.get(5, 0).unwrap().glyph, '*');
     }
 }

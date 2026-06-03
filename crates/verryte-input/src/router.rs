@@ -2,7 +2,8 @@
 
 use std::collections::{vec_deque, VecDeque};
 
-use crate::action::{ActionSource, QueuedAction};
+use crate::action::{ActionHistory, ActionSource, QueuedAction};
+
 use crate::bindings::{Bindings, CommandBindings, CommandParseError};
 use crate::key::{InputEvent, Key, KeyEventKind};
 use crate::trace::ActionTrace;
@@ -638,8 +639,13 @@ impl<A: Clone> InputRouter<A> {
         A: serde::Serialize + serde::de::DeserializeOwned,
     {
         let content = std::fs::read_to_string(path)?;
-        let history = serde_json::from_str(&content)?;
-        Ok(history)
+        let history: ActionHistory<A> = serde_json::from_str(&content)?;
+        let steps = history
+            .records
+            .into_iter()
+            .map(|r| QueuedAction::new(r.action, r.source))
+            .collect();
+        Ok(steps)
     }
 
     pub fn peek(&self) -> Option<&QueuedAction<A>> {

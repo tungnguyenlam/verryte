@@ -558,6 +558,122 @@ impl<T> TileGrid<T> {
         None
     }
 
+    /// Find the shortest cardinal path from `start` to the nearest tile matching `predicate`.
+    ///
+    /// The returned path starts at `start` and ends at the matching point.
+    /// `passable` is consulted for neighbor tiles; `start` is allowed even if not passable.
+    pub fn shortest_path_to_predicate4<P, F>(
+        &self,
+        start: Point,
+        mut predicate: P,
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        P: FnMut(Point, &T) -> bool,
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) {
+            return None;
+        }
+        if let Some(tile) = self.get(start) {
+            if predicate(start, tile) {
+                return Some(vec![start]);
+            }
+        }
+
+        let mut frontier = VecDeque::new();
+        let mut came_from = HashMap::new();
+        frontier.push_back(start);
+        came_from.insert(start, start);
+
+        while let Some(current) = frontier.pop_front() {
+            for neighbor in current.neighbors4() {
+                if came_from.contains_key(&neighbor) {
+                    continue;
+                }
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                came_from.insert(neighbor, current);
+                if predicate(neighbor, tile) {
+                    let mut path = vec![neighbor];
+                    let mut step = neighbor;
+                    while step != start {
+                        step = came_from[&step];
+                        path.push(step);
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+                frontier.push_back(neighbor);
+            }
+        }
+
+        None
+    }
+
+    /// Find the shortest 8-directional path from `start` to the nearest tile matching `predicate`.
+    ///
+    /// The returned path starts at `start` and ends at the matching point.
+    /// `passable` is consulted for neighbor tiles; `start` is allowed even if not passable.
+    pub fn shortest_path_to_predicate8<P, F>(
+        &self,
+        start: Point,
+        mut predicate: P,
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        P: FnMut(Point, &T) -> bool,
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) {
+            return None;
+        }
+        if let Some(tile) = self.get(start) {
+            if predicate(start, tile) {
+                return Some(vec![start]);
+            }
+        }
+
+        let mut frontier = VecDeque::new();
+        let mut came_from = HashMap::new();
+        frontier.push_back(start);
+        came_from.insert(start, start);
+
+        while let Some(current) = frontier.pop_front() {
+            for neighbor in current.neighbors8() {
+                if came_from.contains_key(&neighbor) {
+                    continue;
+                }
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                came_from.insert(neighbor, current);
+                if predicate(neighbor, tile) {
+                    let mut path = vec![neighbor];
+                    let mut step = neighbor;
+                    while step != start {
+                        step = came_from[&step];
+                        path.push(step);
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+                frontier.push_back(neighbor);
+            }
+        }
+
+        None
+    }
+
     /// Find the shortest cardinal path between two in-bounds points with custom costs.
     ///
     /// The returned path includes `start` and `goal`. `passable` is consulted

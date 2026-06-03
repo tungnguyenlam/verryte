@@ -1980,13 +1980,12 @@ impl Game {
             .unwrap_or(0);
 
         if matches!(action, Action::Undo) {
-            let popped_state = if let Some(mut stack) =
-                self.world.resource_mut::<crate::components::UndoStack>()
-            {
-                stack.states.pop()
-            } else {
-                None
-            };
+            let popped_state =
+                if let Some(stack) = self.world.resource_mut::<crate::components::UndoStack>() {
+                    stack.states.pop()
+                } else {
+                    None
+                };
             if let Some(state_bytes) = popped_state {
                 if self.load_state(&state_bytes).is_ok() {
                     self.log("Undo successful: Restored previous state.");
@@ -2029,7 +2028,7 @@ impl Game {
             .unwrap_or(TurnPhase::Player);
         if is_undoable && phase_current == TurnPhase::Player {
             let state_bytes = self.save_state().unwrap_or_default();
-            if let Some(mut stack) = self.world.resource_mut::<crate::components::UndoStack>() {
+            if let Some(stack) = self.world.resource_mut::<crate::components::UndoStack>() {
                 stack.states.push(state_bytes);
                 if stack.states.len() > 10 {
                     stack.states.remove(0);
@@ -2038,7 +2037,7 @@ impl Game {
         }
 
         if matches!(action, Action::EndTurn) {
-            if let Some(mut stack) = self.world.resource_mut::<crate::components::UndoStack>() {
+            if let Some(stack) = self.world.resource_mut::<crate::components::UndoStack>() {
                 stack.states.clear();
             }
         }
@@ -3251,20 +3250,32 @@ impl Game {
                     self.router.stop_recording();
                     self.world.resource_mut::<GameState>().unwrap().is_recording = false;
                     self.log("Action recording STOPPED.");
-                    // Save history to a file
                     let base_path = saves_dir();
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
-                    let path = format!("{}/trace_{}.json", base_path, now);
-                    if self.router.save_history_to_file(&path).is_ok() {
-                        self.log(format!("Action trace saved to {}", path));
-                    } else {
-                        self.log("Failed to save action trace!");
+                    if let Some(history) = self
+                        .world
+                        .resource::<verryte_input::ActionHistory<Action>>()
+                    {
+                        let path = format!("{}/trace_{}.json", base_path, now);
+                        let _ = history.save_to_file(&path);
+                        let last_path = format!("{}/last_recording.json", base_path);
+                        if history.save_to_file(&last_path).is_ok() {
+                            self.log(format!("Action history saved to {}", last_path));
+                        } else {
+                            self.log("Failed to save action history!");
+                        }
                     }
                 } else {
                     self.router.clear_history();
+                    if let Some(history) = self
+                        .world
+                        .resource_mut::<verryte_input::ActionHistory<Action>>()
+                    {
+                        history.clear();
+                    }
                     let base_path = saves_dir();
                     let path = format!("{}/last_recording.json", base_path);
                     self.router.start_recording(path);
@@ -3272,6 +3283,7 @@ impl Game {
                     self.log("Action recording STARTED.");
                 }
             }
+
             Action::ToggleReplay => {
                 let (active, msg) = {
                     let replay = self
@@ -3286,9 +3298,23 @@ impl Game {
                         let base_path = saves_dir();
                         let path = format!("{}/last_recording.json", base_path);
                         if let Ok(history) =
-                            verryte_input::InputRouter::<Action>::load_history_from_file(&path)
+                            verryte_input::ActionHistory::<Action>::load_from_file(&path)
                         {
-                            replay.trace = verryte_input::ActionTrace::from_steps(history);
+                            let mut expected = Vec::new();
+                            for record in history.iter() {
+                                let outcome = if let Some(outcome_str) =
+                                    record.metadata.get("outcome")
+                                {
+                                    serde_json::from_str(outcome_str).unwrap_or(ActionOutcome::NoOp)
+                                } else {
+                                    ActionOutcome::NoOp
+                                };
+                                expected.push(outcome);
+                            }
+                            replay.expected_outcomes = expected;
+                            replay.verification_errors.clear();
+                            replay.trace =
+                                verryte_input::ActionTrace::from_records(&history.records);
                             replay.active = true;
                             replay.next_index = 0;
                             replay.auto = false;
@@ -3304,6 +3330,7 @@ impl Game {
                         }
                     }
                 };
+
                 self.log(msg);
                 if active {
                     self.log("Press F12 to step through replay.");
@@ -3334,8 +3361,30 @@ impl Game {
                 match next_step {
                     Some((index, action, source)) => {
                         self.log(format!("Replaying action {}: {:?}", index, action));
-                        self.apply_action(action, source);
+                        let report = self.apply_action(action, source);
+                        let expected = {
+                            let replay = self
+                                .world
+                                .resource::<crate::components::ReplayState>()
+                                .unwrap();
+                            replay.expected_outcomes.get(index).cloned()
+                        };
+                        if let Some(expected) = expected {
+                            if expected != report.outcome {
+                                let err = format!(
+                                    "Replay step {} outcome mismatch: expected {:?}, got {:?}",
+                                    index, expected, report.outcome
+                                );
+                                self.log(format!("[fg:FF5555]Validation Error: {}[/fg]", err));
+                                let replay = self
+                                    .world
+                                    .resource_mut::<crate::components::ReplayState>()
+                                    .unwrap();
+                                replay.verification_errors.push(err);
+                            }
+                        }
                     }
+
                     None => {
                         let active = self
                             .world
@@ -3354,6 +3403,7 @@ impl Game {
                     }
                 }
             }
+
             Action::ToggleReplayAuto => {
                 let msg = {
                     let replay = self
@@ -4038,11 +4088,7 @@ impl Game {
         &self,
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let registry = crate::snapshot::create_registry();
-        let snapshot = registry.snapshot(&self.world);
-        let state = crate::snapshot::FullSaveState { world: snapshot };
-
-        let json = serde_json::to_string_pretty(&state)?;
+        let json = self.save_state()?;
         std::fs::write(path, json)?;
         Ok(())
     }
@@ -4052,35 +4098,7 @@ impl Game {
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let data = std::fs::read_to_string(path)?;
-        let state: crate::snapshot::FullSaveState = serde_json::from_str(&data)?;
-
-        let registry = crate::snapshot::create_registry();
-        registry.apply(&mut self.world, state.world)?;
-
-        // Re-insert non-snapshotted resources
-        let mut asset_registry = verryte_terminal::assets::VisualRegistry::new();
-        crate::generated_assets::register_assets(&mut asset_registry);
-        self.world.insert_resource(asset_registry);
-
-        if self.world.resource::<Events<GameEvent>>().is_none() {
-            self.world
-                .insert_resource(Events::<GameEvent>::with_capacity(16));
-        }
-        if self
-            .world
-            .resource::<Events<verryte_core::AudioEvent>>()
-            .is_none()
-        {
-            self.world
-                .insert_resource(Events::<verryte_core::AudioEvent>::new());
-        }
-
-        // Sync camera from resource
-        if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {
-            self.camera = camera.clone();
-        }
-
-        self.log("Game loaded successfully.");
+        self.load_state(&data)?;
         Ok(())
     }
 
@@ -4185,13 +4203,35 @@ impl Game {
     pub fn save_state(&self) -> Result<String, serde_json::Error> {
         let registry = crate::snapshot::create_registry();
         let snapshot = registry.snapshot(&self.world);
-        let state = crate::snapshot::FullSaveState { world: snapshot };
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_default();
+        let state = crate::snapshot::FullSaveState {
+            magic: "VERRYTE_SAVE".to_string(),
+            version: 1,
+            timestamp,
+            world: snapshot,
+        };
 
         serde_json::to_string(&state)
     }
 
     pub fn load_state(&mut self, state_str: &str) -> Result<(), Box<dyn std::error::Error>> {
         let state: crate::snapshot::FullSaveState = serde_json::from_str(state_str)?;
+
+        if state.magic != "VERRYTE_SAVE" {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid magic signature in save state",
+            )));
+        }
+        if state.version != 1 {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Unsupported save state version: {}", state.version),
+            )));
+        }
 
         let registry = crate::snapshot::create_registry();
         registry.apply(&mut self.world, state.world)?;
