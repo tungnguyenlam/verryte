@@ -1,6 +1,6 @@
 use crate::action::{default_bindings, Action};
 use crate::components::{
-    CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team, TurnPhase,
+    BattleStats, CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team, TurnPhase,
 };
 use crate::map::{TacticalMap, Tile};
 use crate::snapshot::ActionOutcome;
@@ -88,6 +88,7 @@ impl Game {
         world.insert_resource(crate::components::ReplayState::default());
         world.insert_resource(crate::components::BossConfig::default());
         world.insert_resource(verryte_core::Diagnostics::new());
+        world.insert_resource(BattleStats::default());
 
         let mut registry = VisualRegistry::new();
         crate::generated_assets::register_assets(&mut registry);
@@ -290,7 +291,7 @@ impl Game {
 
         if self.world.get::<Team>(attacker) == Some(&Team::Player) {
             is_player = true;
-            if let Some(mut state) = self.world.resource_mut::<GameState>() {
+            if let Some(state) = self.world.resource_mut::<GameState>() {
                 state.combo_count += 1;
                 new_combo = state.combo_count;
                 let mult = 1.0 + ((new_combo.saturating_sub(1)) as f32 * 0.05);
@@ -342,7 +343,7 @@ impl Game {
                     stats.hp = (stats.hp + 5).min(stats.max_hp);
                     self.log(format!("Combo Bonus! Healed {} for 5 HP.", attacker_name));
                 }
-                if let Some(mut state) = self.world.resource_mut::<GameState>() {
+                if let Some(state) = self.world.resource_mut::<GameState>() {
                     state.concert_energy = (state.concert_energy + 10).min(100);
                     self.log("[fg:FFD700]Combo Bonus! Gained +10 Concert Energy.[/fg]".to_string());
                 }
@@ -1020,6 +1021,10 @@ impl Game {
             .resource_mut::<GameState>()
             .unwrap()
             .selected_entity = Some(next_ent);
+
+        if let Some(bstats) = self.world.resource_mut::<BattleStats>() {
+            bstats.total_swaps += 1;
+        }
 
         let next_class = *self.world.get::<CharacterClass>(next_ent).unwrap();
         let active_class = *self.world.get::<CharacterClass>(active_ent).unwrap();
@@ -1961,11 +1966,85 @@ impl Game {
         let after = self.snapshot();
         let outcome = self.compute_outcome(action, &before, &after, phase, before_log_len);
 
+        // Update BattleStats based on events
+        let events_vec: Vec<GameEvent> = self
+            .world
+            .resource::<Events<GameEvent>>()
+            .map(|e| e.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let mut entity_teams = std::collections::HashMap::new();
+        for (entity, team) in self.world.query::<Team>() {
+            entity_teams.insert(entity, *team);
+        }
+
+        let combo_count = self
+            .world
+            .resource::<GameState>()
+            .map(|s| s.combo_count)
+            .unwrap_or(0);
+
+        if let Some(bstats) = self.world.resource_mut::<BattleStats>() {
+            for event in &events_vec {
+                match event {
+                    GameEvent::Attacked {
+                        attacker,
+                        target,
+                        damage,
+                    } => {
+                        let attacker_is_player = entity_teams.get(attacker) == Some(&Team::Player);
+                        let target_is_player = entity_teams.get(target) == Some(&Team::Player);
+                        if attacker_is_player {
+                            bstats.total_damage_dealt += *damage;
+                        }
+                        if target_is_player {
+                            bstats.total_damage_taken += *damage;
+                        }
+                    }
+                    GameEvent::Healed { healer, amount, .. } => {
+                        let healer_is_player = entity_teams.get(healer) == Some(&Team::Player);
+                        if healer_is_player {
+                            bstats.total_healing_done += *amount;
+                        }
+                    }
+                    GameEvent::Defeated { entity } => {
+                        let entity_is_enemy = entity_teams.get(entity) == Some(&Team::Enemy);
+                        if entity_is_enemy {
+                            bstats.total_kills += 1;
+                        }
+                    }
+                    GameEvent::ReactionTriggered {
+                        entity,
+                        damage,
+                        healing,
+                        ..
+                    } => {
+                        let entity_is_player = entity_teams.get(entity) == Some(&Team::Player);
+                        if entity_is_player {
+                            bstats.total_damage_taken += *damage;
+                            bstats.total_healing_done += *healing;
+                        } else {
+                            bstats.total_damage_dealt += *damage;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if matches!(outcome, ActionOutcome::TurnAdvanced) {
+                bstats.total_turns += 1;
+            }
+
+            if combo_count > bstats.max_combo_reached {
+                bstats.max_combo_reached = combo_count;
+            }
+        }
+
         // Reset combo count if action failed or if the action was Wait
         let is_failed = matches!(outcome, ActionOutcome::Failed { .. });
         let is_wait = action == Action::Wait;
         if is_failed || is_wait {
-            if let Some(mut state) = self.world.resource_mut::<GameState>() {
+            if let Some(state) = self.world.resource_mut::<GameState>() {
                 if state.combo_count > 0 {
                     state.combo_count = 0;
                     if is_failed {
@@ -2619,7 +2698,7 @@ impl Game {
                                         if defeated {
                                             self.handle_defeat(
                                                 sel_entity,
-                                                &char_name.to_string(),
+                                                char_name,
                                                 sel_class,
                                                 cursor,
                                             );
@@ -2674,6 +2753,30 @@ impl Game {
             }
             Action::PrevCharacter => {
                 self.cycle_character(false);
+            }
+            Action::SwapCharacter(idx) => {
+                let mut players = Vec::new();
+                for (e, team) in self.world.query::<Team>() {
+                    if *team == Team::Player {
+                        players.push(e);
+                    }
+                }
+                players.sort();
+                if idx < players.len() {
+                    let ent = players[idx];
+                    let pos = *self.world.get::<Position>(ent).unwrap();
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.selected_entity = Some(ent);
+                    state.cursor = pos;
+                    self.camera.look_at(pos.x as f32, pos.y as f32);
+                    let class = *self.world.get::<CharacterClass>(ent).unwrap();
+                    self.log(format!(
+                        "Selected character: {}.",
+                        Self::get_class_name(class)
+                    ));
+                } else {
+                    self.log("Invalid character index.");
+                }
             }
             Action::Skill1 => {
                 let state = self.world.resource::<GameState>().unwrap();
@@ -3802,6 +3905,12 @@ impl Game {
                 (Vec::new(), Vec::new(), false)
             };
 
+        let battle_stats = self
+            .world
+            .resource::<BattleStats>()
+            .cloned()
+            .unwrap_or_default();
+
         crate::snapshot::Snapshot {
             turn: state.turn,
             phase: state.phase,
@@ -3813,6 +3922,7 @@ impl Game {
             targetable_tiles,
             selected_can_act,
             combo_count: state.combo_count,
+            battle_stats,
         }
     }
 

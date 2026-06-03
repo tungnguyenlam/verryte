@@ -1060,6 +1060,30 @@ fn spatial_hash_remove() {
 }
 
 #[test]
+fn spatial_hash_update() {
+    let mut hash = SpatialHash::<u32>::new(3);
+    hash.insert(Point::new(0, 0), 1);
+    assert_eq!(
+        hash.query(Point::new(0, 0), 1).copied().collect::<Vec<_>>(),
+        vec![1]
+    );
+
+    // Update position of 1 to (4, 4)
+    let updated = hash.update(Point::new(0, 0), Point::new(4, 4), 1);
+    assert!(updated);
+
+    assert_eq!(hash.query(Point::new(0, 0), 1).count(), 0);
+    assert_eq!(
+        hash.query(Point::new(4, 4), 1).copied().collect::<Vec<_>>(),
+        vec![1]
+    );
+
+    // Try updating a non-existent value
+    let failed_update = hash.update(Point::new(0, 0), Point::new(2, 2), 2);
+    assert!(!failed_update);
+}
+
+#[test]
 fn spatial_hash_cell_size_affects_grouping() {
     let mut hash = SpatialHash::<u32>::new(5);
     hash.insert(Point::new(0, 0), 1);

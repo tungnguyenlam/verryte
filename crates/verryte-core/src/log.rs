@@ -58,6 +58,15 @@ impl MessageLog {
         &self.messages[start..]
     }
 
+    /// Extract the last N messages from the log, removing them.
+    ///
+    /// Returns the removed messages in order.
+    pub fn take_tail(&mut self, n: usize) -> Vec<String> {
+        let len = self.messages.len();
+        let start = len.saturating_sub(n);
+        self.messages.drain(start..).collect()
+    }
+
     /// Returns the configured maximum, or `None` for unbounded.
     pub fn max(&self) -> Option<usize> {
         self.max
@@ -193,5 +202,21 @@ mod tests {
         assert_eq!(loaded.max(), log.max());
 
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn take_tail_removes_and_returns_messages() {
+        let mut log = MessageLog::new();
+        log.push("msg 1");
+        log.push("msg 2");
+        log.push("msg 3");
+
+        let tail = log.take_tail(2);
+        assert_eq!(tail, vec!["msg 2", "msg 3"]);
+        assert_eq!(log.messages(), vec!["msg 1"]);
+
+        let tail2 = log.take_tail(5);
+        assert_eq!(tail2, vec!["msg 1"]);
+        assert!(log.is_empty());
     }
 }

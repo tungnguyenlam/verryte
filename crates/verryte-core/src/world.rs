@@ -321,6 +321,11 @@ impl World {
         count
     }
 
+    /// Check if an entity has the given component type.
+    pub fn has_component<C: 'static + Send + Sync>(&self, entity: Entity) -> bool {
+        self.get::<C>(entity).is_some()
+    }
+
     /// Keep only entities for which `predicate` returns `true`.
     ///
     /// Every live entity is tested; entities that fail the predicate are

@@ -68,3 +68,16 @@ fn test_world_find_where() {
     let found_mut = world.find_mut_where(|s: &Score| s.0 < 15);
     assert_eq!(found_mut.map(|(e, s)| (e, s.0)), Some((e1, 10)));
 }
+
+#[test]
+fn test_world_has_component() {
+    let mut world = World::new();
+    struct CompA;
+    struct CompB;
+
+    let e = world.spawn();
+    world.insert(e, CompA);
+
+    assert!(world.has_component::<CompA>(e));
+    assert!(!world.has_component::<CompB>(e));
+}

@@ -31,6 +31,7 @@ Three heroes descend into the heart of the corruption to seal its source.
 - **Inventory**: healing potions, energy elixirs, cleanse remedies, aegis elixirs
 - **Elemental shields**: absorb damage before HP
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
+- **Battle stats**: tracks total damage dealt, taken, healing done, kills, swaps, turns, and maximum combo reached, serialized in snapshots for agent observability.
 
 ## Controls
 

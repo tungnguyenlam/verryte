@@ -28,7 +28,7 @@ pub fn visibility_system(world: &mut World) {
     visibility.clear_visible();
 
     for pos in player_positions {
-        visibility.compute_fov(pos, 8, |p| {
+        visibility.compute_fov_incremental(pos, 8, |p| {
             map_tiles
                 .get(p)
                 .map(|t| matches!(t, Tile::Wall))

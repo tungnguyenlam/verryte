@@ -254,3 +254,14 @@ pub struct ElementalShield {
     pub amount: i32,
     pub max_amount: i32,
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BattleStats {
+    pub total_damage_dealt: i32,
+    pub total_damage_taken: i32,
+    pub total_healing_done: i32,
+    pub total_turns: u32,
+    pub total_kills: u32,
+    pub max_combo_reached: u32,
+    pub total_swaps: u32,
+}

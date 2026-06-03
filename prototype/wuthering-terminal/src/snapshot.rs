@@ -2,8 +2,8 @@
 
 use crate::action::Action;
 use crate::components::{
-    CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState, Inventory,
-    Item, Outcome, Position, Rooted, Stats, Stunned, Team, TelegraphZone, TurnPhase,
+    BattleStats, CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState,
+    Inventory, Item, Outcome, Position, Rooted, Stats, Stunned, Team, TelegraphZone, TurnPhase,
 };
 use verryte_core::snapshot::{WorldRegistry, WorldSnapshot};
 use verryte_input::ActionSource;
@@ -34,6 +34,8 @@ pub struct Snapshot {
     pub selected_can_act: bool,
     #[serde(default)]
     pub combo_count: u32,
+    #[serde(default)]
+    pub battle_stats: BattleStats,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -110,6 +112,7 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_resource::<crate::components::TurnTransition>("TurnTransition");
     reg.register_resource::<verryte_map::VisibilityMap>("VisibilityMap");
     reg.register_resource::<verryte_core::Events<GameEvent>>("GameEvents");
+    reg.register_resource::<crate::components::BattleStats>("BattleStats");
 
     reg
 }

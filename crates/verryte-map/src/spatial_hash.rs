@@ -86,6 +86,32 @@ impl<T> SpatialHash<T> {
         false
     }
 
+    /// Move an entity from `from` to `to`.
+    ///
+    /// Returns `true` if the entity was found and moved.
+    pub fn update(&mut self, from: Point, to: Point, value: T) -> bool
+    where
+        T: PartialEq,
+    {
+        let key = self.cell_key(from);
+        let mut removed = None;
+        if let Some(entries) = self.cells.get_mut(&key) {
+            if let Some(pos) = entries.iter().position(|(p, v)| *p == from && *v == value) {
+                let (_, val) = entries.remove(pos);
+                removed = Some(val);
+                if entries.is_empty() {
+                    self.cells.remove(&key);
+                }
+            }
+        }
+        if let Some(val) = removed {
+            self.insert(to, val);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Query all entities within `radius` (Manhattan distance) of `center`.
     pub fn query<'a>(&'a self, center: Point, radius: u16) -> impl Iterator<Item = &'a T> + 'a {
         let radius_i16 = radius as i16;

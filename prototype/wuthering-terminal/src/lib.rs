@@ -20,7 +20,7 @@ pub use verryte_map::Point as Position;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::{CharacterClass, GameState, Stats, Team, TurnPhase};
+    use crate::components::{BattleStats, CharacterClass, GameState, Stats, Team, TurnPhase};
     use crate::map::{TacticalMap, Tile};
     use verryte_input::ActionSource;
 
@@ -1984,5 +1984,97 @@ mod tests {
             state.combo_count, 0,
             "Combo should reset on phase change to Enemy"
         );
+    }
+
+    #[test]
+    fn test_swap_character_direct_selection() {
+        let mut game = Game::new();
+
+        // Find player characters sorted
+        let mut players = Vec::new();
+        for (e, team) in game.world.query::<Team>() {
+            if *team == Team::Player {
+                players.push(e);
+            }
+        }
+        players.sort();
+
+        // Select second character (index 1) via SwapCharacter action
+        game.apply_action(Action::SwapCharacter(1), ActionSource::Terminal);
+
+        let state = game.world.resource::<GameState>().unwrap();
+        assert_eq!(
+            state.selected_entity,
+            Some(players[1]),
+            "Second character should be selected"
+        );
+
+        // Select first character (index 0)
+        game.apply_action(Action::SwapCharacter(0), ActionSource::Terminal);
+        let state2 = game.world.resource::<GameState>().unwrap();
+        assert_eq!(
+            state2.selected_entity,
+            Some(players[0]),
+            "First character should be selected"
+        );
+    }
+
+    #[test]
+    fn test_battle_stats_tracking() {
+        let mut game = Game::new();
+
+        // Initially battle stats are zeroed
+        let stats = game.world.resource::<BattleStats>().unwrap();
+        assert_eq!(stats.total_damage_dealt, 0);
+        assert_eq!(stats.total_damage_taken, 0);
+        assert_eq!(stats.total_swaps, 0);
+
+        // Find boss and position it next to Kael
+        let mut boss_opt = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Boss {
+                boss_opt = Some(e);
+            }
+        }
+        let boss = boss_opt.unwrap();
+        if let Some(pos) = game.world.get_mut::<Position>(boss) {
+            *pos = Position::new(4, 5);
+        }
+
+        // Select Kael at (4, 4)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Attack Boss at (4, 5)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        let stats2 = game.world.resource::<BattleStats>().unwrap();
+        assert!(stats2.total_damage_dealt > 0);
+        assert_eq!(stats2.max_combo_reached, 1);
+
+        // Let's perform a QTE swap
+        // Select Kael at (4, 4) first (since selection was cleared after the attack)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Fill concert energy
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.concert_energy = 100;
+        }
+        game.apply_action(Action::Skill3, ActionSource::Terminal);
+
+        let stats3 = game.world.resource::<BattleStats>().unwrap();
+        assert_eq!(stats3.total_swaps, 1, "Swap count should increment");
     }
 }

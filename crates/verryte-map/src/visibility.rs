@@ -77,11 +77,22 @@ impl VisibilityMap {
     /// Compute field-of-view from a given center point and radius.
     ///
     /// `is_opaque` determines if a tile blocks vision.
-    pub fn compute_fov<F>(&mut self, center: Point, radius: u16, mut is_opaque: F)
+    pub fn compute_fov<F>(&mut self, center: Point, radius: u16, is_opaque: F)
     where
         F: FnMut(Point) -> bool,
     {
         self.clear_visible();
+        self.compute_fov_incremental(center, radius, is_opaque);
+    }
+
+    /// Compute field-of-view from a given center point and radius, accumulating onto the
+    /// currently visible tiles without clearing existing 'Visible' tiles.
+    ///
+    /// `is_opaque` determines if a tile blocks vision.
+    pub fn compute_fov_incremental<F>(&mut self, center: Point, radius: u16, mut is_opaque: F)
+    where
+        F: FnMut(Point) -> bool,
+    {
         self.set_visible(center);
 
         for octant in 0..8 {
@@ -301,5 +312,19 @@ mod tests {
         assert!(vm.is_visible(Point::new(0, 0)));
         // Out-of-bounds tiles should remain hidden
         assert_eq!(vm.get(Point::new(10, 10)), Visibility::Hidden);
+    }
+
+    #[test]
+    fn compute_fov_incremental_accumulates() {
+        let mut vm = VisibilityMap::new(10, 10);
+        vm.clear_visible();
+        vm.compute_fov_incremental(Point::new(1, 1), 2, |_| false);
+        vm.compute_fov_incremental(Point::new(8, 8), 2, |_| false);
+
+        // Both centers should be visible
+        assert!(vm.is_visible(Point::new(1, 1)));
+        assert!(vm.is_visible(Point::new(8, 8)));
+        // Non-overlapping far tiles should not be visible
+        assert!(!vm.is_visible(Point::new(5, 5)));
     }
 }

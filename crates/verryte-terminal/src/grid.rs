@@ -712,6 +712,19 @@ impl Grid {
         }
     }
 
+    /// Fills the attributes of a region, applying the given attributes without modifying glyphs, fg, or bg.
+    pub fn fill_rect_attrs(&mut self, rect: Rect, attrs: CellAttrs) {
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        for y in rect.y..y_end {
+            for x in rect.x..x_end {
+                if let Some(c) = self.get_mut(x, y) {
+                    c.attrs = attrs;
+                }
+            }
+        }
+    }
+
     pub fn draw_border(&mut self, rect: Rect, cell: Cell) {
         if rect.is_empty() {
             return;
@@ -2320,5 +2333,26 @@ mod tests {
         grid.fill_rect_fg(Rect::new(1, 1, 1, 1), Color::BLUE);
         assert_eq!(grid.get(1, 1).unwrap().glyph, 'A');
         assert_eq!(grid.get(1, 1).unwrap().fg, Color::BLUE);
+    }
+
+    #[test]
+    fn test_grid_fill_rect_attrs() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(
+            1,
+            1,
+            Cell::new('A')
+                .with_fg(Color::WHITE)
+                .with_bg(Color::BLACK)
+                .with_attrs(CellAttrs::NONE),
+        );
+
+        let attrs = CellAttrs::NONE.bold().underline();
+        grid.fill_rect_attrs(Rect::new(1, 1, 1, 1), attrs);
+
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'A');
+        assert_eq!(grid.get(1, 1).unwrap().fg, Color::WHITE);
+        assert_eq!(grid.get(1, 1).unwrap().bg, Color::BLACK);
+        assert_eq!(grid.get(1, 1).unwrap().attrs, attrs);
     }
 }
