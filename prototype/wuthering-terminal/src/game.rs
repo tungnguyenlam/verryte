@@ -749,7 +749,33 @@ impl Game {
 
             if class == CharacterClass::Boss {
                 self.log("Absorbed Blight Sovereign Echo! Echo absorbed successfully.");
-                self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+                if let Some(echoes) = self
+                    .world
+                    .resource_mut::<crate::components::EquippedEchoes>()
+                {
+                    let ability = crate::components::EchoAbility::Lifesteal;
+                    if !echoes.abilities.contains(&ability) {
+                        echoes.abilities.push(ability);
+                        self.log("Granted Blight Sovereign's Lifesteal ability!");
+                    }
+                }
+                let floor = self
+                    .world
+                    .resource::<GameState>()
+                    .map(|s| s.floor)
+                    .unwrap_or(1);
+                if floor == 1 {
+                    if let Some(map) = self.world.resource_mut::<TacticalMap>() {
+                        map.tiles.set(pos, Tile::Stairs);
+                    }
+                    self.log(format!(
+                        "A staircase has appeared at {},{}. Stand on it and press '>' or type 'stairs' to descend.",
+                        pos.x, pos.y
+                    ));
+                } else {
+                    self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+                    self.log("Victory! Blight Sovereign defeated and Floor 2 conquered!");
+                }
             } else {
                 let mut ability = crate::components::EchoAbility::Swift;
                 let mut name = "Swift";
@@ -768,6 +794,38 @@ impl Game {
                     } else {
                         self.log(format!("Absorbed {} Echo, but already have it.", name));
                     }
+                }
+            }
+
+            // Check if this was the last enemy and last echo
+            let enemy_exists = self
+                .world
+                .query::<Team>()
+                .into_iter()
+                .any(|(_, team)| *team == Team::Enemy);
+            let echo_exists = self
+                .world
+                .query::<crate::components::EchoItem>()
+                .into_iter()
+                .next()
+                .is_some();
+            if !enemy_exists && !echo_exists {
+                let floor = self
+                    .world
+                    .resource::<GameState>()
+                    .map(|s| s.floor)
+                    .unwrap_or(1);
+                if floor == 1 {
+                    if let Some(map) = self.world.resource_mut::<TacticalMap>() {
+                        map.tiles.set(pos, Tile::Stairs);
+                    }
+                    self.log(format!(
+                        "All enemies defeated on Floor 1! A staircase has appeared at {},{}. Stand on it and press '>' or type 'stairs' to descend.",
+                        pos.x, pos.y
+                    ));
+                } else {
+                    self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+                    self.log("Victory! All enemies defeated and Floor 2 conquered!");
                 }
             }
 

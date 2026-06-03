@@ -143,8 +143,7 @@ pub fn enemy_ai_system(world: &mut World) {
                             && neighbor.y >= 0
                             && neighbor.y < map.height as i16
                         {
-                            let tile = map.tile(neighbor.x, neighbor.y);
-                            let passable = matches!(tile, Tile::Grass | Tile::Water | Tile::Lava)
+                            let passable = map.is_walkable(neighbor)
                                 && !is_occupied_except(world, neighbor, enemy_entity);
                             if passable {
                                 let n_dist = (neighbor.x - player_pos.x).abs()
@@ -568,12 +567,8 @@ pub fn enemy_ai_system(world: &mut World) {
                                 && neighbor.y >= 0
                                 && neighbor.y < map.height as i16
                             {
-                                let tile = map.tile(neighbor.x, neighbor.y);
-                                let passable =
-                                    matches!(
-                                        tile,
-                                        Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice
-                                    ) && !is_occupied_except(world, neighbor, enemy_entity);
+                                let passable = map.is_walkable(neighbor)
+                                    && !is_occupied_except(world, neighbor, enemy_entity);
                                 if passable {
                                     let min_player_dist = player_positions
                                         .iter()
@@ -612,9 +607,7 @@ pub fn enemy_ai_system(world: &mut World) {
                                 {
                                     return false;
                                 }
-                                let tile = map.tiles.get(pt).expect("point passed bounds check");
-                                matches!(tile, Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice)
-                                    && !is_occupied_except(world, pt, enemy_entity)
+                                map.is_walkable(pt) && !is_occupied_except(world, pt, enemy_entity)
                             },
                             |_, to| map.movement_cost(to) as u32,
                             false, // 4-way movement

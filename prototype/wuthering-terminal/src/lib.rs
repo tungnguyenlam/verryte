@@ -435,6 +435,7 @@ mod tests {
         }
         if let Some(state) = game.world.resource_mut::<GameState>() {
             state.boss_phase = crate::components::BossPhase::Phase2;
+            state.floor = 2;
         }
 
         // Select Warrior again
