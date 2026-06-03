@@ -3110,3 +3110,25 @@ runner that the shield is announced.
 **Gotchas.** Initial damage amplification of +5% on combo = 1 caused the first attack of skill tests to deal 26 damage instead of 25, failing existing tests. Restricting the boost to start at combo >= 2 (using `saturating_sub(1)`) resolves this conflict.
 
 **Follow-ups.** Add special VFX demo presets to show combo burst animations on screen when reaching milestone combos.
+
+## 2026-06-03 - Implement incremental FOV, BattleStats tracking, direct team swap selection, and spatial/rendering helpers
+
+**Goal.** Implement at least 5 meaningful improvements across the Verryte Rust engine and prototype, including incremental FOV, BattleStats tracking, direct swap selection, and helper utilities.
+
+**Changes.**
+- `crates/verryte-map/src/visibility.rs` - Added `VisibilityMap::compute_fov_incremental` to accumulate FOV visibility across multiple sources.
+- `prototype/wuthering-terminal/src/systems.rs` - Updated visibility system to use `compute_fov_incremental` for pooling multi-character visual data.
+- `prototype/wuthering-terminal/src/game.rs` - Implemented direct character selection swap in normal state for action indexes, and tracking for `BattleStats`.
+- `crates/verryte-core/src/world.rs` - Added `World::has_component::<C>()` helper.
+- `crates/verryte-map/src/spatial_hash.rs` - Added `SpatialHash::update(from, to, value)` helper.
+- `crates/verryte-core/src/log.rs` - Added `MessageLog::take_tail(n)` helper.
+- `crates/verryte-terminal/src/grid.rs` - Added `Grid::fill_rect_attrs` to tint regions.
+- `prototype/wuthering-terminal/src/components.rs` / `src/snapshot.rs` / `src/lib.rs` - Added `BattleStats` tracking resource, serialization, and test assertions.
+
+**Reasoning.** Pooling multi-character visibility avoids visual artifacts where individual updates overwrite other team members' visual data. Direct character swap allows players to swap directly to their desired team member without cycling through all units, improving interactive UX. Additional engine and prototype helpers optimize spatial hash updates, simplify ECS checks, and provide better text/attribute-rendering overlays.
+
+**Assumptions.** We assume that accumulated FOV is cleared at the start of each player phase and accumulates incrementally with each character's sight radius.
+
+**Gotchas.** When mutating `BattleStats` resource during gameplay action processing, borrowing conflicts on `self.world` were avoided by pre-allocating an `Entity` to `Team` lookup map rather than performing active queries while mutating resources.
+
+**Follow-ups.** Add SVG rendering outputs for grids to enable browser-based debug interfaces.
