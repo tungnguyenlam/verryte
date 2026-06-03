@@ -2306,7 +2306,11 @@ mod tests {
     #[test]
     fn test_grid_fill_rect_bg_fg() {
         let mut grid = Grid::new(3, 3);
-        grid.put(1, 1, Cell::new('A').with_fg(Color::WHITE).with_bg(Color::BLACK));
+        grid.put(
+            1,
+            1,
+            Cell::new('A').with_fg(Color::WHITE).with_bg(Color::BLACK),
+        );
 
         grid.fill_rect_bg(Rect::new(1, 1, 1, 1), Color::RED);
         assert_eq!(grid.get(1, 1).unwrap().glyph, 'A');

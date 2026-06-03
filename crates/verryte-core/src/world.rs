@@ -799,7 +799,10 @@ impl World {
     }
 
     /// Find the first entity with component `T` matching a predicate `F` and return a mutable reference.
-    pub fn find_mut_where<T: 'static + Send + Sync, F>(&mut self, mut predicate: F) -> Option<(Entity, &mut T)>
+    pub fn find_mut_where<T: 'static + Send + Sync, F>(
+        &mut self,
+        mut predicate: F,
+    ) -> Option<(Entity, &mut T)>
     where
         F: FnMut(&T) -> bool,
     {

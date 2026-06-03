@@ -309,11 +309,18 @@ impl DijkstraMap {
             {
                 let idx = (source.y as usize) * (width as usize) + (source.x as usize);
                 map.distances[idx] = 0;
-                heap.push(Node { cost: 0, point: source });
+                heap.push(Node {
+                    cost: 0,
+                    point: source,
+                });
             }
         }
 
-        while let Some(Node { cost: current_cost, point }) = heap.pop() {
+        while let Some(Node {
+            cost: current_cost,
+            point,
+        }) = heap.pop()
+        {
             let idx = (point.y as usize) * (width as usize) + (point.x as usize);
             if current_cost > map.distances[idx] {
                 continue;
@@ -330,7 +337,10 @@ impl DijkstraMap {
                     let n_idx = (neighbor.y as usize) * (width as usize) + (neighbor.x as usize);
                     if next_cost < map.distances[n_idx] {
                         map.distances[n_idx] = next_cost;
-                        heap.push(Node { cost: next_cost, point: neighbor });
+                        heap.push(Node {
+                            cost: next_cost,
+                            point: neighbor,
+                        });
                     }
                 }
             };
