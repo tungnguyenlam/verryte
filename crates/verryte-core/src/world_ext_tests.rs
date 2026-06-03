@@ -47,3 +47,24 @@ fn test_world_tag_helpers() {
     assert!(!world.is_alive(e3));
     assert!(world.is_alive(e1));
 }
+
+#[test]
+fn test_world_find_where() {
+    let mut world = World::new();
+    #[derive(Debug, PartialEq)]
+    struct Score(u32);
+
+    let e1 = world.spawn();
+    world.insert(e1, Score(10));
+    let e2 = world.spawn();
+    world.insert(e2, Score(20));
+
+    let found = world.find_where(|s: &Score| s.0 > 15);
+    assert_eq!(found, Some((e2, &Score(20))));
+
+    let not_found = world.find_where(|s: &Score| s.0 > 25);
+    assert!(not_found.is_none());
+
+    let found_mut = world.find_mut_where(|s: &Score| s.0 < 15);
+    assert_eq!(found_mut.map(|(e, s)| (e, s.0)), Some((e1, 10)));
+}

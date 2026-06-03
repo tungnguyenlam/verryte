@@ -262,12 +262,122 @@ impl DijkstraMap {
             }
         }
 
-        if let Some(dist) = self.get(current) {
-            if dist >= min_range && dist <= max_range {
-                return Some(path);
+        None
+    }
+
+    /// Compute distances from sources using a custom weight function for edge costs.
+    ///
+    /// `sources` are the targets/goals to chase (distance 0).
+    /// `passable` determines if a coordinate is walkable.
+    /// `cost` returns the movement cost from one point to an adjacent point.
+    /// `diagonal` allows 8-way traversal if true, otherwise 4-way.
+    pub fn compute_weighted<F, C>(
+        width: u16,
+        height: u16,
+        sources: &[Point],
+        mut passable: F,
+        mut cost: C,
+        diagonal: bool,
+    ) -> Self
+    where
+        F: FnMut(Point) -> bool,
+        C: FnMut(Point, Point) -> u32,
+    {
+        #[derive(Copy, Clone, Eq, PartialEq)]
+        struct Node {
+            cost: u32,
+            point: Point,
+        }
+
+        impl Ord for Node {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                other.cost.cmp(&self.cost)
             }
         }
 
-        None
+        impl PartialOrd for Node {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        let mut map = Self::new(width, height);
+        let mut heap = std::collections::BinaryHeap::new();
+
+        for &source in sources {
+            if source.x >= 0 && source.x < width as i16 && source.y >= 0 && source.y < height as i16
+            {
+                let idx = (source.y as usize) * (width as usize) + (source.x as usize);
+                map.distances[idx] = 0;
+                heap.push(Node { cost: 0, point: source });
+            }
+        }
+
+        while let Some(Node { cost: current_cost, point }) = heap.pop() {
+            let idx = (point.y as usize) * (width as usize) + (point.x as usize);
+            if current_cost > map.distances[idx] {
+                continue;
+            }
+
+            let mut process_neighbor = |neighbor: Point| {
+                if neighbor.x >= 0
+                    && neighbor.x < width as i16
+                    && neighbor.y >= 0
+                    && neighbor.y < height as i16
+                    && passable(neighbor)
+                {
+                    let next_cost = current_cost + cost(point, neighbor);
+                    let n_idx = (neighbor.y as usize) * (width as usize) + (neighbor.x as usize);
+                    if next_cost < map.distances[n_idx] {
+                        map.distances[n_idx] = next_cost;
+                        heap.push(Node { cost: next_cost, point: neighbor });
+                    }
+                }
+            };
+
+            if diagonal {
+                for neighbor in point.neighbors8() {
+                    process_neighbor(neighbor);
+                }
+            } else {
+                for neighbor in point.neighbors4() {
+                    process_neighbor(neighbor);
+                }
+            }
+        }
+
+        map
+    }
+
+    /// Formats the Dijkstra map as an ASCII string.
+    ///
+    /// Distances from 0 to 9 are rendered as their digit character.
+    /// Distances from 10 to 35 are rendered as lowercase letters 'a' through 'z'.
+    /// Other reachable distances are rendered as '+'.
+    /// Unreachable points are rendered as '.'.
+    pub fn to_ascii_string(&self) -> String {
+        let mut s = String::new();
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let p = Point::new(x as i16, y as i16);
+                match self.get(p) {
+                    None => s.push('.'),
+                    Some(dist) => {
+                        if dist <= 9 {
+                            s.push_str(&dist.to_string());
+                        } else if dist <= 35 {
+                            let ch = (b'a' + (dist - 10) as u8) as char;
+                            s.push(ch);
+                        } else {
+                            s.push('+');
+                        }
+                    }
+                }
+            }
+            if y < self.height - 1 {
+                s.push('\n');
+            }
+        }
+        s
     }
 }

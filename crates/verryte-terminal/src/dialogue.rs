@@ -24,6 +24,41 @@ impl std::fmt::Display for DialogueTheme {
     }
 }
 
+impl DialogueTheme {
+    /// Returns the main theme color (used for border).
+    pub fn theme_color(&self) -> Color {
+        match self {
+            Self::Arcane => Color(150, 50, 250),
+            Self::Forest => Color(50, 180, 80),
+            Self::Blood => Color(200, 20, 20),
+            Self::Frost => Color(80, 180, 240),
+            Self::Dungeon => Color::GREY,
+        }
+    }
+
+    /// Returns the title color.
+    pub fn title_color(&self) -> Color {
+        match self {
+            Self::Arcane => Color(220, 180, 255),
+            Self::Forest => Color(180, 255, 180),
+            Self::Blood => Color(255, 100, 100),
+            Self::Frost => Color(180, 240, 255),
+            Self::Dungeon => Color::YELLOW,
+        }
+    }
+
+    /// Returns the background color.
+    pub fn bg_color(&self) -> Color {
+        match self {
+            Self::Arcane => Color(10, 5, 20),
+            Self::Forest => Color(5, 15, 10),
+            Self::Blood => Color(20, 5, 5),
+            Self::Frost => Color(5, 10, 20),
+            Self::Dungeon => Color::BLACK,
+        }
+    }
+}
+
 /// A UI widget for rendering interactive dialogue boxes.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -51,38 +86,10 @@ impl DialogueBox {
     }
 
     pub fn with_theme(mut self, theme: DialogueTheme) -> Self {
-        match theme {
-            DialogueTheme::Arcane => {
-                self.border_color = Color(150, 50, 250);
-                self.title_fg = Color(220, 180, 255);
-                self.text_fg = Color::WHITE;
-                self.bg = Color(10, 5, 20);
-            }
-            DialogueTheme::Forest => {
-                self.border_color = Color(50, 180, 80);
-                self.title_fg = Color(180, 255, 180);
-                self.text_fg = Color::WHITE;
-                self.bg = Color(5, 15, 10);
-            }
-            DialogueTheme::Blood => {
-                self.border_color = Color(200, 20, 20);
-                self.title_fg = Color(255, 100, 100);
-                self.text_fg = Color::WHITE;
-                self.bg = Color(20, 5, 5);
-            }
-            DialogueTheme::Frost => {
-                self.border_color = Color(80, 180, 240);
-                self.title_fg = Color(180, 240, 255);
-                self.text_fg = Color::WHITE;
-                self.bg = Color(5, 10, 20);
-            }
-            DialogueTheme::Dungeon => {
-                self.border_color = Color::GREY;
-                self.title_fg = Color::YELLOW;
-                self.text_fg = Color::WHITE;
-                self.bg = Color::BLACK;
-            }
-        }
+        self.border_color = theme.theme_color();
+        self.title_fg = theme.title_color();
+        self.bg = theme.bg_color();
+        self.text_fg = Color::WHITE;
         self
     }
 
@@ -384,6 +391,9 @@ mod tests {
         ] {
             let b = DialogueBox::new(Rect::new(0, 0, 10, 5)).with_theme(theme);
             assert_ne!(b.border_color, Color::BLACK);
+            assert_eq!(b.border_color, theme.theme_color());
+            assert_eq!(b.title_fg, theme.title_color());
+            assert_eq!(b.bg, theme.bg_color());
         }
     }
 

@@ -483,6 +483,16 @@ impl TextInput {
         self.history_index = None;
     }
 
+    /// Check if there are states available on the undo stack.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    /// Check if there are states available on the redo stack.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
     fn delete_range(&mut self, start: usize, end: usize) {
         let len = self.text.chars().count();
         let start = start.min(len);

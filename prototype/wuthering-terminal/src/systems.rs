@@ -553,8 +553,8 @@ pub fn enemy_ai_system(world: &mut World) {
                         .resource::<TacticalMap>()
                         .expect("TacticalMap must be registered");
 
-                    // Generate Dijkstra map towards all players
-                    let d_map = verryte_map::DijkstraMap::compute(
+                    // Generate Dijkstra map towards all players using weighted movement costs
+                    let d_map = verryte_map::DijkstraMap::compute_weighted(
                         map.width,
                         map.height,
                         &player_positions,
@@ -570,6 +570,7 @@ pub fn enemy_ai_system(world: &mut World) {
                             matches!(tile, Tile::Grass | Tile::Water | Tile::Lava)
                                 && !is_occupied_except(world, pt, enemy_entity)
                         },
+                        |_, to| map.movement_cost(to) as u32,
                         false, // 4-way movement
                     );
 

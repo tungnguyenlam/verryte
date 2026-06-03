@@ -1366,14 +1366,19 @@ mod tests {
     #[test]
     fn test_text_input_undo_redo() {
         let mut input = TextInput::new();
+        assert!(!input.can_undo());
+        assert!(!input.can_redo());
         input.handle_key(Key::Char('a'));
+        assert!(input.can_undo());
         input.handle_key(Key::Char('b'));
         input.handle_key(Key::Char('c'));
         assert_eq!(input.text(), "abc");
 
         // Undo last character insertion ('c')
+        assert!(input.can_undo());
         assert!(input.undo());
         assert_eq!(input.text(), "ab");
+        assert!(input.can_redo());
 
         // Undo 'b'
         assert!(input.undo());

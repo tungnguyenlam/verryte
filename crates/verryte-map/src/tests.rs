@@ -1699,3 +1699,35 @@ fn test_dijkstra_range_methods() {
     let end_flee_dist = map.get(end_flee).unwrap();
     assert!(end_flee_dist >= 1 && end_flee_dist <= 2);
 }
+
+#[test]
+fn test_dijkstra_map_weighted() {
+    let passable = |_: Point| true;
+    let cost = |from: Point, to: Point| {
+        // direct edge (0,0) -> (1,0) costs 10, others cost 1
+        if from.x == 0 && from.y == 0 && to.x == 1 && to.y == 0 {
+            10
+        } else {
+            1
+        }
+    };
+
+    let map = DijkstraMap::compute_weighted(3, 3, &[Point::new(0, 0)], passable, cost, false);
+    assert_eq!(map.get(Point::new(0, 0)), Some(0));
+    // Path to (1,0) directly costs 10, but going via (0,1) -> (1,1) -> (1,0) costs 1 + 1 + 1 = 3
+    assert_eq!(map.get(Point::new(1, 0)), Some(3));
+    assert_eq!(map.get(Point::new(0, 1)), Some(1));
+    assert_eq!(map.get(Point::new(1, 1)), Some(2));
+}
+
+#[test]
+fn test_dijkstra_map_to_ascii_string() {
+    let passable = |p: Point| !(p.x == 1 && p.y == 1);
+    let map = DijkstraMap::compute(3, 3, &[Point::new(0, 0)], passable, false);
+    let ascii = map.to_ascii_string();
+    let expected = "\
+012
+1.3
+234";
+    assert_eq!(ascii, expected);
+}

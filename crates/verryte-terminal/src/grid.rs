@@ -686,6 +686,32 @@ impl Grid {
         }
     }
 
+    /// Fills the background of a region with the given color, without modifying the glyphs.
+    pub fn fill_rect_bg(&mut self, rect: Rect, bg: Color) {
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        for y in rect.y..y_end {
+            for x in rect.x..x_end {
+                if let Some(c) = self.get_mut(x, y) {
+                    c.bg = bg;
+                }
+            }
+        }
+    }
+
+    /// Fills the foreground of a region with the given color, without modifying the glyphs.
+    pub fn fill_rect_fg(&mut self, rect: Rect, fg: Color) {
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+        for y in rect.y..y_end {
+            for x in rect.x..x_end {
+                if let Some(c) = self.get_mut(x, y) {
+                    c.fg = fg;
+                }
+            }
+        }
+    }
+
     pub fn draw_border(&mut self, rect: Rect, cell: Cell) {
         if rect.is_empty() {
             return;
@@ -2275,5 +2301,20 @@ mod tests {
         let mapped = grid.map_rect(Rect::new(1, 1, 3, 3), |_, _, c| c);
         assert_eq!(mapped.width(), 5);
         assert_eq!(mapped.height(), 5);
+    }
+
+    #[test]
+    fn test_grid_fill_rect_bg_fg() {
+        let mut grid = Grid::new(3, 3);
+        grid.put(1, 1, Cell::new('A').with_fg(Color::WHITE).with_bg(Color::BLACK));
+
+        grid.fill_rect_bg(Rect::new(1, 1, 1, 1), Color::RED);
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'A');
+        assert_eq!(grid.get(1, 1).unwrap().bg, Color::RED);
+        assert_eq!(grid.get(1, 1).unwrap().fg, Color::WHITE);
+
+        grid.fill_rect_fg(Rect::new(1, 1, 1, 1), Color::BLUE);
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'A');
+        assert_eq!(grid.get(1, 1).unwrap().fg, Color::BLUE);
     }
 }

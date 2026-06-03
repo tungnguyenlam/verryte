@@ -773,6 +773,56 @@ impl World {
         out
     }
 
+    /// Find the first entity with component `T` matching a predicate `F`.
+    pub fn find_where<T: 'static + Send + Sync, F>(&self, mut predicate: F) -> Option<(Entity, &T)>
+    where
+        F: FnMut(&T) -> bool,
+    {
+        let column = self.columns.get(&TypeId::of::<T>())?;
+        let typed = column.as_any().downcast_ref::<TypedColumn<T>>()?;
+        for (i, slot) in typed.slots.iter().enumerate() {
+            if let Some((gen, value)) = slot {
+                if (i < self.alive.len()) && self.alive[i] {
+                    if predicate(value) {
+                        return Some((
+                            Entity {
+                                index: i as u32,
+                                generation: *gen,
+                            },
+                            value,
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find the first entity with component `T` matching a predicate `F` and return a mutable reference.
+    pub fn find_mut_where<T: 'static + Send + Sync, F>(&mut self, mut predicate: F) -> Option<(Entity, &mut T)>
+    where
+        F: FnMut(&T) -> bool,
+    {
+        let column = self.columns.get_mut(&TypeId::of::<T>())?;
+        let typed = column.as_any_mut().downcast_mut::<TypedColumn<T>>()?;
+        for (i, slot) in typed.slots.iter_mut().enumerate() {
+            if let Some((gen, value)) = slot.as_mut() {
+                if (i < self.alive.len()) && self.alive[i] {
+                    if predicate(value) {
+                        return Some((
+                            Entity {
+                                index: i as u32,
+                                generation: *gen,
+                            },
+                            value,
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Count how many live entities have a given component type.
     pub fn count_with<T: 'static + Send + Sync>(&self) -> usize {
         let Some(column) = self.columns.get(&TypeId::of::<T>()) else {
