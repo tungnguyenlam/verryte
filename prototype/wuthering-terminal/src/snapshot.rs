@@ -72,6 +72,8 @@ pub enum ActionOutcome {
     BossPhaseChanged { phase: String },
     /// The action triggered a state-only change (selection, cursor, inventory).
     StateUpdated,
+    /// The action failed (e.g. out of AP, out of range, invalid target).
+    Failed { reason: String },
     /// The action ended the game.
     GameOver { outcome: Outcome },
 }

@@ -1878,6 +1878,11 @@ impl Game {
         source: ActionSource,
     ) -> crate::snapshot::StepReport {
         let before = self.snapshot();
+        let before_log_len = self
+            .world
+            .resource::<MessageLog>()
+            .map(|l| l.len())
+            .unwrap_or(0);
 
         // Record action history
         let (turn, phase, time) = {
@@ -1907,8 +1912,19 @@ impl Game {
 
         // Promote outcome based on observable state changes.
         let after = self.snapshot();
-        let outcome = self.compute_outcome(action, &before, &after, phase);
+        let outcome = self.compute_outcome(action, &before, &after, phase, before_log_len);
         self.last_outcome = outcome.clone();
+
+        if let Some(history) = self
+            .world
+            .resource_mut::<verryte_input::ActionHistory<Action>>()
+        {
+            if let Some(record) = history.records.last_mut() {
+                if let Ok(outcome_str) = serde_json::to_string(&outcome) {
+                    record.metadata.insert("outcome".to_string(), outcome_str);
+                }
+            }
+        }
 
         let mut diagnostics = std::collections::HashMap::new();
         if let Some(diags) = self.world.resource::<verryte_core::Diagnostics>() {
@@ -1933,18 +1949,37 @@ impl Game {
         &self,
         action: Action,
         before: &crate::snapshot::Snapshot,
-        after: &crate::snapshot::Snapshot,
+        break_after: &crate::snapshot::Snapshot,
         _phase_before: TurnPhase,
+        before_log_len: usize,
     ) -> ActionOutcome {
         if matches!(action, Action::Quit) {
             return ActionOutcome::GameOver {
-                outcome: after.outcome,
+                outcome: break_after.outcome,
             };
         }
-        if !matches!(after.outcome, Outcome::Playing) {
+        if !matches!(break_after.outcome, Outcome::Playing) {
             return ActionOutcome::GameOver {
-                outcome: after.outcome,
+                outcome: break_after.outcome,
             };
+        }
+        // Check for failed actions via log messages.
+        if let Some(log) = self.world.resource::<MessageLog>() {
+            if log.len() > before_log_len {
+                if let Some(msg) = log.messages().last() {
+                    let msg_str = msg.to_string();
+                    if msg_str.starts_with("Not enough AP")
+                        || msg_str.starts_with("Target is out of")
+                        || msg_str.starts_with("Cannot move")
+                        || msg_str.starts_with("Select a character")
+                        || msg_str.starts_with("Concert Energy not full")
+                        || msg_str.starts_with("No reachable safe")
+                        || msg_str.starts_with("Target is out of range")
+                    {
+                        return ActionOutcome::Failed { reason: msg_str };
+                    }
+                }
+            }
         }
         // Boss phase transitions are detected via the boss_phase resource
         // (the transition check runs at the end of every apply_action).
@@ -1970,10 +2005,10 @@ impl Game {
                 };
             }
         }
-        if before.phase != after.phase {
+        if before.phase != break_after.phase {
             return ActionOutcome::PhaseChanged;
         }
-        if before.turn != after.turn {
+        if before.turn != break_after.turn {
             return ActionOutcome::TurnAdvanced;
         }
         // Look at events for combat signals.
@@ -3375,6 +3410,35 @@ impl Game {
                                 Color(100, 0, 0)
                             };
                             screen.put(tx as u16, ty as u16, Cell::new('=').with_fg(color));
+                        }
+                    }
+
+                    // Render Shield Bar right above HP Bar
+                    if let Some(shield) =
+                        self.world.get::<crate::components::ElementalShield>(entity)
+                    {
+                        if shield.amount > 0 {
+                            let sh_ratio = shield.amount as f32 / shield.max_amount as f32;
+                            let sh_fill_w = (bar_w as f32 * sh_ratio).round() as u16;
+                            let sh_color = match shield.shield_type {
+                                crate::components::ShieldType::Ice => Color(100, 200, 255),
+                                crate::components::ShieldType::Lightning => Color(255, 255, 0),
+                                crate::components::ShieldType::Nature => Color(0, 255, 100),
+                                crate::components::ShieldType::Physical => Color(200, 200, 200),
+                            };
+                            let sh_y = sy + tile_h as i32 - 2;
+                            for i in 0..bar_w {
+                                let tx = viewport.rect.x as i32 + bar_x + i as i32;
+                                let ty = viewport.rect.y as i32 + sh_y;
+                                if viewport.rect.contains(tx as u16, ty as u16) {
+                                    let color = if i < sh_fill_w {
+                                        sh_color
+                                    } else {
+                                        Color(50, 50, 50)
+                                    };
+                                    screen.put(tx as u16, ty as u16, Cell::new('-').with_fg(color));
+                                }
+                            }
                         }
                     }
                 }

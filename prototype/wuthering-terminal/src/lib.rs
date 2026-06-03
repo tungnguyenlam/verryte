@@ -1646,4 +1646,138 @@ mod tests {
             "Expected a Hit or BossPhaseChanged outcome in the report chain"
         );
     }
+
+    #[test]
+    fn test_failed_action_out_of_ap() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Select Kael (has AP initially)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Verify selected
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().selected_entity,
+            Some(warrior)
+        );
+
+        // Drain warrior's AP now
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 0;
+
+        // Try to move to (4, 5) with 0 AP
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        let report = game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        assert!(
+            matches!(report.outcome, ActionOutcome::Failed { ref reason } if reason.contains("Cannot move")),
+            "Expected Failed outcome with Cannot move, got {:?}",
+            report.outcome
+        );
+    }
+
+    #[test]
+    fn test_failed_action_out_of_range() {
+        let mut game = Game::new();
+
+        // Select Kael
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Trigger Skill1 (Warrior has range 1 usually, so range is short)
+        game.apply_action(Action::Skill1, ActionSource::Terminal);
+
+        // Move cursor to (10, 10), which is out of range
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(10, 10);
+        }
+        let report = game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        assert!(
+            matches!(report.outcome, ActionOutcome::Failed { ref reason } if reason.contains("range")),
+            "Expected Failed outcome due to range, got {:?}",
+            report.outcome
+        );
+    }
+
+    #[test]
+    fn test_history_records_outcome_metadata() {
+        let mut game = Game::new();
+
+        // Perform a cursor move (StateUpdated)
+        game.apply_action(Action::MoveNorth, ActionSource::Terminal);
+
+        // Check ActionHistory
+        let history = game
+            .world
+            .resource::<verryte_input::ActionHistory<Action>>()
+            .unwrap();
+        let last_record = history.records.last().unwrap();
+        let serialized_outcome = last_record.metadata.get("outcome").unwrap();
+        let parsed_outcome: ActionOutcome = serde_json::from_str(serialized_outcome).unwrap();
+        assert_eq!(parsed_outcome, ActionOutcome::StateUpdated);
+    }
+
+    #[test]
+    fn test_shield_rendering() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Give warrior a shield
+        game.world.insert(
+            warrior,
+            crate::components::ElementalShield {
+                shield_type: crate::components::ShieldType::Ice,
+                amount: 50,
+                max_amount: 50,
+            },
+        );
+
+        // Selection / centering is at (4,4)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+
+        // Render the screen
+        let grid = game.render();
+
+        // Scan the grid to verify '-' character is rendered
+        let mut found_shield_cell = false;
+        for y in 0..grid.height() {
+            for x in 0..grid.width() {
+                if let Some(cell) = grid.get(x, y) {
+                    if cell.glyph == '-' {
+                        found_shield_cell = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_shield_cell,
+            "Shield rendering should produce '-' cells on the grid"
+        );
+    }
 }
