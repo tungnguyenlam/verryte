@@ -3040,3 +3040,27 @@ runner that the shield is announced.
 **Gotchas.** In `test_failed_action_out_of_ap`, the character must be selected *before* setting their AP to 0. If AP is set to 0 before selection, the confirm action will not select them due to selection criteria checking for positive AP, causing the subsequent movement confirm to result in a no-op instead of a failed movement.
 
 **Follow-ups.** Future prototypes could extend `ActionOutcome` with more granular failed action classifications (e.g. invalid target type, target blocked by terrain) or add support for undoing failed actions.
+
+## 2026-06-03 - Toggleable minimap, Sentinel retreat AI, and animated lava terrain
+
+**Goal.** Implement a toggleable minimap in the tactical RPG prototype, add retreat behavior for the `CursedSentinel` enemy archetype when a player character is within distance <= 2, and add a new walkable `Tile::Lava` terrain type that costs 2 AP to traverse and inflicts 20 damage upon entry (accompanied by screen shake and fire VFX), with tick-based animations for both water and lava tiles.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/action.rs:18` - added `Action::ToggleMinimap` mapped to key 'm'/'M' and command tokens "minimap" and "map".
+- `prototype/wuthering-terminal/src/components.rs:72` - added `show_minimap` field to `GameState`.
+- `prototype/wuthering-terminal/src/game.rs:2814` - handled `Action::ToggleMinimap` in action execution.
+- `prototype/wuthering-terminal/src/game.rs:3227` - added rendering for `Tile::Lava` with `Color(120, 20, 10)`.
+- `prototype/wuthering-terminal/src/game.rs:3239` - added tick-based flowing water and lava ripple animations in the main tile render path.
+- `prototype/wuthering-terminal/src/ui.rs:157` - added "Lava" hover label for the HUD.
+- `prototype/wuthering-terminal/src/ui.rs:445` - rendered `Tile::Lava` and animated water and lava cells on the minimap.
+- `prototype/wuthering-terminal/src/map.rs:8` - added `Tile::Lava` enum variant and parsed '^' in `from_ascii`.
+- `prototype/wuthering-terminal/src/systems.rs:129` - added AI retreat logic for `CursedSentinel`.
+- `prototype/wuthering-terminal/src/lib.rs:1812` - added unit tests for minimap toggle, Sentinel retreat, and lava damage.
+
+**Reasoning.** Having a toggleable minimap allows users to clear screen estate on smaller terminals, fulfilling the adaptive design principles. The `CursedSentinel` retreat behavior introduces tactical diversity by forcing players to chase down ranged units. Lava terrain introduces hazard-based gameplay. Scoping the TacticalMap references in CursedSentinel retreat and normal AI pathing inside blocks ensures the borrow checker remains happy.
+
+**Assumptions.** I assumed that Sentinel retreat should only happen if it has AP left (costs 1 on Grass, 2 on Water/Lava).
+
+**Gotchas.** In `test_cursed_sentinel_retreat_behavior`, other player characters (like Lyra at column 4, row 8) must be moved far away to prevent the Sentinel from choosing not to retreat, as distance is computed against the closest player. Additionally, the Sentinel's AP must be exactly 1 to prevent it from retreating and then using its remaining AP to move back closer in the same turn's AI loop.
+
+**Follow-ups.** Verify the visual ripple animation flows smoothly under high load or varying tick rates in TTY.
