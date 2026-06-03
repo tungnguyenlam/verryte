@@ -32,6 +32,8 @@ pub struct Snapshot {
     /// True iff there is a character selected who still has AP to act.
     #[serde(default)]
     pub selected_can_act: bool,
+    #[serde(default)]
+    pub combo_count: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -103,6 +103,17 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     let turn_label = format!("TURN: {:02} | ", state.turn);
     let phase_label = format!("PHASE: {:<12}", phase_str);
 
+    let combo_label = if state.combo_count > 0 {
+        format!(
+            " | COMBO: x{} (+{}%)",
+            state.combo_count,
+            state.combo_count * 5
+        )
+    } else {
+        "".to_string()
+    };
+    let combo_color = Color(255, 120, 50);
+
     let ce_pct = (state.concert_energy as f32 / 100.0).clamp(0.0, 1.0);
     let ce_color = if state.concert_energy >= 100 {
         Color(255, 215, 0)
@@ -116,13 +127,17 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
 
     let turn_x = 2u16;
     let phase_x = turn_x + turn_label.len() as u16;
-    let sel_x = phase_x + phase_label.len() as u16 + 1;
+    let combo_x = phase_x + phase_label.len() as u16;
+    let sel_x = combo_x + combo_label.len() as u16 + 1;
 
     if turn_x < ce_x {
         grid.write_str(turn_x, hud_y + 1, &turn_label, Color::WHITE, hud_bg);
     }
     if phase_x < ce_x {
         grid.write_str(phase_x, hud_y + 1, &phase_label, phase_color, hud_bg);
+    }
+    if combo_x < ce_x && !combo_label.is_empty() {
+        grid.write_str(combo_x, hud_y + 1, &combo_label, combo_color, hud_bg);
     }
     if sel_x < ce_x {
         let max_sel = (ce_x.saturating_sub(sel_x + 1)) as usize;

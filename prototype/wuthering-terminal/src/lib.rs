@@ -1918,4 +1918,71 @@ mod tests {
             "Warrior should take 20 damage from entering Lava"
         );
     }
+
+    #[test]
+    fn test_combo_system() {
+        let mut game = Game::new();
+
+        // Find warrior and ShadowStalker
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Position them adjacent
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(2, 2);
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(2, 3);
+
+        // Make warrior hp high, ShadowStalker HP high
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 1000;
+
+        // Perform attack
+        let (damage1, _) = game.resolve_combat_hit(
+            warrior,
+            shadow,
+            50,
+            "Warrior",
+            "ShadowStalker",
+            Position::new(2, 3),
+        );
+
+        let combo1 = game.world.resource::<GameState>().unwrap().combo_count;
+        assert_eq!(combo1, 1);
+        assert!(damage1 > 0);
+
+        // Second attack
+        let (damage2, _) = game.resolve_combat_hit(
+            warrior,
+            shadow,
+            50,
+            "Warrior",
+            "ShadowStalker",
+            Position::new(2, 3),
+        );
+        let combo2 = game.world.resource::<GameState>().unwrap().combo_count;
+        assert_eq!(combo2, 2);
+        assert!(damage2 > 0);
+
+        // Force turn phase transition to Enemy Phase
+        game.apply_action(Action::EndTurn, ActionSource::Terminal);
+        crate::systems::turn_management_system(&mut game.world);
+
+        let state = game.world.resource::<GameState>().unwrap();
+        assert_eq!(
+            state.combo_count, 0,
+            "Combo should reset on phase change to Enemy"
+        );
+    }
 }

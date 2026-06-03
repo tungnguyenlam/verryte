@@ -3087,3 +3087,26 @@ runner that the shield is announced.
 **Gotchas.** In `compute_weighted`, cardinal and diagonal neighbors returned arrays of different sizes (`[Point; 4]` vs `[Point; 8]`), which cannot be bound to the same variable in a conditional branch. Resolved by using a local helper closure capturing pathfinder mutables and applying it to each iterated neighbor.
 
 **Follow-ups.** None. All 158 engine tests and 43 tactical RPG integration tests compile and pass cleanly.
+
+## 2026-06-03 - Implement Player Combo System with visual indicators and damage scaling
+
+**Goal.** Implement a player combo system where consecutive attacks amplify damage and reward combo milestones, with visual indicators on the HUD.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/components.rs:118` - Added `combo_count` to `GameState`.
+- `prototype/wuthering-terminal/src/snapshot.rs:34` - Added `combo_count` to `Snapshot`.
+- `prototype/wuthering-terminal/src/game.rs:61` - Initialized `combo_count` to 0.
+- `prototype/wuthering-terminal/src/game.rs:277` - Incremented `combo_count` and amplified damage on player consecutive hits, and rewarded milestone bonuses (heal/CE) in `resolve_combat_hit`.
+- `prototype/wuthering-terminal/src/game.rs:1918` - Reset `combo_count` on failed actions and `Wait` actions in `apply_action`.
+- `prototype/wuthering-terminal/src/systems.rs:704` and `:783` - Reset `combo_count` on player/enemy turn transition boundaries.
+- `prototype/wuthering-terminal/src/ui.rs:106` - Rendered the active combo counter on the first HUD line.
+- `prototype/wuthering-terminal/src/lib.rs:1921` - Added unit test `test_combo_system`.
+- `prototype/wuthering-terminal/README.md:32` - Documented combo system details.
+
+**Reasoning.** Integrating the combo system directly into the state/combat loop rewards player strategy for chaining consecutive attacks. Amplification is applied from the second consecutive hit (combo >= 2) so that normal initial skill hits remain unchanged. Combo resets on action failures/waiting/turn changes penalize execution errors and balance the damage boost.
+
+**Assumptions.** We assume combo counts are only accrued by player-team characters and apply exclusively to combat-hit resolutions initiated via player control.
+
+**Gotchas.** Initial damage amplification of +5% on combo = 1 caused the first attack of skill tests to deal 26 damage instead of 25, failing existing tests. Restricting the boost to start at combo >= 2 (using `saturating_sub(1)`) resolves this conflict.
+
+**Follow-ups.** Add special VFX demo presets to show combo burst animations on screen when reaching milestone combos.

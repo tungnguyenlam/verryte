@@ -709,6 +709,7 @@ pub fn turn_management_system(world: &mut World) {
                     .expect("GameState must be registered");
                 state.phase = TurnPhase::Enemy;
                 state.selected_entity = None;
+                state.combo_count = 0;
             }
             log(world, "[fg:FFA500][b]Enemy Phase starts![/][/fg]");
             if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
@@ -787,6 +788,7 @@ pub fn turn_management_system(world: &mut World) {
                     .expect("GameState must be registered");
                 state.phase = TurnPhase::Player;
                 state.turn += 1;
+                state.combo_count = 0;
             }
             let turn_num = world
                 .resource::<GameState>()

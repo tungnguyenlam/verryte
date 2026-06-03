@@ -115,6 +115,8 @@ pub struct GameState {
     pub is_recording: bool,
     #[serde(default = "default_true")]
     pub show_minimap: bool,
+    #[serde(default)]
+    pub combo_count: u32,
 }
 
 fn default_true() -> bool {

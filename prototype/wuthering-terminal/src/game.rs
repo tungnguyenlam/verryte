@@ -72,6 +72,7 @@ impl Game {
             auto_battle: false,
             is_recording: false,
             show_minimap: true,
+            combo_count: 0,
         });
         world.insert_resource(crate::components::TelegraphZone::default());
         world.insert_resource(verryte_map::VisibilityMap::new(width, height));
@@ -283,15 +284,29 @@ impl Game {
         target_name: &str,
         pos: Position,
     ) -> (i32, bool) {
+        let mut boosted_base_damage = base_damage;
+        let mut is_player = false;
+        let mut new_combo = 0;
+
+        if self.world.get::<Team>(attacker) == Some(&Team::Player) {
+            is_player = true;
+            if let Some(mut state) = self.world.resource_mut::<GameState>() {
+                state.combo_count += 1;
+                new_combo = state.combo_count;
+                let mult = 1.0 + ((new_combo.saturating_sub(1)) as f32 * 0.05);
+                boosted_base_damage = (base_damage as f32 * mult) as i32;
+            }
+        }
+
         let (is_crit, is_block, damage) = {
             let rng = self.world.resource_mut::<Rng>().unwrap();
             let roll = rng.next_u32(100);
             if roll < 20 {
-                (true, false, (base_damage as f32 * 1.5) as i32)
+                (true, false, (boosted_base_damage as f32 * 1.5) as i32)
             } else if roll < 35 {
-                (false, true, (base_damage / 2).max(1))
+                (false, true, (boosted_base_damage / 2).max(1))
             } else {
-                (false, false, base_damage)
+                (false, false, boosted_base_damage)
             }
         };
 
@@ -316,6 +331,23 @@ impl Game {
             "{} attacked {} for {} damage!{} (Target HP: {})",
             attacker_name, target_name, damage, crit_str, final_hp
         ));
+
+        if is_player && new_combo > 0 {
+            self.log(format!(
+                "Combo! [fg:FF5555][b]x{} Combo[/][/fg]!",
+                new_combo
+            ));
+            if new_combo % 3 == 0 {
+                if let Some(stats) = self.world.get_mut::<Stats>(attacker) {
+                    stats.hp = (stats.hp + 5).min(stats.max_hp);
+                    self.log(format!("Combo Bonus! Healed {} for 5 HP.", attacker_name));
+                }
+                if let Some(mut state) = self.world.resource_mut::<GameState>() {
+                    state.concert_energy = (state.concert_energy + 10).min(100);
+                    self.log("[fg:FFD700]Combo Bonus! Gained +10 Concert Energy.[/fg]".to_string());
+                }
+            }
+        }
 
         let (tcx, tcy) = self.get_tile_center_pixels(pos);
         let float_text = if is_crit {
@@ -343,6 +375,18 @@ impl Game {
                 float_color,
                 is_crit,
             ));
+
+        if is_player && new_combo > 0 {
+            self.vfx_mut()
+                .floating_texts
+                .push(verryte_terminal::vfx::FloatingText::new(
+                    tcx - 2.0,
+                    tcy - 3.5,
+                    &format!("x{} COMBO!", new_combo),
+                    Color(255, 120, 50),
+                    true,
+                ));
+        }
 
         self.vfx_mut()
             .particles
@@ -1916,6 +1960,23 @@ impl Game {
         // Promote outcome based on observable state changes.
         let after = self.snapshot();
         let outcome = self.compute_outcome(action, &before, &after, phase, before_log_len);
+
+        // Reset combo count if action failed or if the action was Wait
+        let is_failed = matches!(outcome, ActionOutcome::Failed { .. });
+        let is_wait = action == Action::Wait;
+        if is_failed || is_wait {
+            if let Some(mut state) = self.world.resource_mut::<GameState>() {
+                if state.combo_count > 0 {
+                    state.combo_count = 0;
+                    if is_failed {
+                        self.log("Combo broken by failed action.");
+                    } else {
+                        self.log("Combo broken by waiting.");
+                    }
+                }
+            }
+        }
+
         self.last_outcome = outcome.clone();
 
         if let Some(history) = self
@@ -3751,6 +3812,7 @@ impl Game {
             reachable_tiles,
             targetable_tiles,
             selected_can_act,
+            combo_count: state.combo_count,
         }
     }
 
