@@ -472,7 +472,7 @@ mod tests {
         assert!(diff.added_entities.is_empty());
         assert!(diff.removed_entities.is_empty());
         let e_diff = diff.changed_entities.get(&entity).unwrap();
-        assert!(e_diff.changed_components.contains_key(&"HP".to_string()));
+        assert!(e_diff.changed_components.contains_key("HP"));
     }
 
     #[test]
@@ -497,7 +497,7 @@ mod tests {
         };
         let diff = snap_a.diff(&snap_b);
         let e_diff = diff.changed_entities.get(&entity).unwrap();
-        assert!(e_diff.added_components.contains_key(&"HP".to_string()));
+        assert!(e_diff.added_components.contains_key("HP"));
         assert!(e_diff.removed_components.contains(&"Pos".to_string()));
     }
 
@@ -518,9 +518,9 @@ mod tests {
             ]),
         };
         let diff = snap_a.diff(&snap_b);
-        assert!(diff.added_resources.contains_key(&"New".to_string()));
+        assert!(diff.added_resources.contains_key("New"));
         assert!(diff.removed_resources.contains(&"Old".to_string()));
-        assert!(diff.changed_resources.contains_key(&"Config".to_string()));
+        assert!(diff.changed_resources.contains_key("Config"));
     }
 
     #[test]

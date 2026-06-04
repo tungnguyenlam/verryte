@@ -2966,40 +2966,37 @@ impl Game {
                                             .filter(|(e, _, _)| *e != sel_entity)
                                             .map(|(_, p, _)| **p)
                                             .collect();
-                                        if dest_tile == Tile::Ice {
-                                            if path.len() >= 2 {
-                                                let p_last = path[path.len() - 1];
-                                                let p_prev = path[path.len() - 2];
-                                                let dx = p_last.x - p_prev.x;
-                                                let dy = p_last.y - p_prev.y;
+                                        if dest_tile == Tile::Ice && path.len() >= 2 {
+                                            let p_last = path[path.len() - 1];
+                                            let p_prev = path[path.len() - 2];
+                                            let dx = p_last.x - p_prev.x;
+                                            let dy = p_last.y - p_prev.y;
 
-                                                let mut curr = cursor;
-                                                let map =
-                                                    self.world.resource::<TacticalMap>().unwrap();
-                                                loop {
-                                                    let next_pt =
-                                                        Position::new(curr.x + dx, curr.y + dy);
-                                                    if next_pt.x < 0
-                                                        || next_pt.x >= map.width as i16
-                                                        || next_pt.y < 0
-                                                        || next_pt.y >= map.height as i16
-                                                    {
-                                                        break;
-                                                    }
-                                                    if occupied.contains(&next_pt) {
-                                                        break;
-                                                    }
-                                                    let next_tile = map.tile(next_pt.x, next_pt.y);
-                                                    if next_tile == Tile::Wall {
-                                                        break;
-                                                    }
-                                                    curr = next_pt;
-                                                    if next_tile != Tile::Ice {
-                                                        break;
-                                                    }
+                                            let mut curr = cursor;
+                                            let map = self.world.resource::<TacticalMap>().unwrap();
+                                            loop {
+                                                let next_pt =
+                                                    Position::new(curr.x + dx, curr.y + dy);
+                                                if next_pt.x < 0
+                                                    || next_pt.x >= map.width as i16
+                                                    || next_pt.y < 0
+                                                    || next_pt.y >= map.height as i16
+                                                {
+                                                    break;
                                                 }
-                                                final_dest = curr;
+                                                if occupied.contains(&next_pt) {
+                                                    break;
+                                                }
+                                                let next_tile = map.tile(next_pt.x, next_pt.y);
+                                                if next_tile == Tile::Wall {
+                                                    break;
+                                                }
+                                                curr = next_pt;
+                                                if next_tile != Tile::Ice {
+                                                    break;
+                                                }
                                             }
+                                            final_dest = curr;
                                         }
 
                                         if let Some(pos) =

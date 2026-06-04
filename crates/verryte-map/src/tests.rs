@@ -1745,7 +1745,7 @@ fn test_dijkstra_range_methods() {
     assert!(!path.is_empty());
     let end = *path.last().unwrap();
     let end_dist = map.get(end).unwrap();
-    assert!(end_dist >= 1 && end_dist <= 2);
+    assert!((1..=2).contains(&end_dist));
 
     // Test chase_path_to_range (too close: 2,2 has distance 0, min_range=1)
     let path_flee = map
@@ -1754,7 +1754,7 @@ fn test_dijkstra_range_methods() {
     assert!(!path_flee.is_empty());
     let end_flee = *path_flee.last().unwrap();
     let end_flee_dist = map.get(end_flee).unwrap();
-    assert!(end_flee_dist >= 1 && end_flee_dist <= 2);
+    assert!((1..=2).contains(&end_flee_dist));
 }
 
 #[test]

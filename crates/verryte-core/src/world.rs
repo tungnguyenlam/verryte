@@ -787,16 +787,14 @@ impl World {
         let typed = column.as_any().downcast_ref::<TypedColumn<T>>()?;
         for (i, slot) in typed.slots.iter().enumerate() {
             if let Some((gen, value)) = slot {
-                if (i < self.alive.len()) && self.alive[i] {
-                    if predicate(value) {
-                        return Some((
-                            Entity {
-                                index: i as u32,
-                                generation: *gen,
-                            },
-                            value,
-                        ));
-                    }
+                if (i < self.alive.len()) && self.alive[i] && predicate(value) {
+                    return Some((
+                        Entity {
+                            index: i as u32,
+                            generation: *gen,
+                        },
+                        value,
+                    ));
                 }
             }
         }
@@ -815,16 +813,14 @@ impl World {
         let typed = column.as_any_mut().downcast_mut::<TypedColumn<T>>()?;
         for (i, slot) in typed.slots.iter_mut().enumerate() {
             if let Some((gen, value)) = slot.as_mut() {
-                if (i < self.alive.len()) && self.alive[i] {
-                    if predicate(value) {
-                        return Some((
-                            Entity {
-                                index: i as u32,
-                                generation: *gen,
-                            },
-                            value,
-                        ));
-                    }
+                if (i < self.alive.len()) && self.alive[i] && predicate(value) {
+                    return Some((
+                        Entity {
+                            index: i as u32,
+                            generation: *gen,
+                        },
+                        value,
+                    ));
                 }
             }
         }

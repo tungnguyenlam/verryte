@@ -1121,7 +1121,7 @@ impl Grid {
             let x_end = ((cx + dx_max).min(self.width as i32 - 1)) as u16;
             for px in x_start..=x_end {
                 let dx = px as i32 - cx;
-                let dy_val = py as i32 - cy;
+                let dy_val = py - cy;
                 if dx == 0 && dy_val == 0 {
                     self.put(px, py as u16, cell);
                 } else {
