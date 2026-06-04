@@ -2153,6 +2153,21 @@ mod tests {
             game.world.resource::<GameState>().unwrap().selected_entity,
             Some(warrior)
         );
+
+        // 4. Trigger Redo
+        game.apply_action(Action::Redo, ActionSource::Terminal);
+
+        // Position should be (4, 5) again and selection cleared
+        assert_eq!(
+            *game.world.get::<Position>(warrior).unwrap(),
+            Position::new(4, 5)
+        );
+        assert!(game
+            .world
+            .resource::<GameState>()
+            .unwrap()
+            .selected_entity
+            .is_none());
     }
 
     #[test]
@@ -2522,6 +2537,42 @@ mod tests {
             "Inventory should contain the crafted Mega Potion"
         );
         assert!(!game.world.is_alive(new_potion));
+
+        // Craft Aegis Elixir: Healing Potion + Cleanse Remedy
+        let cleanse_remedy = game
+            .world
+            .spawn_item("Cleanse Remedy", crate::components::ItemEffect::Cleanse);
+        let healing_potion = game
+            .world
+            .spawn_item("Healing Potion", crate::components::ItemEffect::Heal(30));
+        {
+            let inv = game.world.get_mut::<Inventory>(kael).unwrap();
+            inv.items.push(cleanse_remedy); // Should be at index 3
+            inv.items.push(healing_potion); // Should be at index 4
+        }
+
+        game.apply_action(Action::CraftItem(3, 4), ActionSource::Terminal);
+
+        let inv = game.world.get::<Inventory>(kael).unwrap();
+        // Since we combined 3 and 4, we should have a new Aegis Elixir in the inventory.
+        // There was 1 starting Aegis Elixir, now there should be 2 Aegis Elixirs in the list.
+        let aegis_count = inv
+            .items
+            .iter()
+            .filter(|&&item_ent| {
+                if let Some(item) = game.world.get::<crate::components::Item>(item_ent) {
+                    item.name == "Aegis Elixir"
+                } else {
+                    false
+                }
+            })
+            .count();
+        assert_eq!(
+            aegis_count, 2,
+            "Inventory should contain 2 Aegis Elixirs (1 starting + 1 crafted)"
+        );
+        assert!(!game.world.is_alive(cleanse_remedy));
+        assert!(!game.world.is_alive(healing_potion));
     }
 
     #[test]

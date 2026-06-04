@@ -537,6 +537,47 @@ impl Grid {
         });
     }
 
+    /// Apply a vignette filter that darkens cells (both FG and BG colors) near the edges
+    /// of the specified `rect` relative to the center of the vignette.
+    pub fn apply_vignette(&mut self, rect: Rect, falloff: f32, center: Option<(u16, u16)>) {
+        if falloff <= 0.0 {
+            return;
+        }
+        let cx = center
+            .map(|c| c.0 as f32)
+            .unwrap_or(rect.x as f32 + rect.width as f32 / 2.0);
+        let cy = center
+            .map(|c| c.1 as f32)
+            .unwrap_or(rect.y as f32 + rect.height as f32 / 2.0);
+
+        let max_dx = (cx - rect.x as f32).max(rect.right() as f32 - 1.0 - cx);
+        let max_dy = (cy - rect.y as f32).max(rect.bottom() as f32 - 1.0 - cy);
+        let max_dist = (max_dx * max_dx + max_dy * max_dy).sqrt().max(1.0);
+
+        let x_start = rect.x;
+        let y_start = rect.y;
+        let x_end = rect.right().min(self.width);
+        let y_end = rect.bottom().min(self.height);
+
+        for y in y_start..y_end {
+            for x in x_start..x_end {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+                let dist = (dx * dx + dy * dy).sqrt();
+                let norm_dist = dist / max_dist;
+                let factor = (1.0 - norm_dist * falloff).clamp(0.0, 1.0);
+
+                if let Some(cell) = self.get_mut(x, y) {
+                    let (fg_h, fg_s, fg_v) = cell.fg.to_hsv();
+                    cell.fg = Color::from_hsv(fg_h, fg_s, fg_v * factor);
+
+                    let (bg_h, bg_s, bg_v) = cell.bg.to_hsv();
+                    cell.bg = Color::from_hsv(bg_h, bg_s, bg_v * factor);
+                }
+            }
+        }
+    }
+
     pub fn viewport(&self, rect: Rect) -> Grid {
         let clipped = rect.intersect(Rect::new(0, 0, self.width, self.height));
         let mut out = Grid::new(clipped.width, clipped.height);
@@ -986,6 +1027,73 @@ impl Grid {
                 rect.bottom() - 2,
                 dash_len,
                 gap_len,
+                cell,
+            );
+        }
+        count
+    }
+
+    /// Draw a dotted horizontal line using a custom glyph and spacing.
+    /// Spacing determines the step between dots (e.g., spacing = 2 means a dot every 2 cells).
+    pub fn draw_dotted_hline(&mut self, x1: u16, x2: u16, y: u16, spacing: u16, cell: Cell) -> u16 {
+        if y >= self.height || spacing == 0 {
+            return 0;
+        }
+        let start = x1.min(x2);
+        let end = x1.max(x2).min(self.width - 1);
+        let mut count = 0;
+        for x in start..=end {
+            let offset = x - start;
+            if offset.is_multiple_of(spacing) {
+                self.put(x, y, cell);
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Draw a dotted vertical line using a custom glyph and spacing.
+    pub fn draw_dotted_vline(&mut self, x: u16, y1: u16, y2: u16, spacing: u16, cell: Cell) -> u16 {
+        if x >= self.width || spacing == 0 {
+            return 0;
+        }
+        let start = y1.min(y2);
+        let end = y1.max(y2).min(self.height - 1);
+        let mut count = 0;
+        for y in start..=end {
+            let offset = y - start;
+            if offset.is_multiple_of(spacing) {
+                self.put(x, y, cell);
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Draw a dotted border around the given `rect` with a custom spacing.
+    pub fn draw_dotted_border(&mut self, rect: Rect, spacing: u16, cell: Cell) -> u16 {
+        if rect.is_empty() || spacing == 0 {
+            return 0;
+        }
+        let mut count = 0;
+        // Top edge
+        count += self.draw_dotted_hline(rect.x, rect.right() - 1, rect.y, spacing, cell);
+        // Bottom edge
+        if rect.height > 1 {
+            count +=
+                self.draw_dotted_hline(rect.x, rect.right() - 1, rect.bottom() - 1, spacing, cell);
+        }
+        // Left edge
+        if rect.height > 2 {
+            count += self.draw_dotted_vline(rect.x, rect.y + 1, rect.bottom() - 2, spacing, cell);
+        }
+        // Right edge
+        if rect.width > 1 && rect.height > 2 {
+            count += self.draw_dotted_vline(
+                rect.right() - 1,
+                rect.y + 1,
+                rect.bottom() - 2,
+                spacing,
                 cell,
             );
         }
@@ -2375,6 +2483,36 @@ mod tests {
     }
 
     #[test]
+    fn apply_vignette_darkens_edges() {
+        let mut grid = Grid::new(5, 5);
+        // Fill grid with white
+        for y in 0..5 {
+            for x in 0..5 {
+                grid.put(
+                    x,
+                    y,
+                    Cell::new(' ').with_fg(Color::WHITE).with_bg(Color::WHITE),
+                );
+            }
+        }
+
+        // Apply vignette centered at (2, 2)
+        grid.apply_vignette(Rect::new(0, 0, 5, 5), 1.0, Some((2, 2)));
+
+        let center_cell = grid.get(2, 2).unwrap();
+        let corner_cell = grid.get(0, 0).unwrap();
+
+        // The center cell (distance 0) should remain bright/white
+        assert_eq!(center_cell.fg, Color::WHITE);
+        assert_eq!(center_cell.bg, Color::WHITE);
+
+        // The corner cell (distance > 0) should be darkened (less than White)
+        let (_, _, corner_v) = corner_cell.fg.to_hsv();
+        let (_, _, center_v) = center_cell.fg.to_hsv();
+        assert!(corner_v < center_v);
+    }
+
+    #[test]
     fn viewport_clips_to_grid_bounds() {
         let mut grid = Grid::new(10, 10);
         grid.put(5, 5, Cell::new('X'));
@@ -2568,6 +2706,39 @@ mod tests {
     }
 
     #[test]
+    fn test_grid_dotted_lines_and_border() {
+        let mut grid = Grid::new(5, 5);
+        let cell = Cell::new('.');
+
+        // Dotted hline with spacing 2
+        grid.draw_dotted_hline(0, 4, 0, 2, cell);
+        assert_eq!(grid.get(0, 0).unwrap().glyph, '.');
+        assert_eq!(grid.get(1, 0).unwrap().glyph, ' ');
+        assert_eq!(grid.get(2, 0).unwrap().glyph, '.');
+        assert_eq!(grid.get(3, 0).unwrap().glyph, ' ');
+        assert_eq!(grid.get(4, 0).unwrap().glyph, '.');
+
+        // Dotted vline with spacing 2
+        grid.draw_dotted_vline(0, 0, 4, 2, cell);
+        assert_eq!(grid.get(0, 0).unwrap().glyph, '.');
+        assert_eq!(grid.get(0, 1).unwrap().glyph, ' ');
+        assert_eq!(grid.get(0, 2).unwrap().glyph, '.');
+        assert_eq!(grid.get(0, 3).unwrap().glyph, ' ');
+        assert_eq!(grid.get(0, 4).unwrap().glyph, '.');
+
+        // Dotted border with spacing 2
+        let mut grid2 = Grid::new(6, 6);
+        grid2.draw_dotted_border(Rect::new(0, 0, 6, 6), 2, cell);
+        assert_eq!(grid2.get(0, 0).unwrap().glyph, '.');
+        assert_eq!(grid2.get(1, 0).unwrap().glyph, ' ');
+        assert_eq!(grid2.get(2, 0).unwrap().glyph, '.');
+        assert_eq!(grid2.get(3, 0).unwrap().glyph, ' ');
+        assert_eq!(grid2.get(4, 0).unwrap().glyph, '.');
+        assert_eq!(grid2.get(5, 0).unwrap().glyph, ' ');
+    }
+
+    #[test]
+
     fn test_grid_fill_sector() {
         let mut grid = Grid::new(10, 10);
         let cell = Cell::new('*');

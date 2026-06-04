@@ -1617,6 +1617,35 @@ fn test_tilegrid_raycast_opaque() {
 }
 
 #[test]
+fn test_tilegrid_raycast_opaque_range() {
+    let ascii = "\
+.....
+.###.
+.....";
+    let grid = TileGrid::from_ascii(ascii, |ch, _, _| ch);
+
+    // Test with max_range 2. Ray starts at (0, 1) and aims at (4, 1).
+    // The obstacle '#' is at (1, 1) which is at distance 1.
+    // It should hit the obstacle and report blocked.
+    let (path, blocked) =
+        grid.raycast_opaque_range(Point::new(0, 1), Point::new(4, 1), 2, |_, &tile| {
+            tile == '#'
+        });
+    assert!(blocked);
+    assert_eq!(path.len(), 2);
+
+    // Test with max_range 0. Ray starts at (0, 1).
+    // It shouldn't even look at (1, 1) since that's at distance 1.
+    let (path, blocked) =
+        grid.raycast_opaque_range(Point::new(0, 1), Point::new(4, 1), 0, |_, &tile| {
+            tile == '#'
+        });
+    assert!(!blocked);
+    assert_eq!(path.len(), 1);
+    assert_eq!(path[0], Point::new(0, 1));
+}
+
+#[test]
 fn test_tilegrid_flood_fill() {
     let closed_ascii = "\
 ###

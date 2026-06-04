@@ -281,3 +281,8 @@ pub struct BattleStats {
 pub struct UndoStack {
     pub states: Vec<String>,
 }
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct RedoStack {
+    pub states: Vec<String>,
+}

@@ -33,6 +33,7 @@ pub enum Action {
     StepReplay,
     ToggleMinimap,
     Undo,
+    Redo,
     NextFloor,
     CraftItem(usize, usize),
 }
@@ -110,6 +111,8 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('M'), Action::ToggleMinimap);
     b.bind(Key::Char('u'), Action::Undo);
     b.bind(Key::Char('U'), Action::Undo);
+    b.bind(Key::Char('y'), Action::Redo);
+    b.bind(Key::Char('Y'), Action::Redo);
     b.bind(Key::Char('>'), Action::NextFloor);
 
     b
@@ -137,7 +140,9 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("autobattle", Action::AutoBattle);
     c.bind_name("safety", Action::StepToSafety);
     c.bind_name("undo", Action::Undo);
+    c.bind_name("redo", Action::Redo);
     c.bind_name("stairs", Action::NextFloor);
+
     c.bind_name("next_floor", Action::NextFloor);
 
     c.bind_glyph('n', Action::MoveNorth);
@@ -160,6 +165,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('r', Action::StepToSafety);
     c.bind_glyph('m', Action::ToggleMinimap);
     c.bind_glyph('u', Action::Undo);
+    c.bind_glyph('y', Action::Redo);
 
     c
 }
@@ -184,6 +190,10 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
 
     if token == "undo" {
         return Some(Action::Undo);
+    }
+
+    if token == "redo" {
+        return Some(Action::Redo);
     }
 
     if token == "stairs" || token == "next_floor" {

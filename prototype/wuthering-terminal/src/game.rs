@@ -92,6 +92,7 @@ impl Game {
         world.insert_resource(verryte_core::Diagnostics::new());
         world.insert_resource(BattleStats::default());
         world.insert_resource(crate::components::UndoStack::default());
+        world.insert_resource(crate::components::RedoStack::default());
 
         let mut registry = VisualRegistry::new();
         crate::generated_assets::register_assets(&mut registry);
@@ -2191,14 +2192,23 @@ impl Game {
             .unwrap_or(0);
 
         if matches!(action, Action::Undo) {
-            let popped_state =
-                if let Some(stack) = self.world.resource_mut::<crate::components::UndoStack>() {
-                    stack.states.pop()
-                } else {
-                    None
-                };
+            let mut undo_stack = self
+                .world
+                .remove_resource::<crate::components::UndoStack>()
+                .unwrap_or_default();
+            let mut redo_stack = self
+                .world
+                .remove_resource::<crate::components::RedoStack>()
+                .unwrap_or_default();
+            let popped_state = undo_stack.states.pop();
+
             if let Some(state_bytes) = popped_state {
+                let current_state = self.save_state().unwrap_or_default();
                 if self.load_state(&state_bytes).is_ok() {
+                    redo_stack.states.push(current_state);
+                    if redo_stack.states.len() > 10 {
+                        redo_stack.states.remove(0);
+                    }
                     self.log("Undo successful: Restored previous state.");
                 } else {
                     self.log("Failed to load undo state.");
@@ -2206,6 +2216,47 @@ impl Game {
             } else {
                 self.log("Nothing to undo!");
             }
+            self.world.insert_resource(undo_stack);
+            self.world.insert_resource(redo_stack);
+            self.last_outcome = ActionOutcome::StateUpdated;
+            return crate::snapshot::StepReport {
+                action,
+                source,
+                before,
+                after: self.snapshot(),
+                events: Vec::new(),
+                diagnostics: std::collections::HashMap::new(),
+                outcome: ActionOutcome::StateUpdated,
+            };
+        }
+
+        if matches!(action, Action::Redo) {
+            let mut undo_stack = self
+                .world
+                .remove_resource::<crate::components::UndoStack>()
+                .unwrap_or_default();
+            let mut redo_stack = self
+                .world
+                .remove_resource::<crate::components::RedoStack>()
+                .unwrap_or_default();
+            let popped_state = redo_stack.states.pop();
+
+            if let Some(state_bytes) = popped_state {
+                let current_state = self.save_state().unwrap_or_default();
+                if self.load_state(&state_bytes).is_ok() {
+                    undo_stack.states.push(current_state);
+                    if undo_stack.states.len() > 10 {
+                        undo_stack.states.remove(0);
+                    }
+                    self.log("Redo successful: Restored next state.");
+                } else {
+                    self.log("Failed to load redo state.");
+                }
+            } else {
+                self.log("Nothing to redo!");
+            }
+            self.world.insert_resource(undo_stack);
+            self.world.insert_resource(redo_stack);
             self.last_outcome = ActionOutcome::StateUpdated;
             return crate::snapshot::StepReport {
                 action,
@@ -2221,6 +2272,7 @@ impl Game {
         let is_undoable = !matches!(
             action,
             Action::Undo
+                | Action::Redo
                 | Action::Save
                 | Action::Load
                 | Action::Quit
@@ -2245,10 +2297,16 @@ impl Game {
                     stack.states.remove(0);
                 }
             }
+            if let Some(stack) = self.world.resource_mut::<crate::components::RedoStack>() {
+                stack.states.clear();
+            }
         }
 
         if matches!(action, Action::EndTurn) {
             if let Some(stack) = self.world.resource_mut::<crate::components::UndoStack>() {
+                stack.states.clear();
+            }
+            if let Some(stack) = self.world.resource_mut::<crate::components::RedoStack>() {
                 stack.states.clear();
             }
         }
@@ -3726,6 +3784,15 @@ impl Game {
                                     "Elixir of Life".to_string(),
                                     crate::components::ItemEffect::Combined(40, 2),
                                 ),
+                                ("Healing Potion", "Cleanse Remedy")
+                                | ("Cleanse Remedy", "Healing Potion") => (
+                                    true,
+                                    "Aegis Elixir".to_string(),
+                                    crate::components::ItemEffect::RestoreShield(
+                                        crate::components::ShieldType::Physical,
+                                        30,
+                                    ),
+                                ),
                                 _ => (false, String::new(), crate::components::ItemEffect::Cleanse),
                             };
 
@@ -4609,6 +4676,22 @@ impl Game {
         {
             self.world
                 .insert_resource(Events::<verryte_core::AudioEvent>::new());
+        }
+        if self
+            .world
+            .resource::<crate::components::UndoStack>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::UndoStack::default());
+        }
+        if self
+            .world
+            .resource::<crate::components::RedoStack>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::RedoStack::default());
         }
 
         // Sync camera from resource

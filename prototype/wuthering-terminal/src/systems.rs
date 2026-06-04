@@ -802,6 +802,9 @@ pub fn turn_management_system(world: &mut World) {
             if let Some(stack) = world.resource_mut::<crate::components::UndoStack>() {
                 stack.states.clear();
             }
+            if let Some(stack) = world.resource_mut::<crate::components::RedoStack>() {
+                stack.states.clear();
+            }
             log(world, "[fg:FFA500][b]Enemy Phase starts![/][/fg]");
             if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
                 events.send(GameEvent::PhaseChanged(TurnPhase::Enemy));

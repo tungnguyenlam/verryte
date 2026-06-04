@@ -2352,6 +2352,44 @@ impl<T> TileGrid<T> {
         (path, blocked)
     }
 
+    /// Casts a ray from `start` to `end` up to a maximum range, or until it hits an opaque tile/out of bounds.
+    ///
+    /// The starting point is always included and is not checked for opacity.
+    /// The range check evaluates Chebyshev distance from the start point.
+    /// Returns a tuple containing the path of points traversed and a boolean indicating whether the ray was blocked.
+    pub fn raycast_opaque_range<F>(
+        &self,
+        start: Point,
+        end: Point,
+        max_range: u16,
+        mut is_opaque: F,
+    ) -> (Vec<Point>, bool)
+    where
+        F: FnMut(Point, &T) -> bool,
+    {
+        let mut path = Vec::new();
+        let mut blocked = false;
+        for p in LineIter::new(start, end) {
+            if start.chebyshev_distance(p) > max_range {
+                break;
+            }
+            path.push(p);
+            if p == start {
+                continue;
+            }
+            if let Some(tile) = self.get(p) {
+                if is_opaque(p, tile) {
+                    blocked = true;
+                    break;
+                }
+            } else {
+                blocked = true;
+                break;
+            }
+        }
+        (path, blocked)
+    }
+
     /// Flood-fills from a starting point, returning all connected passable points.
     ///
     /// Performs a breadth-first search using 4-way cardinal connectivity.
