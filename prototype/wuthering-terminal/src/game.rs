@@ -106,10 +106,15 @@ impl Game {
             world,
             schedule,
             router: InputRouter::new(default_bindings()),
-            camera: Camera::new(5.0, 5.0).with_smooth(0.15),
+            camera: Camera::new(0.0, 0.0).with_smooth(0.15),
             last_outcome: ActionOutcome::NoOp,
             boss_transitioned: false,
         };
+        let (cx, cy) = game.get_tile_center_pixels(Position::new(5, 5));
+        game.camera.center_x = cx;
+        game.camera.center_y = cy;
+        game.camera.target_x = cx;
+        game.camera.target_y = cy;
 
         game.world
             .spawn_character(Position::new(4, 4), Team::Player, CharacterClass::Warrior);
@@ -724,7 +729,8 @@ impl Game {
             state.selected_entity = Some(next_entity);
             state.cursor = next_pos;
         }
-        self.camera.look_at(next_pos.x as f32, next_pos.y as f32);
+        let (cx, cy) = self.get_tile_center_pixels(next_pos);
+        self.camera.look_at(cx, cy);
 
         if let Some(class) = self.world.get::<CharacterClass>(next_entity) {
             let name = Self::get_class_name(*class);
@@ -1286,8 +1292,8 @@ impl Game {
             _ => {}
         }
 
-        self.camera
-            .look_at(active_pos.x as f32, active_pos.y as f32);
+        let (cx, cy) = self.get_tile_center_pixels(active_pos);
+        self.camera.look_at(cx, cy);
     }
 
     pub fn get_skill_info(
@@ -2162,8 +2168,8 @@ impl Game {
 
         self.world
             .insert_resource(verryte_map::VisibilityMap::new(width, height));
-        self.camera
-            .look_at(player_spawn.x as f32, player_spawn.y as f32);
+        let (cx, cy) = self.get_tile_center_pixels(player_spawn);
+        self.camera.look_at(cx, cy);
 
         self.log(format!(
             "Welcome to Floor {}! Conquer this final level.",
@@ -2176,6 +2182,7 @@ impl Game {
         action: Action,
         source: ActionSource,
     ) -> crate::snapshot::StepReport {
+        self.world.insert_resource(self.camera.clone());
         let before = self.snapshot();
         let before_log_len = self
             .world
@@ -2640,8 +2647,8 @@ impl Game {
                 state.cursor.x = state.cursor.x.clamp(0, width as i16 - 1);
                 state.cursor.y = state.cursor.y.clamp(0, height as i16 - 1);
                 let target_pos = state.cursor;
-                self.camera
-                    .look_at(target_pos.x as f32, target_pos.y as f32);
+                let (cx, cy) = self.get_tile_center_pixels(target_pos);
+                self.camera.look_at(cx, cy);
             }
             Action::Confirm => {
                 let state_clone = self.world.resource::<GameState>().unwrap().clone();
@@ -3156,7 +3163,8 @@ impl Game {
                     let state = self.world.resource_mut::<GameState>().unwrap();
                     state.selected_entity = Some(ent);
                     state.cursor = pos;
-                    self.camera.look_at(pos.x as f32, pos.y as f32);
+                    let (cx, cy) = self.get_tile_center_pixels(pos);
+                    self.camera.look_at(cx, cy);
                     let class = *self.world.get::<CharacterClass>(ent).unwrap();
                     self.log(format!(
                         "Selected character: {}.",
@@ -3404,7 +3412,8 @@ impl Game {
                 {
                     let state = self.world.resource_mut::<GameState>().unwrap();
                     state.cursor = point;
-                    self.camera.look_at(point.x as f32, point.y as f32);
+                    let (cx, cy) = self.get_tile_center_pixels(point);
+                    self.camera.look_at(cx, cy);
                 }
             }
             Action::ClearCursor => {
@@ -3768,6 +3777,7 @@ impl Game {
         }
         let mut rng = *self.world.resource::<Rng>().unwrap();
         self.camera.tick(&mut rng);
+        self.world.insert_resource(self.camera.clone());
         self.world.insert_resource(rng);
     }
 
@@ -3800,6 +3810,7 @@ impl Game {
         }
         let mut rng = *self.world.resource::<Rng>().unwrap();
         self.camera.tick(&mut rng);
+        self.world.insert_resource(self.camera.clone());
         self.world.insert_resource(rng);
 
         // Replay auto-step
@@ -3974,7 +3985,8 @@ impl Game {
                 }
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.cursor = safe_pos;
-                self.camera.look_at(safe_pos.x as f32, safe_pos.y as f32);
+                let (cx, cy) = self.get_tile_center_pixels(safe_pos);
+                self.camera.look_at(cx, cy);
             } else {
                 self.log("Not enough AP to step to safety!");
             }
@@ -4009,8 +4021,8 @@ impl Game {
         viewport.camera.clamp_to_bounds(
             0.0,
             0.0,
-            map.width as f32,
-            map.height as f32,
+            map.width as f32 * tile_w as f32,
+            map.height as f32 * tile_h as f32,
             viewport.rect.width,
             viewport.rect.height,
         );
@@ -4638,8 +4650,8 @@ impl Game {
             viewport.camera.clamp_to_bounds(
                 0.0,
                 0.0,
-                map.width as f32,
-                map.height as f32,
+                map.width as f32 * tile_w as f32,
+                map.height as f32 * tile_h as f32,
                 viewport.rect.width,
                 viewport.rect.height,
             );
