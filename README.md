@@ -40,8 +40,9 @@ those pieces.
   `clear()`, `remove_system()`, per-system `avg_duration()`, `min_duration`,
   `sorted_by_duration()`, `sorted_by_max_duration()`, `sorted_by_avg_duration()`,
   `sorted_by_call_count()`, `system_count()`, `total_calls()`, `total_duration()`,
-  and `snapshot()` for serializable performance summaries, `Schedule` with `Display`,
-  O(1) `entity_count()`, and `Events` with `Clone`. `AudioEvents` type alias for
+  `snapshot()` for serializable performance summaries, `Schedule` with `Display`,
+  O(1) `entity_count()`, `Events` with `Clone`, and state machine management
+  (`State<S>`, `StateTransitionEvent<S>`). `AudioEvents` type alias for
   ergonomic event channel usage.
   Optional `serde` feature enables `Serialize`/`Deserialize` on `Entity` and `DiagnosticsSnapshot`.
 - `crates/verryte-input` - terminal-neutral input events, key/mouse/scroll
@@ -72,6 +73,8 @@ those pieces.
   `time_range` for recorded action analysis, and
   `ActionSource` with `Display`/`FromStr` for serialization and debugging.
   `Key`, `MouseButton`, and `ScrollDirection` have `Display` for logging.
+  Exposes event simulation helpers (`simulate_key_press`, `simulate_mouse_press`, etc.)
+  on `InputRouter` for ergonomic interactive testing and scripting.
   Modularized into focused sub-modules (`key`, `action`, `bindings`,
   `trace`, `router`, `text_input`, `replay`) for maintainability.
   Optional `serde` feature enables `Serialize`/`Deserialize` on `Key`,
@@ -91,8 +94,9 @@ those pieces.
   hazard-distance safety scoring (`safer_neighbors4`), `DijkstraMap::find_all_within_range`,
   `DijkstraMap::chase_path_to_range` for tactical approach and retreat patterns,
   random-walk dungeon
-  generation (`TileGrid::random_walk_fill4`), BSP dungeon generation
-  (`TileGrid::generate_bsp_dungeon`), `TileGrid::count_matching`,
+  generation (`TileGrid::random_walk_fill4`),  BSP dungeon generation (`TileGrid::generate_bsp_dungeon`),
+  weighted predicate pathfinding (`shortest_path_to_predicate4_weighted`,
+  `shortest_path_to_predicate8_weighted`), `TileGrid::count_matching`,
   `TileGrid::find_matching`, `TileGrid::points_in`,
   `TileGrid::points_matching`, and `TileGrid::density` for map analysis,
   `TileGrid::bounds` and
@@ -116,7 +120,10 @@ those pieces.
   (`draw_border_rounded`, `draw_rounded_panel`, `draw_text_box`), horizontal/vertical lines
   (`draw_hline`, `draw_vline`), progress bars (`Grid::draw_progress_bar`),
   text wrapping utilities (`wrap_text`, `write_wrapped_text`, `write_lines`),
-  `Grid::transform`, `Grid::transform_rect`, and `Grid::map` for bulk cell modification, row/column helpers
+  `Grid::transform`, `Grid::transform_rect`, `Grid::map`, and grid transformations
+  (flip, rotate clockwise/counter-clockwise via `flipped_horizontally`,
+  `flipped_vertically`, `rotated_90`, `rotated_180`, `rotated_270`) for bulk cell modification
+  and layout adjustments, row/column helpers
   (`Grid::row_mut`, `Grid::fill_row`, `Grid::fill_col`), `Rect::inset` for
   padded layouts, `Grid::resize` for dynamic grid sizing on terminal resize,
   `Grid::scroll_up` and
@@ -141,8 +148,9 @@ those pieces.
   `image_to_grid` converts PNG images to half-block terminal grids, and
   `image_to_grid_with_chroma_key` adds transparency support for sprite loading.
   The `vfx` module provides a reusable visual effects system: particles
-  (fire, ice, lightning, slash, heal, burst, bloom, shatter), screen shake,
-  flash overlays, floating damage text, AoE ring indicators, and clear operations (`VfxSystem::clear`) — all rendered
+  (fire, ice, lightning, slash, heal, burst, bloom, shatter, shockwave, vortex), screen shake,
+  flash overlays, floating damage text, AoE ring indicators, shockwave/vortex triggers
+  (`trigger_shockwave`, `trigger_vortex`), and clear operations (`VfxSystem::clear`) — all rendered
   directly into a `Grid` with emitter presets. All VFX types (`ScreenShake`,
   `FloatingText`, `AoeRing`, `VfxSystem`, `blend_color`, emit functions) are
   re-exported at the crate root for convenience.

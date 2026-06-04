@@ -674,6 +674,152 @@ impl<T> TileGrid<T> {
         None
     }
 
+    /// Find the shortest cardinal path from `start` to the nearest tile matching `predicate` with custom costs.
+    ///
+    /// The returned path starts at `start` and ends at the matching point.
+    /// `passable` is consulted for neighbor tiles; `start` is allowed even if not passable.
+    /// `cost` is a function taking `from`, `to`, and the tile at `to`, returning the step cost.
+    pub fn shortest_path_to_predicate4_weighted<P, F, C>(
+        &self,
+        start: Point,
+        mut predicate: P,
+        passable: F,
+        cost: C,
+    ) -> Option<Vec<Point>>
+    where
+        P: FnMut(Point, &T) -> bool,
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+    {
+        if !self.in_bounds(start) {
+            return None;
+        }
+        if let Some(tile) = self.get(start) {
+            if predicate(start, tile) {
+                return Some(vec![start]);
+            }
+        }
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+        frontier.push(std::cmp::Reverse((0u32, start)));
+
+        while let Some(std::cmp::Reverse((current_cost, current))) = frontier.pop() {
+            if let Some(tile) = self.get(current) {
+                if current != start && predicate(current, tile) {
+                    let mut path = vec![current];
+                    let mut step = current;
+                    while step != start {
+                        step = came_from[&step];
+                        path.push(step);
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+            }
+
+            if current_cost > *g_score.get(&current).unwrap_or(&u32::MAX) {
+                continue;
+            }
+
+            for neighbor in current.neighbors4() {
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = cost(current, neighbor, tile);
+                let tentative_g = current_cost + step_cost;
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current);
+                    g_score.insert(neighbor, tentative_g);
+                    frontier.push(std::cmp::Reverse((tentative_g, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find the shortest 8-directional path from `start` to the nearest tile matching `predicate` with custom costs.
+    ///
+    /// The returned path starts at `start` and ends at the matching point.
+    /// `passable` is consulted for neighbor tiles; `start` is allowed even if not passable.
+    /// `cost` is a function taking `from`, `to`, and the tile at `to`, returning the step cost.
+    pub fn shortest_path_to_predicate8_weighted<P, F, C>(
+        &self,
+        start: Point,
+        mut predicate: P,
+        passable: F,
+        cost: C,
+    ) -> Option<Vec<Point>>
+    where
+        P: FnMut(Point, &T) -> bool,
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+    {
+        if !self.in_bounds(start) {
+            return None;
+        }
+        if let Some(tile) = self.get(start) {
+            if predicate(start, tile) {
+                return Some(vec![start]);
+            }
+        }
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+        frontier.push(std::cmp::Reverse((0u32, start)));
+
+        while let Some(std::cmp::Reverse((current_cost, current))) = frontier.pop() {
+            if let Some(tile) = self.get(current) {
+                if current != start && predicate(current, tile) {
+                    let mut path = vec![current];
+                    let mut step = current;
+                    while step != start {
+                        step = came_from[&step];
+                        path.push(step);
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+            }
+
+            if current_cost > *g_score.get(&current).unwrap_or(&u32::MAX) {
+                continue;
+            }
+
+            for neighbor in current.neighbors8() {
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = cost(current, neighbor, tile);
+                let tentative_g = current_cost + step_cost;
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current);
+                    g_score.insert(neighbor, tentative_g);
+                    frontier.push(std::cmp::Reverse((tentative_g, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
     /// Find the shortest cardinal path between two in-bounds points with custom costs.
     ///
     /// The returned path includes `start` and `goal`. `passable` is consulted

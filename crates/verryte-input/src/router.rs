@@ -5,7 +5,7 @@ use std::collections::{vec_deque, VecDeque};
 use crate::action::{ActionHistory, ActionSource, QueuedAction};
 
 use crate::bindings::{Bindings, CommandBindings, CommandParseError};
-use crate::key::{InputEvent, Key, KeyEventKind};
+use crate::key::{InputEvent, Key, KeyEventKind, MouseButton, ScrollDirection};
 use crate::trace::ActionTrace;
 use crate::RepeatConfig;
 
@@ -312,6 +312,47 @@ impl<A: Clone> InputRouter<A> {
 
     pub fn handle_event(&mut self, event: InputEvent) -> bool {
         self.handle(event)
+    }
+
+    /// Simulate a key press event.
+    pub fn simulate_key_press(&mut self, key: Key) -> bool {
+        self.handle(InputEvent::Key {
+            key,
+            kind: KeyEventKind::Press,
+        })
+    }
+
+    /// Simulate a key release event.
+    pub fn simulate_key_release(&mut self, key: Key) -> bool {
+        self.handle(InputEvent::Key {
+            key,
+            kind: KeyEventKind::Release,
+        })
+    }
+
+    /// Simulate a mouse press event.
+    pub fn simulate_mouse_press(&mut self, button: MouseButton, x: u16, y: u16) -> bool {
+        self.handle(InputEvent::Mouse {
+            x,
+            y,
+            button,
+            pressed: true,
+        })
+    }
+
+    /// Simulate a mouse release event.
+    pub fn simulate_mouse_release(&mut self, button: MouseButton, x: u16, y: u16) -> bool {
+        self.handle(InputEvent::Mouse {
+            x,
+            y,
+            button,
+            pressed: false,
+        })
+    }
+
+    /// Simulate a scroll event.
+    pub fn simulate_scroll(&mut self, direction: ScrollDirection, x: u16, y: u16) -> bool {
+        self.handle(InputEvent::MouseScroll { x, y, direction })
     }
 
     /// Translate a terminal event into a game action using a custom translator

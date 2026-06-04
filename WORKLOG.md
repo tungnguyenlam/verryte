@@ -3276,3 +3276,26 @@ runner that the shield is announced.
 **Gotchas.** When loading state in undo/redo actions, `self.world` gets replaced, clearing any non-snapshotted resources like `UndoStack`/`RedoStack`. This is bypassed by extracting the stacks from the world prior to loading the state, then inserting them back afterwards.
 
 **Follow-ups.** None. All 390+ workspace tests compile and pass cleanly, with clippy fully clean and formatted.
+
+## 2026-06-04 - State machine, weighted predicate pathfinding, grid flip/rotation transforms, event simulation, and shockwave/vortex VFX
+
+**Goal.** Implement 5 meaningful improvements across the engine crates: ECS State machine, weighted predicate-targeted pathfinding, grid flip/rotation rendering transformations, input event simulation helpers, and shockwave/vortex particle effects.
+
+**Changes.**
+- `crates/verryte-core/src/state.rs` - Added State machine resource `State<S>` and `StateTransitionEvent<S>` along with `World::init_state` and `World::apply_state_transitions` helper methods. Added unit tests for state transition handling and transition event emission.
+- `crates/verryte-core/src/lib.rs` - Registered `state` module and exported `State` and `StateTransitionEvent`.
+- `crates/verryte-map/src/grid.rs` - Added Dijkstra/BFS-based `TileGrid::shortest_path_to_predicate4_weighted` and `shortest_path_to_predicate8_weighted` for weighted pathfinding targeting predicate matches.
+- `crates/verryte-map/src/tests.rs` - Added unit test `test_shortest_path_to_predicate_weighted` to verify cost-aware target selection.
+- `crates/verryte-terminal/src/grid.rs` - Added `Grid::flipped_horizontally`, `flipped_vertically`, `rotated_90`, `rotated_180`, and `rotated_270` transformations, with unit tests verified.
+- `crates/verryte-terminal/src/vfx.rs` - Added `emit_shockwave` particle generator and `trigger_shockwave` / `trigger_vortex` trigger methods on `VfxSystem`.
+- `crates/verryte-input/src/router.rs` - Added simulation methods `simulate_key_press`, `simulate_key_release`, `simulate_mouse_press`, `simulate_mouse_release`, and `simulate_scroll` to `InputRouter` to simplify scripting and testing.
+- `crates/verryte-input/src/lib.rs` - Added unit tests verifying the event simulation helpers.
+- `README.md` - Documented the new state machine, weighted predicate pathfinding, grid transforms, event simulation, and VFX trigger capabilities.
+
+**Reasoning.** Integrating state-based system run execution constraints cleanly within the ECS resource layer makes managing scenes (e.g. Menu, Playing, GameOver) much simpler. Weighted predicate pathfinding allows smarter AI decision-making where targets (like nearest cover or water) have varying traversability costs. Grid flip/rotation transforms support visual asset mirrors and rotations directly within terminal buffers. Event simulation helpers minimize boilerplate in test harnesses, allowing mock keypresses/mouse clicks to flow naturally into the shared queue. The shockwave ring visualizes radial kinetic force.
+
+**Assumptions.** We assume that a state transition set value is single-buffered (staged in `next`) and applies atomically on calling `apply_state_transitions()`, clearing the stage.
+
+**Gotchas.** Re-borrowing internal references when accessing state resources mutably inside `apply_state_transitions` required careful ownership scoping to satisfy Rust borrow checker constraints.
+
+**Follow-ups.** None. All 171 map tests, 143 input tests, 215 core tests, and 166 terminal tests pass cleanly, with clippy fully clean.

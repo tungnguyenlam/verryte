@@ -398,6 +398,31 @@ pub fn emit_vortex(cx: f32, cy: f32, count: usize, color: Color) -> Vec<Particle
     particles
 }
 
+/// Emit a shockwave ring of particles expanding outward radially.
+pub fn emit_shockwave(cx: f32, cy: f32, count: usize, color: Color) -> Vec<Particle> {
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['=', '≡', '·', '∘', '°'];
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let speed = 3.0;
+        let lifetime = 0.4 + (i % 3) as f32 * 0.1;
+        particles.push(Particle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed * 0.5,
+            glyph: glyphs[i % glyphs.len()],
+            fg: color,
+            bg: Color::BLACK,
+            lifetime,
+            max_lifetime: lifetime,
+            attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
+        });
+    }
+    particles
+}
+
 // ── Screen Shake ──────────────────────────────────────────────────────────────
 
 /// A screen shake effect with sinusoidal offset and decay.
@@ -846,6 +871,16 @@ impl VfxSystem {
             lifetime,
             max_lifetime: lifetime,
         });
+    }
+
+    /// Trigger a shockwave particle effect.
+    pub fn trigger_shockwave(&mut self, cx: f32, cy: f32, count: usize, color: Color) {
+        self.particles.extend(emit_shockwave(cx, cy, count, color));
+    }
+
+    /// Trigger a vortex particle effect.
+    pub fn trigger_vortex(&mut self, cx: f32, cy: f32, count: usize, color: Color) {
+        self.particles.extend(emit_vortex(cx, cy, count, color));
     }
 
     pub fn shake_offset(&self) -> (i16, i16) {
@@ -1490,12 +1525,16 @@ mod tests {
         vfx.trigger_floating_text(5.0, 5.0, "HEAL", Color::GREEN, true);
         vfx.trigger_aoe_ring(5, 5, 4.0, Color::YELLOW, 1.0);
         vfx.trigger_highlight(vec![(1, 1), (2, 2)], Color::CYAN, Some('*'), 0.5, 1.5);
+        vfx.trigger_shockwave(5.0, 5.0, 8, Color::MAGENTA);
+        vfx.trigger_vortex(2.0, 2.0, 6, Color::WHITE);
 
         assert_eq!(vfx.shakes.len(), 2);
         assert_eq!(vfx.flashes.len(), 2);
         assert_eq!(vfx.floating_texts.len(), 1);
         assert_eq!(vfx.aoe_rings.len(), 1);
         assert_eq!(vfx.highlights.len(), 1);
+        // 8 shockwave particles + 6 vortex particles = 14 particles
+        assert_eq!(vfx.particles.len(), 14);
     }
 
     #[test]

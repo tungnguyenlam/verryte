@@ -680,6 +680,41 @@ fn test_shortest_path_to_predicate() {
 }
 
 #[test]
+fn test_shortest_path_to_predicate_weighted() {
+    let grid = TileGrid::from_vec(3, 3, vec!['.', 'W', 'G', '.', '.', '.', 'G', '.', '.']).unwrap();
+
+    let cost_fn = |_, _, tile: &char| {
+        if *tile == 'W' {
+            5
+        } else {
+            1
+        }
+    };
+
+    let path = grid
+        .shortest_path_to_predicate4_weighted(
+            Point::new(0, 0),
+            |_, tile| *tile == 'G',
+            |_, _| true,
+            cost_fn,
+        )
+        .unwrap();
+
+    assert_eq!(*path.last().unwrap(), Point::new(0, 2));
+
+    let path8 = grid
+        .shortest_path_to_predicate8_weighted(
+            Point::new(0, 0),
+            |_, tile| *tile == 'G',
+            |_, _| true,
+            cost_fn,
+        )
+        .unwrap();
+
+    assert_eq!(*path8.last().unwrap(), Point::new(0, 2));
+}
+
+#[test]
 fn nearest_path8_chooses_closest_target_diagonally() {
     let grid = TileGrid::from_vec(5, 5, vec!['.'; 25]).unwrap();
 

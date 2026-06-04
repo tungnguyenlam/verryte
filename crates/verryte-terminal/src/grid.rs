@@ -577,6 +577,73 @@ impl Grid {
             }
         }
     }
+    /// Return a horizontally flipped copy of the grid.
+    pub fn flipped_horizontally(&self) -> Self {
+        let mut new_grid = Self::new(self.width, self.height);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let src_cell = self.cells[(y * self.width + x) as usize];
+                let dest_x = self.width - 1 - x;
+                new_grid.cells[(y * self.width + dest_x) as usize] = src_cell;
+            }
+        }
+        new_grid
+    }
+
+    /// Return a vertically flipped copy of the grid.
+    pub fn flipped_vertically(&self) -> Self {
+        let mut new_grid = Self::new(self.width, self.height);
+        for y in 0..self.height {
+            let dest_y = self.height - 1 - y;
+            for x in 0..self.width {
+                let src_cell = self.cells[(y * self.width + x) as usize];
+                new_grid.cells[(dest_y * self.width + x) as usize] = src_cell;
+            }
+        }
+        new_grid
+    }
+
+    /// Return a copy of the grid rotated 90 degrees clockwise.
+    ///
+    /// Width and height of the returned grid are swapped relative to `self`.
+    pub fn rotated_90(&self) -> Self {
+        let mut new_grid = Self::new(self.height, self.width);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let src_cell = self.cells[(y * self.width + x) as usize];
+                let dest_x = self.height - 1 - y;
+                let dest_y = x;
+                new_grid.cells[(dest_y * new_grid.width + dest_x) as usize] = src_cell;
+            }
+        }
+        new_grid
+    }
+
+    /// Return a copy of the grid rotated 180 degrees.
+    pub fn rotated_180(&self) -> Self {
+        let mut new_grid = Self::new(self.width, self.height);
+        let total = (self.width as usize) * (self.height as usize);
+        for i in 0..total {
+            new_grid.cells[total - 1 - i] = self.cells[i];
+        }
+        new_grid
+    }
+
+    /// Return a copy of the grid rotated 270 degrees clockwise (90 degrees counter-clockwise).
+    ///
+    /// Width and height of the returned grid are swapped relative to `self`.
+    pub fn rotated_270(&self) -> Self {
+        let mut new_grid = Self::new(self.height, self.width);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let src_cell = self.cells[(y * self.width + x) as usize];
+                let dest_x = y;
+                let dest_y = self.width - 1 - x;
+                new_grid.cells[(dest_y * new_grid.width + dest_x) as usize] = src_cell;
+            }
+        }
+        new_grid
+    }
 
     pub fn viewport(&self, rect: Rect) -> Grid {
         let clipped = rect.intersect(Rect::new(0, 0, self.width, self.height));
@@ -2756,5 +2823,69 @@ mod tests {
         assert_eq!(grid.get(6, 6).unwrap().glyph, '*');
         // Point at (4, 5) is angle PI, not in [0, PI/2] -> empty
         assert_eq!(grid.get(4, 5).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn test_grid_transformations() {
+        let mut grid = Grid::new(3, 2);
+        grid.put(0, 0, Cell::new('1'));
+        grid.put(1, 0, Cell::new('2'));
+        grid.put(2, 0, Cell::new('3'));
+        grid.put(0, 1, Cell::new('4'));
+        grid.put(1, 1, Cell::new('5'));
+        grid.put(2, 1, Cell::new('6'));
+
+        // Horizontally flipped:
+        // 3 2 1
+        // 6 5 4
+        let h_flipped = grid.flipped_horizontally();
+        assert_eq!(h_flipped.width(), 3);
+        assert_eq!(h_flipped.height(), 2);
+        assert_eq!(h_flipped.get(0, 0).unwrap().glyph, '3');
+        assert_eq!(h_flipped.get(2, 1).unwrap().glyph, '4');
+
+        // Vertically flipped:
+        // 4 5 6
+        // 1 2 3
+        let v_flipped = grid.flipped_vertically();
+        assert_eq!(v_flipped.width(), 3);
+        assert_eq!(v_flipped.height(), 2);
+        assert_eq!(v_flipped.get(0, 0).unwrap().glyph, '4');
+        assert_eq!(v_flipped.get(2, 1).unwrap().glyph, '3');
+
+        // Rotated 90 (clockwise):
+        // width 3, height 2 -> width 2, height 3
+        // 4 1
+        // 5 2
+        // 6 3
+        let rot90 = grid.rotated_90();
+        assert_eq!(rot90.width(), 2);
+        assert_eq!(rot90.height(), 3);
+        assert_eq!(rot90.get(0, 0).unwrap().glyph, '4');
+        assert_eq!(rot90.get(1, 0).unwrap().glyph, '1');
+        assert_eq!(rot90.get(0, 2).unwrap().glyph, '6');
+        assert_eq!(rot90.get(1, 2).unwrap().glyph, '3');
+
+        // Rotated 180:
+        // 6 5 4
+        // 3 2 1
+        let rot180 = grid.rotated_180();
+        assert_eq!(rot180.width(), 3);
+        assert_eq!(rot180.height(), 2);
+        assert_eq!(rot180.get(0, 0).unwrap().glyph, '6');
+        assert_eq!(rot180.get(2, 1).unwrap().glyph, '1');
+
+        // Rotated 270 (counter-clockwise):
+        // width 3, height 2 -> width 2, height 3
+        // 3 6
+        // 2 5
+        // 1 4
+        let rot270 = grid.rotated_270();
+        assert_eq!(rot270.width(), 2);
+        assert_eq!(rot270.height(), 3);
+        assert_eq!(rot270.get(0, 0).unwrap().glyph, '3');
+        assert_eq!(rot270.get(1, 0).unwrap().glyph, '6');
+        assert_eq!(rot270.get(0, 2).unwrap().glyph, '1');
+        assert_eq!(rot270.get(1, 2).unwrap().glyph, '4');
     }
 }

@@ -2047,4 +2047,30 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unrecognized action"));
     }
+
+    #[test]
+    fn test_event_simulation_helpers() {
+        let mut router = bound_router();
+        router
+            .bindings_mut()
+            .bind_mouse(MouseButton::Left, true, Move::North);
+        router
+            .bindings_mut()
+            .bind_mouse(MouseButton::Right, false, Move::South);
+
+        assert!(router.simulate_key_press(Key::Up));
+        let action = router.next_queued().unwrap();
+        assert_eq!(action.action, Move::North);
+        assert_eq!(action.source, ActionSource::Terminal);
+
+        assert!(!router.simulate_key_release(Key::Up));
+
+        assert!(router.simulate_mouse_press(MouseButton::Left, 10, 10));
+        let action = router.next_queued().unwrap();
+        assert_eq!(action.action, Move::North);
+
+        assert!(router.simulate_mouse_release(MouseButton::Right, 20, 20));
+        let action = router.next_queued().unwrap();
+        assert_eq!(action.action, Move::South);
+    }
 }

@@ -26,6 +26,7 @@ mod schedule_ext_tests;
 pub mod snapshot;
 #[cfg(test)]
 mod snapshot_ext_tests;
+pub mod state;
 pub mod tag;
 pub mod world;
 #[cfg(test)]
@@ -44,6 +45,7 @@ pub use rng::Rng;
 pub use schedule::{NamedSystem, Schedule, System};
 #[cfg(feature = "serde")]
 pub use snapshot::{EntitySnapshot, WorldRegistry, WorldSnapshot};
+pub use state::{State, StateTransitionEvent};
 pub use tag::Tag;
 pub use world::{
     Children, Parent, Query, Query2, Query3, Query4, Query5, QueryMut4Guard, QueryMut5Guard, World,
