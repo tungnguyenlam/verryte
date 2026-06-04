@@ -3256,3 +3256,23 @@ runner that the shield is announced.
 **Gotchas.** Scaling bounds incorrectly results in camera limits getting locked to the center of the board, making cursor movement look invisible/broken off-center.
 
 **Follow-ups.** None. All 163 tests in the suite compile and run successfully.
+
+## 2026-06-04 - Vignette filter, Redo action, range raycasting, dotted lines, and Aegis crafting recipe
+
+**Goal.** Implement at least 5 meaningful improvements across the Verryte Rust engine and tactical RPG prototype, verifying them with tests, clippy, and formatting.
+
+**Changes.**
+- `crates/verryte-terminal/src/grid.rs` - Added `apply_vignette` atmospheric filter and `draw_dotted_hline`, `draw_dotted_vline`, and `draw_dotted_border` dotted rendering primitives, along with tests `apply_vignette_darkens_edges` and `test_grid_dotted_lines_and_border`.
+- `prototype/wuthering-terminal/src/action.rs` / `src/game.rs` - Added `Action::Redo` supporting state re-loading, and tracked `RedoStack` in turn transitions.
+- `prototype/wuthering-terminal/src/components.rs` - Added `RedoStack` resource to store next states.
+- `prototype/wuthering-terminal/src/lib.rs` - Extended `test_undo_action_and_stack` unit test to verify Redo behaviour.
+- `crates/verryte-map/src/grid.rs` / `src/tests.rs` - Added `raycast_opaque_range` method to support range-limited raycasting and added `test_tilegrid_raycast_opaque_range` unit test.
+- `prototype/wuthering-terminal/src/game.rs` / `src/lib.rs` - Added Healing Potion + Cleanse Remedy = Aegis Elixir crafting recipe to tactical RPG prototype, verified with tests.
+
+**Reasoning.** Vignette atmospheric overlay fits terminal aesthetics nicely, and dotted line drawings allow drawing range markers or alternate UI borders. Action Redo is a direct extension of Undo, completing the undo/redo capabilities of the prototype simulation. Range-limited raycasting optimizes sight/opacity checks within a max distance. Aegis Elixir crafting enables players to synthesize defensive items.
+
+**Assumptions.** We assume that undoing pushes the current state to the redo stack, and performing a normal undoable action clears the redo stack to preserve standard action trees.
+
+**Gotchas.** When loading state in undo/redo actions, `self.world` gets replaced, clearing any non-snapshotted resources like `UndoStack`/`RedoStack`. This is bypassed by extracting the stacks from the world prior to loading the state, then inserting them back afterwards.
+
+**Follow-ups.** None. All 390+ workspace tests compile and pass cleanly, with clippy fully clean and formatted.
