@@ -3219,3 +3219,22 @@ runner that the shield is announced.
 **Gotchas.** The `test_full_script_victory_path` expected `EquippedEchoes` or `Outcome::Victory` to be populated upon Boss Echo absorption. Adding the `Lifesteal` ability award to players upon boss echo absorption satisfies the test check on Floor 1 while preserving the multi-floor transition.
 
 **Follow-ups.** None. All 160 engine tests and 55 prototype integration tests pass cleanly and formatting is fully checked.
+
+## 2026-06-04 - Fix clippy and compiler warnings across crates and prototype
+
+**Goal.** Fix all compile-time, clippy, and formatting warnings in the game workspace.
+
+**Changes.**
+- `crates/verryte-core/src/world.rs:790` and `:818` - Collapsed nested `if` statements in `find_where` and `find_mut_where`.
+- `crates/verryte-core/src/snapshot.rs:475`, `:500`, `:521`, `:523` - Replaced unnecessary `to_string()` conversions with direct string slice checking in test assertions.
+- `crates/verryte-terminal/src/grid.rs:1124` - Removed unnecessary `as i32` casting on already-cast variable.
+- `crates/verryte-map/src/tests.rs:1748` and `:1757` - Replaced manual range boundaries check with `RangeInclusive::contains`.
+- `prototype/wuthering-terminal/src/game.rs:2969` - Collapsed nested `if` checks in Ice sliding movement evaluation.
+
+**Reasoning.** Cleaning up compiler warnings and clippy recommendations keeps the codebase healthy, maintainable, and aligned with standard Rust toolchain constraints.
+
+**Assumptions.** We assume that lint cleanliness is a core priority of the senior systems engineering persona.
+
+**Gotchas.** None. All workspace tests compile, run, and pass cleanly.
+
+**Follow-ups.** Continue implementing game-mechanic enhancements or visual features as roadmap targets.
