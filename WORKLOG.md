@@ -3238,3 +3238,21 @@ runner that the shield is announced.
 **Gotchas.** None. All workspace tests compile, run, and pass cleanly.
 
 **Follow-ups.** Continue implementing game-mechanic enhancements or visual features as roadmap targets.
+
+## 2026-06-04 - Fix camera positioning coordinate mismatch and render bounds scaling
+
+**Goal.** Fix camera positioning and viewport tracking bugs in the tactical RPG prototype.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/game.rs:106` - Initialize the camera center and target at `(0, 0)` then instantly set it to the screen cell coordinates for the initial cursor `(5, 5)` tile center to avoid smooth-scroll delay on load.
+- `prototype/wuthering-terminal/src/game.rs:727`, `1290`, `2166`, `2644`, `3159`, `3407`, `3977` - Center camera on character and cursor targets using screen cell-based `get_tile_center_pixels` instead of raw tile coordinates.
+- `prototype/wuthering-terminal/src/game.rs:2182`, `3780`, `3813` - Update the ECS camera resource on `apply_action` and `update` so serialization and undo saves capture the latest camera position.
+- `prototype/wuthering-terminal/src/game.rs:4021`, `4650` - Scale camera bounds clamping by current resolution tier tile dimensions (`tile_w`, `tile_h`) to match viewport cell units.
+
+**Reasoning.** The camera coordinates and target positioning methods (`look_at`, `clamp_to_bounds`) operate in terminal screen cell units (columns/rows), whereas map indices use logical tile grid coordinates. A mismatch occurred where the game was passing unscaled tile coordinates directly, leading to the camera lock at the center boundary and preventing the viewport from tracking the cursor or moving characters.
+
+**Assumptions.** The resolution-dependent tier settings dictate tile dimensions (`tile_w`, `tile_h`), which can change on terminal resize; hence, bounds checks and coordinate translation center mappings must query current cell dimensions.
+
+**Gotchas.** Scaling bounds incorrectly results in camera limits getting locked to the center of the board, making cursor movement look invisible/broken off-center.
+
+**Follow-ups.** None. All 163 tests in the suite compile and run successfully.
