@@ -3400,3 +3400,34 @@ runner that the shield is announced.
 **Gotchas.** `Bindings` in `crates/verryte-input/src/bindings.rs` was originally missing `Debug` derive, causing compilation errors when deriving `Debug` for `BindingsProfileRegistry`. Deriving `Debug` resolved the issue. In `verryte-audio`, playing music with mock bytes during tests does not decode successfully but compiles correctly, which is validated conditionally in tests.
 
 **Follow-ups.** Verify performance of the spatial cone queries on large grids and verify TTY frontend resizing behavior when the `Table` widget is rendered.
+
+## 2026-06-06 - Implement change detection queries, command suggestions, raycast translucency, ReachabilityMap, GridLayout, Homeward particle trajectory, and Scrollbar UI helper
+
+**Goal.** Implement a batch of 7 meaningful systems-level improvements across Verryte engine crates (`verryte-core`, `verryte-input`, `verryte-map`, and `verryte-terminal`) with comprehensive unit tests and clean workspace integration.
+
+**Changes.**
+- `crates/verryte-core/src/world.rs:1292` - Added `query_added`, `query_changed`, `query_added_mut`, and `query_changed_mut` change-detection queries; added tests in `world.rs:3464`.
+- `crates/verryte-input/src/bindings.rs:298` - Added `CommandBindings::suggest_command` using Levenshtein distance for spelling corrections.
+- `crates/verryte-input/src/bindings.rs:582` - Added `CommandParseError::suggest_corrections` to extract spelling suggestions for unknown commands.
+- `crates/verryte-input/src/bindings_ext_tests.rs:80` - Added `test_command_suggestions` unit test.
+- `crates/verryte-map/src/grid.rs:2883` - Added `TileGrid::raycast_translucency` for light and line-of-sight propagation with coverage/foliage/smoke decay.
+- `crates/verryte-map/src/reachability.rs:1` - Created `ReachabilityMap` to calculate reachable tiles under variable movement cost constraints and a maximum cost budget.
+- `crates/verryte-map/src/lib.rs:28` - Exported `ReachabilityMap` from `verryte-map`.
+- `crates/verryte-map/src/tests.rs:2016` - Added `test_raycast_translucency` and `test_reachability_map` unit tests.
+- `crates/verryte-terminal/src/layout.rs:261` - Added `GridLayout` for 2D UI grid partitioning constraints.
+- `crates/verryte-terminal/src/layout.rs:428` - Added `test_grid_layout` unit test.
+- `crates/verryte-terminal/src/vfx.rs:24` - Added `Trajectory::Homeward` particle pathing option.
+- `crates/verryte-terminal/src/vfx.rs:156` - Added `emit_homeward` particle emission preset for healing or homing projectiles.
+- `crates/verryte-terminal/src/vfx.rs:768` - Updated update loop for `Trajectory::Homeward`.
+- `crates/verryte-terminal/src/vfx.rs:1609` - Added `test_homeward_particles` unit test.
+- `crates/verryte-terminal/src/grid.rs:886` - Added `Grid::draw_scrollbar` scrollbar rendering helper with customizable thumb/track characters and dimensions.
+- `crates/verryte-terminal/src/grid.rs:3297` - Added `test_draw_scrollbar` unit test.
+- `crates/verryte-terminal/src/widgets.rs:377` - Updated `MenuView::render` to automatically draw a scrollbar when menu options exceed the visible viewport.
+
+**Reasoning.** Decoupling cover-based line of sight (translucency), spelling suggestions, 2D layouts, scrollbars, reachability, and homing particle systems directly into the engine's core crates keeps prototypes clean while providing robust, high-performance UI and graphics primitives.
+
+**Assumptions.** We assume that HSL blending is suitable for the scrollbar track/thumb contrast, and that cardinally adjacent neighbors are sufficient for grid reachability maps.
+
+**Gotchas.** When implementing change detection, ensuring that the world's global tick is incremented before insertion is critical to produce correct delta query results.
+
+**Follow-ups.** None. All workspace checks, clippy warnings, formatting, and unit/integration tests pass cleanly.
