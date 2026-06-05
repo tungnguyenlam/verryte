@@ -153,6 +153,7 @@ enum LayoutDirection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Constraint {
     Fixed(u16),
     Percent(u8),

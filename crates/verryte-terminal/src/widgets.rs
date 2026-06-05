@@ -1,6 +1,6 @@
 use crate::color::Color;
 use crate::grid::{Cell, Grid};
-use crate::layout::{BorderStyle, Rect};
+use crate::layout::{Alignment, BorderStyle, Constraint, Layout, Rect};
 
 /// A generic container widget with a background, optional border, and title.
 ///
@@ -657,6 +657,243 @@ impl Button {
     }
 }
 
+/// A table widget for rendering structured rows and columns of text.
+///
+/// Supports header row, horizontal dividers, alignment, and column width constraints.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Table {
+    pub rect: Rect,
+    pub bg: Color,
+    pub border: BorderStyle,
+    pub border_color: Color,
+    pub header_fg: Color,
+    pub header_bg: Color,
+    pub row_fg: Color,
+    pub row_bg: Color,
+    pub constraints: Vec<Constraint>,
+    pub headers: Option<Vec<String>>,
+    pub rows: Vec<Vec<String>>,
+    pub alignments: Vec<Alignment>,
+}
+
+impl Table {
+    pub fn new(rect: Rect) -> Self {
+        Self {
+            rect,
+            bg: Color::BLACK,
+            border: BorderStyle::None,
+            border_color: Color::GREY,
+            header_fg: Color::WHITE,
+            header_bg: Color::BLACK,
+            row_fg: Color::WHITE,
+            row_bg: Color::BLACK,
+            constraints: Vec::new(),
+            headers: None,
+            rows: Vec::new(),
+            alignments: Vec::new(),
+        }
+    }
+
+    pub fn with_bg(mut self, bg: Color) -> Self {
+        self.bg = bg;
+        self
+    }
+
+    pub fn with_border(mut self, style: BorderStyle, color: Color) -> Self {
+        self.border = style;
+        self.border_color = color;
+        self
+    }
+
+    pub fn with_header_colors(mut self, fg: Color, bg: Color) -> Self {
+        self.header_fg = fg;
+        self.header_bg = bg;
+        self
+    }
+
+    pub fn with_row_colors(mut self, fg: Color, bg: Color) -> Self {
+        self.row_fg = fg;
+        self.row_bg = bg;
+        self
+    }
+
+    pub fn with_constraints(mut self, constraints: Vec<Constraint>) -> Self {
+        self.constraints = constraints;
+        self
+    }
+
+    pub fn with_headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+
+    pub fn with_rows(mut self, rows: Vec<Vec<String>>) -> Self {
+        self.rows = rows;
+        self
+    }
+
+    pub fn with_alignments(mut self, alignments: Vec<Alignment>) -> Self {
+        self.alignments = alignments;
+        self
+    }
+
+    pub fn render(&self, grid: &mut Grid) {
+        if self.rect.is_empty() {
+            return;
+        }
+
+        grid.fill_rect(self.rect, Cell::new(' ').with_bg(self.bg));
+
+        if self.border != BorderStyle::None {
+            grid.draw_border_styled(self.rect, self.border, self.border_color, self.bg);
+        }
+
+        let inner_rect = if self.border != BorderStyle::None {
+            self.rect.inset(1, 1)
+        } else {
+            self.rect
+        };
+
+        if inner_rect.is_empty() || self.constraints.is_empty() {
+            return;
+        }
+
+        let mut layout = Layout::horizontal();
+        for &constraint in &self.constraints {
+            match constraint {
+                Constraint::Fixed(w) => {
+                    layout = layout.add_fixed(w);
+                }
+                Constraint::Percent(p) => {
+                    layout = layout.add_percent(p);
+                }
+                Constraint::Remaining => {
+                    layout = layout.add_remaining();
+                }
+            }
+        }
+
+        let col_rects = layout.split(inner_rect);
+        let mut current_y = inner_rect.y;
+
+        if let Some(ref headers) = self.headers {
+            if current_y < inner_rect.bottom() {
+                let header_row_rect = Rect::new(inner_rect.x, current_y, inner_rect.width, 1);
+                grid.fill_rect(header_row_rect, Cell::new(' ').with_bg(self.header_bg));
+
+                for (col_idx, header) in headers.iter().enumerate() {
+                    if col_idx >= col_rects.len() {
+                        break;
+                    }
+                    let col_rect = col_rects[col_idx];
+                    if col_rect.width == 0 {
+                        continue;
+                    }
+                    let alignment = self
+                        .alignments
+                        .get(col_idx)
+                        .copied()
+                        .unwrap_or(Alignment::Left);
+
+                    self.render_cell(
+                        grid,
+                        header,
+                        col_rect.x,
+                        current_y,
+                        col_rect.width,
+                        alignment,
+                        self.header_fg,
+                        self.header_bg,
+                    );
+                }
+                current_y += 1;
+            }
+
+            if current_y < inner_rect.bottom() {
+                let sep_char = match self.border {
+                    BorderStyle::Ascii => '-',
+                    BorderStyle::Double => '═',
+                    BorderStyle::Heavy => '━',
+                    _ => '─',
+                };
+                let cell = Cell::new(sep_char)
+                    .with_fg(self.border_color)
+                    .with_bg(self.bg);
+                for x in inner_rect.x..inner_rect.right() {
+                    grid.put(x, current_y, cell);
+                }
+                current_y += 1;
+            }
+        }
+
+        for row in &self.rows {
+            if current_y >= inner_rect.bottom() {
+                break;
+            }
+
+            let row_rect = Rect::new(inner_rect.x, current_y, inner_rect.width, 1);
+            grid.fill_rect(row_rect, Cell::new(' ').with_bg(self.row_bg));
+
+            for (col_idx, cell_value) in row.iter().enumerate() {
+                if col_idx >= col_rects.len() {
+                    break;
+                }
+                let col_rect = col_rects[col_idx];
+                if col_rect.width == 0 {
+                    continue;
+                }
+                let alignment = self
+                    .alignments
+                    .get(col_idx)
+                    .copied()
+                    .unwrap_or(Alignment::Left);
+
+                self.render_cell(
+                    grid,
+                    cell_value,
+                    col_rect.x,
+                    current_y,
+                    col_rect.width,
+                    alignment,
+                    self.row_fg,
+                    self.row_bg,
+                );
+            }
+            current_y += 1;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_cell(
+        &self,
+        grid: &mut Grid,
+        text: &str,
+        x: u16,
+        y: u16,
+        width: u16,
+        alignment: Alignment,
+        fg: Color,
+        bg: Color,
+    ) {
+        let display_text = text.chars().take(width as usize).collect::<String>();
+        let text_len = display_text.chars().count() as u16;
+        let start_x = match alignment {
+            Alignment::Left => x,
+            Alignment::Center => {
+                let space = width.saturating_sub(text_len);
+                x + space / 2
+            }
+            Alignment::Right => {
+                let space = width.saturating_sub(text_len);
+                x + space
+            }
+        };
+
+        grid.write_str(start_x, y, &display_text, fg, bg);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,5 +1185,46 @@ mod tests {
         button.render(&mut grid);
         // active uses WHITE bg and BLACK fg
         assert_eq!(grid.get(0, 0).unwrap().bg, Color::WHITE);
+    }
+
+    #[test]
+    fn test_table_widget() {
+        let table = Table::new(Rect::new(0, 0, 10, 5))
+            .with_constraints(vec![Constraint::Fixed(4), Constraint::Remaining])
+            .with_headers(vec!["Col1".to_string(), "Col2".to_string()])
+            .with_rows(vec![
+                vec!["a".to_string(), "b".to_string()],
+                vec!["long_string".to_string(), "c".to_string()],
+            ])
+            .with_alignments(vec![Alignment::Left, Alignment::Right]);
+
+        let mut grid = Grid::new(10, 5);
+        table.render(&mut grid);
+
+        // Col1 header "Col1" at row 0 (x=0..4) -> starts at x=0
+        // Col2 header "Col2" right-aligned at row 0 (x=4..10) -> length 4, space 2 -> starts at x=6
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'C');
+        assert_eq!(grid.get(1, 0).unwrap().glyph, 'o');
+        assert_eq!(grid.get(2, 0).unwrap().glyph, 'l');
+        assert_eq!(grid.get(3, 0).unwrap().glyph, '1');
+
+        assert_eq!(grid.get(6, 0).unwrap().glyph, 'C');
+        assert_eq!(grid.get(7, 0).unwrap().glyph, 'o');
+        assert_eq!(grid.get(8, 0).unwrap().glyph, 'l');
+        assert_eq!(grid.get(9, 0).unwrap().glyph, '2');
+
+        // Divider row 1
+        assert_eq!(grid.get(0, 1).unwrap().glyph, '─');
+
+        // Data row 2 ("a", "b")
+        assert_eq!(grid.get(0, 2).unwrap().glyph, 'a');
+        assert_eq!(grid.get(9, 2).unwrap().glyph, 'b');
+
+        // Data row 3 ("long_string" -> truncated to "long", "c" -> right aligned to 9)
+        assert_eq!(grid.get(0, 3).unwrap().glyph, 'l');
+        assert_eq!(grid.get(1, 3).unwrap().glyph, 'o');
+        assert_eq!(grid.get(2, 3).unwrap().glyph, 'n');
+        assert_eq!(grid.get(3, 3).unwrap().glyph, 'g');
+        assert_eq!(grid.get(9, 3).unwrap().glyph, 'c');
     }
 }

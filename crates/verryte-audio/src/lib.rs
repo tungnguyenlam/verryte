@@ -1,4 +1,4 @@
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -135,23 +135,19 @@ impl AudioPlayer {
             }
         }
     }
-
     pub fn play_music(&self, name: &str, loop_music: bool) {
         if let Some(data) = self.registry.get(name) {
             self.music_sink.stop();
             let cursor = Cursor::new(data.clone());
             if let Ok(source) = Decoder::new(cursor) {
                 if loop_music {
-                    // rodio doesn't have a simple loop yet without creating a custom source
-                    // but for a first pass we'll just play it once
-                    self.music_sink.append(source);
+                    self.music_sink.append(source.repeat_infinite());
                 } else {
                     self.music_sink.append(source);
                 }
             }
         }
     }
-
     pub fn stop_music(&self) {
         self.music_sink.stop();
     }
@@ -274,6 +270,17 @@ mod tests {
         if let Ok((mut player, _stream)) = AudioPlayer::try_new() {
             player.register("jump", vec![1, 2, 3]);
             assert_eq!(player.registry.get("jump"), Some(&vec![1, 2, 3]));
+        }
+    }
+
+    #[test]
+    fn test_audio_player_play_music() {
+        if let Ok((mut player, _stream)) = AudioPlayer::try_new() {
+            player.register("bgm", vec![0; 100]);
+            player.play_music("bgm", true);
+            player.play_music("bgm", false);
+            player.stop_music();
+            player.set_music_volume(0.5);
         }
     }
 }

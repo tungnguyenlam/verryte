@@ -29,6 +29,8 @@ pub struct InputRouter<A: Clone> {
     held_key: Option<(Key, ActionSource)>,
     held_time: f32,
     last_repeat_time: f32,
+    profiles: crate::bindings::BindingsProfileRegistry<A>,
+    interceptor: Option<std::sync::Arc<dyn Fn(&A) -> bool + Send + Sync>>,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +43,9 @@ pub struct DelayedAction<A: Clone> {
 
 impl<A: Clone> InputRouter<A> {
     pub fn new(bindings: Bindings<A>) -> Self {
+        let mut profiles = crate::bindings::BindingsProfileRegistry::new();
+        profiles.register("default", bindings.clone());
+        profiles.switch_profile("default");
         Self {
             bindings,
             pending: VecDeque::new(),
@@ -55,7 +60,61 @@ impl<A: Clone> InputRouter<A> {
             held_key: None,
             held_time: 0.0,
             last_repeat_time: 0.0,
+            profiles,
+            interceptor: None,
         }
+    }
+
+    /// Register a named keymap/bindings profile.
+    pub fn register_profile(&mut self, name: &str, bindings: Bindings<A>) {
+        self.profiles.register(name, bindings);
+    }
+
+    /// Get the name of the currently active profile, if any.
+    pub fn active_profile_name(&self) -> Option<&str> {
+        self.profiles.active_profile_name()
+    }
+
+    /// Switch to a registered keymap profile. Returns true if successful.
+    pub fn switch_profile(&mut self, name: &str) -> bool {
+        if self.profiles.switch_profile(name) {
+            if let Some(active) = self.profiles.active_bindings() {
+                self.bindings = active.clone();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Register a closure to intercept, validate, or filter actions.
+    pub fn set_interceptor<F>(&mut self, interceptor: F)
+    where
+        F: Fn(&A) -> bool + Send + Sync + 'static,
+    {
+        self.interceptor = Some(std::sync::Arc::new(interceptor));
+    }
+
+    /// Clear the active action interceptor hook.
+    pub fn clear_interceptor(&mut self) {
+        self.interceptor = None;
+    }
+
+    /// Helper to queue a pending action, routing it through the interceptor if present.
+    /// Returns true if the action was successfully queued (not filtered).
+    fn push_pending(&mut self, qa: QueuedAction<A>, front: bool) -> bool {
+        if let Some(ref interceptor) = self.interceptor {
+            if !interceptor(&qa.action) {
+                return false;
+            }
+        }
+        self.record_if_active(&qa);
+        if front {
+            self.pending.push_front(qa);
+        } else {
+            self.pending.push_back(qa);
+        }
+        self.total_queued += 1;
+        true
     }
 
     /// Set the maximum number of actions to keep in history.
@@ -237,9 +296,9 @@ impl<A: Clone> InputRouter<A> {
                 if time_since_last >= self.repeat_config.interval {
                     if let Some(action) = self.bindings.translate(key) {
                         let qa = QueuedAction::new(action, source);
-                        self.pending.push_back(qa);
-                        self.total_queued += 1;
-                        self.last_repeat_time = self.held_time;
+                        if self.push_pending(qa, false) {
+                            self.last_repeat_time = self.held_time;
+                        }
                     }
                 }
             }
@@ -259,9 +318,7 @@ impl<A: Clone> InputRouter<A> {
             });
 
             for qa in ready {
-                self.record_if_active(&qa);
-                self.pending.push_back(qa);
-                self.total_queued += 1;
+                self.push_pending(qa, false);
             }
         }
     }
@@ -376,10 +433,7 @@ impl<A: Clone> InputRouter<A> {
 
                     if let Some(action) = self.bindings.translate(key) {
                         let qa = QueuedAction::new(action, source);
-                        self.record_if_active(&qa);
-                        self.pending.push_back(qa);
-                        self.total_queued += 1;
-                        true
+                        self.push_pending(qa, false)
                     } else {
                         false
                     }
@@ -397,10 +451,7 @@ impl<A: Clone> InputRouter<A> {
             _ => {
                 if let Some(action) = self.bindings.translate_event(event) {
                     let qa = QueuedAction::new(action, source);
-                    self.record_if_active(&qa);
-                    self.pending.push_back(qa);
-                    self.total_queued += 1;
-                    true
+                    self.push_pending(qa, false)
                 } else {
                     false
                 }
@@ -421,10 +472,7 @@ impl<A: Clone> InputRouter<A> {
     {
         if let Some(action) = translate(event) {
             let qa = QueuedAction::new(action, source);
-            self.record_if_active(&qa);
-            self.pending.push_back(qa);
-            self.total_queued += 1;
-            true
+            self.push_pending(qa, false)
         } else {
             self.handle_from(event, source)
         }
@@ -479,16 +527,14 @@ impl<A: Clone> InputRouter<A> {
         for event in events {
             if let Some(action) = translate(event) {
                 let qa = QueuedAction::new(action, source);
-                self.record_if_active(&qa);
-                self.pending.push_back(qa);
-                self.total_queued += 1;
-                count += 1;
+                if self.push_pending(qa, false) {
+                    count += 1;
+                }
             } else if let Some(action) = self.bindings.translate_event(event) {
                 let qa = QueuedAction::new(action, source);
-                self.record_if_active(&qa);
-                self.pending.push_back(qa);
-                self.total_queued += 1;
-                count += 1;
+                if self.push_pending(qa, false) {
+                    count += 1;
+                }
             }
         }
         count
@@ -505,9 +551,7 @@ impl<A: Clone> InputRouter<A> {
     /// agent drivers.
     pub fn inject_from(&mut self, action: A, source: ActionSource) {
         let qa = QueuedAction::new(action, source);
-        self.record_if_active(&qa);
-        self.pending.push_back(qa);
-        self.total_queued += 1;
+        self.push_pending(qa, false);
     }
 
     /// Inject a high-priority action at the front of the queue.
@@ -519,9 +563,7 @@ impl<A: Clone> InputRouter<A> {
     /// provenance.
     pub fn inject_priority_from(&mut self, action: A, source: ActionSource) {
         let qa = QueuedAction::new(action, source);
-        self.record_if_active(&qa);
-        self.pending.push_front(qa);
-        self.total_queued += 1;
+        self.push_pending(qa, true);
     }
 
     /// Inject an action that will be queued after a delay.

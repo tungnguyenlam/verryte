@@ -3033,6 +3033,117 @@ impl<T> TileGrid<T> {
         }
         Some(full_path)
     }
+
+    /// Get all points within a Chebyshev or Euclidean radius from a center point.
+    ///
+    /// If `use_euclidean` is true, a circle is returned; otherwise, a square/box (Chebyshev).
+    pub fn points_in_circle(&self, center: Point, radius: u16, use_euclidean: bool) -> Vec<Point> {
+        let mut points = Vec::new();
+        let r = radius as i16;
+        let start_x = (center.x - r).max(0);
+        let end_x = (center.x + r).min(self.width() as i16 - 1);
+        let start_y = (center.y - r).max(0);
+        let end_y = (center.y + r).min(self.height() as i16 - 1);
+
+        for y in start_y..=end_y {
+            for x in start_x..=end_x {
+                let p = Point::new(x, y);
+                if use_euclidean {
+                    if center.euclidean_distance(p) <= radius as f32 {
+                        points.push(p);
+                    }
+                } else {
+                    points.push(p);
+                }
+            }
+        }
+        points
+    }
+
+    /// Get all points in an AoE ring between `min_radius` and `max_radius` (inclusive).
+    pub fn points_in_ring(
+        &self,
+        center: Point,
+        min_radius: u16,
+        max_radius: u16,
+        use_euclidean: bool,
+    ) -> Vec<Point> {
+        let mut points = Vec::new();
+        let r = max_radius as i16;
+        let start_x = (center.x - r).max(0);
+        let end_x = (center.x + r).min(self.width() as i16 - 1);
+        let start_y = (center.y - r).max(0);
+        let end_y = (center.y + r).min(self.height() as i16 - 1);
+
+        for y in start_y..=end_y {
+            for x in start_x..=end_x {
+                let p = Point::new(x, y);
+                if use_euclidean {
+                    let d = center.euclidean_distance(p);
+                    if d >= min_radius as f32 && d <= max_radius as f32 {
+                        points.push(p);
+                    }
+                } else {
+                    let d = center.chebyshev_distance(p);
+                    if d >= min_radius && d <= max_radius {
+                        points.push(p);
+                    }
+                }
+            }
+        }
+        points
+    }
+
+    /// Get all points in a directional cone/wedge facing `direction`.
+    ///
+    /// `angle_degrees` specifies the full arc of the cone (e.g. 90 degrees).
+    pub fn points_in_cone(
+        &self,
+        origin: Point,
+        range: u16,
+        direction: Direction8,
+        angle_degrees: f32,
+    ) -> Vec<Point> {
+        let mut points = Vec::new();
+        let r = range as i16;
+        let start_x = (origin.x - r).max(0);
+        let end_x = (origin.x + r).min(self.width() as i16 - 1);
+        let start_y = (origin.y - r).max(0);
+        let end_y = (origin.y + r).min(self.height() as i16 - 1);
+
+        let (dx, dy) = direction.delta();
+        let target_angle = (dy as f32).atan2(dx as f32); // in radians
+        let half_arc = (angle_degrees / 2.0).to_radians();
+
+        for y in start_y..=end_y {
+            for x in start_x..=end_x {
+                let p = Point::new(x, y);
+                if p == origin {
+                    points.push(p);
+                    continue;
+                }
+                if origin.chebyshev_distance(p) <= range {
+                    let px = (p.x - origin.x) as f32;
+                    let py = (p.y - origin.y) as f32;
+                    let angle = py.atan2(px);
+
+                    // Normalize difference to [-PI, PI]
+                    let mut diff = angle - target_angle;
+                    while diff > std::f32::consts::PI {
+                        diff -= 2.0 * std::f32::consts::PI;
+                    }
+                    while diff < -std::f32::consts::PI {
+                        diff += 2.0 * std::f32::consts::PI;
+                    }
+
+                    if diff.abs() <= half_arc {
+                        points.push(p);
+                    }
+                }
+            }
+        }
+        points
+    }
 }
 
 impl<T> Index<Point> for TileGrid<T> {

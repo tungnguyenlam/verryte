@@ -6,7 +6,7 @@ use crate::key::{InputEvent, Key, KeyEventKind, MouseButton, MouseTrigger, Scrol
 
 /// A keyboard-to-action map. Generic over the game's action type so the engine
 /// never has to know what actions exist.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Bindings<A: Clone> {
     by_key: HashMap<Key, A>,
     by_mouse: HashMap<MouseTrigger, A>,
@@ -494,6 +494,56 @@ impl<'de, A: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for Comman
             by_glyph: helper.by_glyph.into_iter().collect(),
             aliases: helper.aliases.into_iter().collect(),
         })
+    }
+}
+
+/// A named profile of key/mouse/scroll bindings.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BindingsProfile<A: Clone> {
+    pub name: String,
+    pub bindings: Bindings<A>,
+}
+
+/// A registry that stores named input binding profiles and allows switching between them.
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BindingsProfileRegistry<A: Clone> {
+    profiles: HashMap<String, Bindings<A>>,
+    active_profile: Option<String>,
+}
+
+impl<A: Clone> BindingsProfileRegistry<A> {
+    pub fn new() -> Self {
+        Self {
+            profiles: HashMap::new(),
+            active_profile: None,
+        }
+    }
+
+    pub fn register(&mut self, name: &str, bindings: Bindings<A>) {
+        self.profiles.insert(name.to_string(), bindings);
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Bindings<A>> {
+        self.profiles.get(name)
+    }
+
+    pub fn active_profile_name(&self) -> Option<&str> {
+        self.active_profile.as_deref()
+    }
+
+    pub fn active_bindings(&self) -> Option<&Bindings<A>> {
+        self.active_profile.as_ref().and_then(|name| self.get(name))
+    }
+
+    pub fn switch_profile(&mut self, name: &str) -> bool {
+        if self.profiles.contains_key(name) {
+            self.active_profile = Some(name.to_string());
+            true
+        } else {
+            false
+        }
     }
 }
 

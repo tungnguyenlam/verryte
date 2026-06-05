@@ -1995,3 +1995,20 @@ fn test_path_to_directions() {
     let invalid_path = vec![Point::new(0, 0), Point::new(2, 2)];
     assert!(path_to_directions(&invalid_path).is_err());
 }
+
+#[test]
+fn test_grid_spatial_queries() {
+    let grid = TileGrid::new(10, 10, '.');
+
+    let circle = grid.points_in_circle(Point::new(5, 5), 2, false);
+    assert_eq!(circle.len(), 25);
+
+    let ring = grid.points_in_ring(Point::new(5, 5), 1, 2, false);
+    assert_eq!(ring.len(), 24);
+
+    let cone = grid.points_in_cone(Point::new(5, 5), 2, Direction8::East, 90.0);
+    assert!(cone.contains(&Point::new(5, 5)));
+    assert!(cone.contains(&Point::new(6, 5)));
+    assert!(cone.contains(&Point::new(7, 5)));
+    assert!(!cone.contains(&Point::new(5, 3)));
+}
