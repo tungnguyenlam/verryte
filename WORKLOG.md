@@ -3380,3 +3380,23 @@ runner that the shield is announced.
 **Gotchas.** When testing multi-goal pathfinding, ensuring that target goals are not equidistant from the start point is critical to guarantee deterministic search results across different binary heap sorting orderings.
 
 **Follow-ups.** None. All workspace checks, clippy warnings, formatting, and unit/integration tests pass cleanly.
+
+## 2026-06-06 - Implement Table layout widget, repeating music, spatial grid queries, input binding profiles, and action interceptor
+
+**Goal.** Implement a second batch of 5 meaningful systems-level improvements across Verryte engine crates to support rich terminal RPG mechanics and gameplay depth.
+
+**Changes.**
+- `crates/verryte-map/src/grid.rs:3037` - Added `points_in_circle`, `points_in_ring`, and `points_in_cone` methods to `TileGrid` to support geometric AoE queries; added tests in `tests.rs:1999`.
+- `crates/verryte-input/src/bindings.rs:501` - Added `BindingsProfile` and `BindingsProfileRegistry` to allow multi-profile keymap management; extended `InputRouter` to initialize and register profiles, with tests in `router_ext_tests.rs:45`.
+- `crates/verryte-input/src/router.rs:33` - Added action interceptor closure slot (`interceptor`) and `push_pending` method to `InputRouter` to route all queuing points through the interceptor, with tests in `router_ext_tests.rs:71`.
+- `crates/verryte-terminal/src/widgets.rs:660` - Added a `Table` widget for rendering tabular rows/columns of text, header lines, and column width constraints using `Layout`; added tests at `:951`; re-exported in `lib.rs:43`.
+- `crates/verryte-terminal/src/layout.rs:156` - Derived `serde::Serialize` and `serde::Deserialize` for `Constraint` to support serialization of the `Table` widget.
+- `crates/verryte-audio/src/lib.rs:138` - Updated `play_music` to use `rodio::source::Source::repeat_infinite()` for looping music playback; added test case at `:269`.
+
+**Reasoning.** Reusable spatial grid queries allow turn-based tactical attacks to declare area-of-effect parameters (circle, ring, cone) using generic grid coordinates. The input binding profiles and action interceptors support character-specific action mapping and global input constraints (e.g. disabling moves during QTE sequences). The `Table` widget provides a unified layout container for drawing character stats, menus, and inventory screens. Updating `play_music` to repeat infinitely makes standard RPG background music loops functional.
+
+**Assumptions.** I assumed `Constraint` should be serializable under the `serde` feature since it is used inside the `Table` widget, which derives serialization conditionally. I assumed that rebuild-queue operations in `InputRouter` filter/drain should not route through the action interceptor to avoid double-intercepting.
+
+**Gotchas.** `Bindings` in `crates/verryte-input/src/bindings.rs` was originally missing `Debug` derive, causing compilation errors when deriving `Debug` for `BindingsProfileRegistry`. Deriving `Debug` resolved the issue. In `verryte-audio`, playing music with mock bytes during tests does not decode successfully but compiles correctly, which is validated conditionally in tests.
+
+**Follow-ups.** Verify performance of the spatial cone queries on large grids and verify TTY frontend resizing behavior when the `Table` widget is rendered.
