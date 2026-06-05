@@ -374,6 +374,12 @@ impl MenuView {
 
         let visible = self.visible_rows() as usize;
         let marker_width = self.selection_marker.chars().count();
+        let has_scrollbar = self.options.len() > visible;
+        let text_width = if has_scrollbar {
+            inner_rect.width.saturating_sub(1)
+        } else {
+            inner_rect.width
+        };
 
         for (view_row, option_index) in (self.scroll_offset..self.options.len())
             .enumerate()
@@ -393,7 +399,25 @@ impl MenuView {
                 (self.normal_fg, format!("{}{}", padding, option))
             };
 
-            grid.write_str(inner_rect.x, y, &text, fg, self.bg);
+            let clipped_text: String = text.chars().take(text_width as usize).collect();
+            grid.write_str(inner_rect.x, y, &clipped_text, fg, self.bg);
+        }
+
+        if has_scrollbar {
+            let scrollbar_rect = Rect::new(
+                inner_rect.right().saturating_sub(1),
+                inner_rect.y,
+                1,
+                inner_rect.height,
+            );
+            grid.draw_scrollbar(
+                scrollbar_rect,
+                self.options.len(),
+                visible,
+                self.scroll_offset,
+                self.selected_fg,
+                self.bg,
+            );
         }
     }
 }

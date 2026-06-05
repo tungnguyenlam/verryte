@@ -2012,3 +2012,65 @@ fn test_grid_spatial_queries() {
     assert!(cone.contains(&Point::new(7, 5)));
     assert!(!cone.contains(&Point::new(5, 3)));
 }
+
+#[test]
+fn test_raycast_translucency() {
+    let mut grid = TileGrid::new(10, 10, 0.0f32);
+    // Put some cover
+    grid.set(Point::new(3, 3), 0.5f32); // foliage: 0.5 opacity
+    grid.set(Point::new(4, 3), 1.0f32); // wall: 1.0 opacity
+
+    // Line from (2,3) to (5,3) passes through foliage at (3,3) and wall at (4,3)
+    let t = grid.raycast_translucency(Point::new(2, 3), Point::new(5, 3), |_, &opacity| opacity);
+    // Translucency starts at 1.0. Foliage makes it 1.0 * (1 - 0.5) = 0.5. Wall makes it 0.5 * (1 - 1.0) = 0.0.
+    assert_eq!(t, 0.0);
+
+    // Line from (2,3) to (3,3) only goes to foliage
+    let t2 = grid.raycast_translucency(Point::new(2, 3), Point::new(3, 3), |_, &opacity| opacity);
+    assert_eq!(t2, 0.5);
+}
+
+#[test]
+fn test_reachability_map() {
+    let mut grid = TileGrid::new(5, 5, '.');
+    // Set some obstacle
+    grid.set(Point::new(1, 0), '#');
+    grid.set(Point::new(1, 1), '#');
+    grid.set(Point::new(1, 2), '#');
+
+    // Custom cost: mud at (0, 2) has cost 3, others cost 1
+    grid.set(Point::new(0, 2), 'M');
+
+    let start = Point::new(0, 0);
+    let max_cost = 3;
+
+    let reach = ReachabilityMap::compute(
+        &grid,
+        start,
+        max_cost,
+        |_, &tile| tile != '#',
+        |_, &tile| if tile == 'M' { 3 } else { 1 }
+    );
+
+    // (0,0) cost 0
+    assert!(reach.is_reachable(Point::new(0, 0)));
+    assert_eq!(reach.cost_to(Point::new(0, 0)), Some(0));
+
+    // (0,1) cost 1
+    assert!(reach.is_reachable(Point::new(0, 1)));
+    assert_eq!(reach.cost_to(Point::new(0, 1)), Some(1));
+
+    // (0,2) is Mud, so cost to reach it is 1 (for 0,1) + 3 (for Mud) = 4, which is > max_cost (3)
+    // So it should not be reachable!
+    assert!(!reach.is_reachable(Point::new(0, 2)));
+
+    // (1,1) is '#' wall, so not reachable
+    assert!(!reach.is_reachable(Point::new(1, 1)));
+
+    // (2, 0) is behind the wall, so it's not reachable within max_cost of 3 (must go around)
+    assert!(!reach.is_reachable(Point::new(2, 0)));
+
+    // Let's reconstruct path to (0,1)
+    let path = reach.path_to(Point::new(0, 1)).unwrap();
+    assert_eq!(path, vec![Point::new(0, 0), Point::new(0, 1)]);
+}

@@ -78,3 +78,30 @@ fn test_bindings_queries() {
         vec![ScrollDirection::Up]
     );
 }
+
+#[test]
+fn test_command_suggestions() {
+    let mut cmds = CommandBindings::new();
+    cmds.bind_name("north", MyAction::North);
+    cmds.bind_name("south", MyAction::South);
+    cmds.bind_alias("n", "north");
+    cmds.bind_alias("s", "south");
+
+    // Exact matches shouldn't matter, but suggestions for "nort" should include "north" and "n"
+    let suggestions = cmds.suggest_command("nort");
+    assert!(suggestions.contains(&"north".to_string()));
+    assert!(suggestions.contains(&"n".to_string()));
+
+    // "sout" suggestions should include "south" and "s"
+    let suggestions_sout = cmds.suggest_command("sout");
+    assert!(suggestions_sout.contains(&"south".to_string()));
+
+    // Far mismatch should yield no suggestions
+    let suggestions_empty = cmds.suggest_command("xyzabc");
+    assert!(suggestions_empty.is_empty());
+
+    // Test error correction suggestions
+    let err = cmds.parse_words("nort").unwrap_err();
+    let corrections = err.suggest_corrections(&cmds).unwrap();
+    assert!(corrections.contains(&"north".to_string()));
+}

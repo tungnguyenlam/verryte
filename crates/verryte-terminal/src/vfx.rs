@@ -21,6 +21,11 @@ pub enum Trajectory {
         frequency: f32,
         amplitude: f32,
     },
+    Homeward {
+        target_x: f32,
+        target_y: f32,
+        speed: f32,
+    },
 }
 
 // ── Particle ──────────────────────────────────────────────────────────────────
@@ -143,6 +148,45 @@ pub fn emit_burst(cx: f32, cy: f32, count: usize, color: Color, glyphs: &[char])
             max_lifetime: 0.8 + (i as f32 * 0.13) % 0.5,
             attrs: CellAttrs::NONE.bold(),
             trajectory: Trajectory::Straight,
+        });
+    }
+    particles
+}
+
+/// Emit particles that start in a burst/ring and then converge toward a target point.
+pub fn emit_homeward(
+    cx: f32,
+    cy: f32,
+    tx: f32,
+    ty: f32,
+    count: usize,
+    color: Color,
+    glyphs: &[char],
+    speed: f32,
+) -> Vec<Particle> {
+    let mut particles = Vec::with_capacity(count);
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let radius = 2.0;
+        let px = cx + angle.cos() * radius;
+        let py = cy + angle.sin() * radius * 0.5;
+
+        particles.push(Particle {
+            x: px,
+            y: py,
+            vx: 0.0,
+            vy: 0.0,
+            glyph: glyphs[i % glyphs.len()],
+            fg: color,
+            bg: Color::BLACK,
+            lifetime: 1.0,
+            max_lifetime: 1.0,
+            attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Homeward {
+                target_x: tx,
+                target_y: ty,
+                speed,
+            },
         });
     }
     particles
@@ -758,6 +802,18 @@ impl VfxSystem {
                     } else {
                         p.x += p.vx * dt;
                         p.y += (p.vy + wave) * dt;
+                    }
+                }
+                Trajectory::Homeward { target_x, target_y, speed } => {
+                    let dx = target_x - p.x;
+                    let dy = target_y - p.y;
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    if dist > 0.1 {
+                        p.x += (dx / dist) * speed * dt;
+                        p.y += (dy / dist) * speed * dt;
+                    } else {
+                        p.x = target_x;
+                        p.y = target_y;
                     }
                 }
             }
@@ -1548,5 +1604,37 @@ mod tests {
         vfx.clear();
         assert_eq!(vfx.shakes.len(), 0);
         assert_eq!(vfx.flashes.len(), 0);
+    }
+
+    #[test]
+    fn test_homeward_particles() {
+        let particles = emit_homeward(
+            10.0, 10.0, // center
+            20.0, 20.0, // target
+            4,          // count
+            Color::GREEN,
+            &['+'],
+            5.0,        // speed
+        );
+        assert_eq!(particles.len(), 4);
+        for p in &particles {
+            assert_eq!(p.fg, Color::GREEN);
+            assert_eq!(p.glyph, '+');
+            assert!(matches!(p.trajectory, Trajectory::Homeward { target_x: 20.0, target_y: 20.0, speed: 5.0 }));
+        }
+
+        // Run update on particles to verify homeward progression
+        let p = particles[0].clone();
+        let initial_dist = ((20.0 - p.x) * (20.0 - p.x) + (20.0 - p.y) * (20.0 - p.y)).sqrt();
+
+        // Update with Trajectory::Homeward logic manually or inside VfxSystem
+        let mut system = VfxSystem::new();
+        system.particles.push(p);
+        system.update(0.1); // step dt = 0.1
+
+        let updated_p = &system.particles[0];
+        let new_dist = ((20.0 - updated_p.x) * (20.0 - updated_p.x) + (20.0 - updated_p.y) * (20.0 - updated_p.y)).sqrt();
+        // Distance should be closer!
+        assert!(new_dist < initial_dist);
     }
 }

@@ -295,6 +295,18 @@ impl<A: Clone> CommandBindings<A> {
         self.by_glyph.get(&glyph).cloned()
     }
 
+    /// Suggests the closest registered command names (including aliases) to the given input,
+    /// using Levenshtein distance. Returns up to 3 suggestions with distance <= 3, sorted by closeness.
+    pub fn suggest_command(&self, input: &str) -> Vec<String> {
+        let mut suggestions: Vec<(usize, String)> = self.by_name.keys()
+            .chain(self.aliases.keys())
+            .map(|name| (levenshtein_distance(input, name), name.clone()))
+            .filter(|&(dist, _)| dist <= 3)
+            .collect();
+        suggestions.sort_by_key(|&(dist, _)| dist);
+        suggestions.into_iter().take(3).map(|(_, name)| name).collect()
+    }
+
     /// Parse whitespace-separated command names into actions.
     pub fn parse_words(&self, script: &str) -> Result<Vec<A>, CommandParseError> {
         let mut out = Vec::new();
@@ -567,3 +579,39 @@ impl std::fmt::Display for CommandParseError {
 }
 
 impl std::error::Error for CommandParseError {}
+
+impl CommandParseError {
+    /// If this is an `UnknownCommand` error, attempts to suggest corrections from the bindings.
+    pub fn suggest_corrections<A: Clone>(&self, bindings: &CommandBindings<A>) -> Option<Vec<String>> {
+        match self {
+            CommandParseError::UnknownCommand(cmd) => {
+                let suggestions = bindings.suggest_command(cmd);
+                if suggestions.is_empty() {
+                    None
+                } else {
+                    Some(suggestions)
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let b_len = b.chars().count();
+    let mut dp: Vec<usize> = (0..=b_len).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = i;
+        dp[0] = i + 1;
+        for (j, cb) in b.chars().enumerate() {
+            let temp = dp[j + 1];
+            dp[j + 1] = if ca == cb {
+                prev
+            } else {
+                1 + prev.min(dp[j]).min(dp[j + 1])
+            };
+            prev = temp;
+        }
+    }
+    dp[b_len]
+}

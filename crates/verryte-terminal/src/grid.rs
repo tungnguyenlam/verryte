@@ -883,6 +883,60 @@ impl Grid {
         self.write_str(start_x, y, text, fg, bg);
     }
 
+    /// Draw a vertical scrollbar in the given region (usually a 1-column wide strip).
+    ///
+    /// - `rect` is the vertical strip for the scrollbar.
+    /// - `total_items` is the total count of items.
+    /// - `visible_items` is the count of items visible in the viewport.
+    /// - `scroll_offset` is the current scroll offset.
+    /// - `fg` and `bg` are the scrollbar colors.
+    pub fn draw_scrollbar(
+        &mut self,
+        rect: Rect,
+        total_items: usize,
+        visible_items: usize,
+        scroll_offset: usize,
+        fg: Color,
+        bg: Color,
+    ) {
+        if rect.is_empty() || total_items == 0 || visible_items >= total_items {
+            return;
+        }
+
+        // Fill track
+        self.fill_rect(
+            rect,
+            Cell::new('░').with_fg(bg.blend_alpha(fg, 0.3)).with_bg(bg),
+        );
+
+        let height = rect.height as f32;
+        let total = total_items as f32;
+        let visible = visible_items as f32;
+        let offset = scroll_offset as f32;
+
+        // Size of scrollbar thumb: at least 1 cell, proportional to visible ratio
+        let thumb_height = ((visible / total) * height).round().max(1.0) as u16;
+        let thumb_height = thumb_height.min(rect.height);
+
+        // Position of scrollbar thumb: proportional to offset ratio
+        let max_offset = total - visible;
+        let thumb_y = if max_offset > 0.0 {
+            ((offset / max_offset) * (height - thumb_height as f32)).round() as u16
+        } else {
+            0
+        };
+        let thumb_y = thumb_y.min(rect.height - thumb_height);
+
+        // Draw thumb
+        let thumb_rect = Rect::new(
+            rect.x,
+            rect.y + thumb_y,
+            rect.width,
+            thumb_height,
+        );
+        self.fill_rect(thumb_rect, Cell::new('█').with_fg(fg).with_bg(bg));
+    }
+
     pub fn fill_rect(&mut self, rect: Rect, cell: Cell) {
         let x_end = rect.right().min(self.width);
         let y_end = rect.bottom().min(self.height);
@@ -3238,6 +3292,47 @@ mod tests {
         let hidden = grid.get(2, 2).unwrap();
         assert_eq!(hidden.glyph, ' ');
         assert_eq!(hidden.fg, Color::BLACK);
+    }
+
+    #[test]
+    fn test_draw_scrollbar() {
+        let mut grid = Grid::new(5, 10);
+        grid.clear(Cell::new(' '));
+
+        // Draw a vertical scrollbar in column 4, from y=0 to y=9 (height 10)
+        grid.draw_scrollbar(
+            Rect::new(4, 0, 1, 10),
+            100, // total_items
+            20,  // visible_items
+            0,   // scroll_offset (top)
+            Color::WHITE,
+            Color::BLACK,
+        );
+
+        // Track should be drawn with '░'
+        assert_eq!(grid.get(4, 5).unwrap().glyph, '░');
+
+        // Since scroll_offset is 0, thumb should be at the top.
+        // thumb_height should be proportional: (20 / 100) * 10 = 2 cells.
+        assert_eq!(grid.get(4, 0).unwrap().glyph, '█');
+        assert_eq!(grid.get(4, 1).unwrap().glyph, '█');
+        assert_eq!(grid.get(4, 2).unwrap().glyph, '░');
+
+        // Draw with scroll offset at the bottom
+        grid.clear(Cell::new(' '));
+        grid.draw_scrollbar(
+            Rect::new(4, 0, 1, 10),
+            100, // total_items
+            20,  // visible_items
+            80,  // scroll_offset (bottom)
+            Color::WHITE,
+            Color::BLACK,
+        );
+
+        // Thumb should be at the bottom (y=8 and y=9)
+        assert_eq!(grid.get(4, 7).unwrap().glyph, '░');
+        assert_eq!(grid.get(4, 8).unwrap().glyph, '█');
+        assert_eq!(grid.get(4, 9).unwrap().glyph, '█');
     }
 }
 

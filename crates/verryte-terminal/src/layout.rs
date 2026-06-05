@@ -258,6 +258,68 @@ impl Layout {
     }
 }
 
+/// A 2D grid layout generator that partitions a [`Rect`] into rows and columns.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GridLayout {
+    rows: Vec<Constraint>,
+    cols: Vec<Constraint>,
+    margin: u16,
+}
+
+impl GridLayout {
+    pub fn new(rows: Vec<Constraint>, cols: Vec<Constraint>) -> Self {
+        Self {
+            rows,
+            cols,
+            margin: 0,
+        }
+    }
+
+    pub fn with_margin(mut self, margin: u16) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    /// Partitions the `target` Rect into a 2D matrix of sub-rects.
+    /// Returns a 2D vector where `result[row][col]` is the cell at that coordinate.
+    pub fn split(&self, target: Rect) -> Vec<Vec<Rect>> {
+        let target = target.inset(self.margin, self.margin);
+        if target.is_empty() {
+            return vec![vec![Rect::new(0, 0, 0, 0); self.cols.len()]; self.rows.len()];
+        }
+
+        let build_layout = |dir: LayoutDirection, constraints: &[Constraint]| {
+            let mut l = Layout {
+                direction: dir,
+                constraints: Vec::new(),
+                margin: 0,
+            };
+            for c in constraints {
+                match c {
+                    Constraint::Fixed(s) => l = l.add_fixed(*s),
+                    Constraint::Percent(p) => l = l.add_percent(*p),
+                    Constraint::Remaining => l = l.add_remaining(),
+                }
+            }
+            l
+        };
+
+        // First, partition vertically into rows
+        let row_layout = build_layout(LayoutDirection::Vertical, &self.rows);
+        let row_rects = row_layout.split(target);
+
+        let mut matrix = Vec::with_capacity(self.rows.len());
+        for row_rect in row_rects {
+            // Partition each row horizontally into columns
+            let col_layout = build_layout(LayoutDirection::Horizontal, &self.cols);
+            matrix.push(col_layout.split(row_rect));
+        }
+
+        matrix
+    }
+}
+
 /// Horizontal text alignment within a bounded width.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -361,5 +423,28 @@ mod tests {
     fn rect_area_computes_correctly() {
         assert_eq!(Rect::new(0, 0, 3, 4).area(), 12);
         assert_eq!(Rect::new(0, 0, 0, 5).area(), 0);
+    }
+
+    #[test]
+    fn test_grid_layout() {
+        let rows = vec![Constraint::Fixed(10), Constraint::Remaining];
+        let cols = vec![Constraint::Percent(50), Constraint::Percent(50)];
+        let grid = GridLayout::new(rows, cols);
+
+        let target = Rect::new(0, 0, 100, 30);
+        let cells = grid.split(target);
+
+        assert_eq!(cells.len(), 2); // 2 rows
+        assert_eq!(cells[0].len(), 2); // 2 columns in first row
+        assert_eq!(cells[1].len(), 2); // 2 columns in second row
+
+        // Check top-left cell dimensions
+        assert_eq!(cells[0][0], Rect::new(0, 0, 50, 10));
+        // Check top-right cell dimensions
+        assert_eq!(cells[0][1], Rect::new(50, 0, 50, 10));
+        // Check bottom-left cell dimensions (height = 30 - 10 = 20)
+        assert_eq!(cells[1][0], Rect::new(0, 10, 50, 20));
+        // Check bottom-right cell dimensions
+        assert_eq!(cells[1][1], Rect::new(50, 10, 50, 20));
     }
 }

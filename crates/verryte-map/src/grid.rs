@@ -2880,6 +2880,40 @@ impl<T> TileGrid<T> {
         (path, blocked)
     }
 
+    /// Casts a ray from `start` to `end` and calculates the total translucency factor (0.0 to 1.0) along the ray.
+    ///
+    /// The starting point is always included and starts with translucency 1.0.
+    /// Each subsequent tile's opacity (returned by `get_opacity`, between 0.0 and 1.0)
+    /// scales the remaining translucency: `translucency *= (1.0 - opacity)`.
+    /// If translucency drops below a threshold (e.g., 0.01) or goes out of bounds, the raycast stops.
+    pub fn raycast_translucency<F>(
+        &self,
+        start: Point,
+        end: Point,
+        mut get_opacity: F,
+    ) -> f32
+    where
+        F: FnMut(Point, &T) -> f32,
+    {
+        let mut translucency = 1.0;
+        for p in LineIter::new(start, end) {
+            if p == start {
+                continue;
+            }
+            if let Some(tile) = self.get(p) {
+                let opacity = get_opacity(p, tile).clamp(0.0, 1.0);
+                translucency *= 1.0 - opacity;
+                if translucency < 0.01 {
+                    return 0.0;
+                }
+            } else {
+                // Out of bounds is completely opaque
+                return 0.0;
+            }
+        }
+        translucency
+    }
+
     /// Flood-fills from a starting point, returning all connected passable points.
     ///
     /// Performs a breadth-first search using 4-way cardinal connectivity.
