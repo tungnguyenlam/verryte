@@ -25,8 +25,8 @@ pub use camera::Camera;
 pub use color::{BlendMode, Color};
 pub use dialogue::{DialogueBox, DialogueState, DialogueTheme};
 pub use grid::{
-    draw_sparkline, wrap_text, write_wrapped_text, Cell, CellAttrs, CellChange, Grid,
-    RichTextSegment,
+    draw_sparkline, wrap_text, write_wrapped_text, Cell, CellAttrs, CellChange, FowVisibility,
+    Grid, RichTextSegment,
 };
 pub use layer::{Layer, Layers};
 pub use layout::{Alignment, BorderStyle, Constraint, Layout, Rect};

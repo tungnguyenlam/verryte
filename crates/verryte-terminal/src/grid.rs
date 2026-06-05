@@ -722,6 +722,61 @@ impl Grid {
         }
     }
 
+    pub fn blit_blend(&mut self, other: &Grid, x: i32, y: i32, mode: crate::color::BlendMode) {
+        for (ox, oy, cell) in other.iter_cells() {
+            if cell.is_transparent() {
+                continue;
+            }
+            let tx = x + ox as i32;
+            let ty = y + oy as i32;
+            if tx >= 0 && ty >= 0 && (tx as u16) < self.width && (ty as u16) < self.height {
+                if let Some(target) = self.get_mut(tx as u16, ty as u16) {
+                    target.fg = target.fg.blend(cell.fg, mode);
+                    target.bg = target.bg.blend(cell.bg, mode);
+                    target.glyph = cell.glyph;
+                    target.attrs = cell.attrs;
+                }
+            }
+        }
+    }
+
+    pub fn blit_blend_region(
+        &mut self,
+        other: &Grid,
+        src: Rect,
+        dst_x: i32,
+        dst_y: i32,
+        mode: crate::color::BlendMode,
+    ) {
+        let clipped = src.intersect(Rect::new(0, 0, other.width, other.height));
+        if clipped.is_empty() {
+            return;
+        }
+        for sy in clipped.y..clipped.bottom() {
+            for sx in clipped.x..clipped.right() {
+                let dx = dst_x + (sx - clipped.x) as i32;
+                let dy = dst_y + (sy - clipped.y) as i32;
+                if dx < 0 || dy < 0 {
+                    continue;
+                }
+                let (dx, dy) = (dx as u16, dy as u16);
+                if dx >= self.width || dy >= self.height {
+                    continue;
+                }
+                let src_cell = other.get(sx, sy).copied().unwrap_or(Cell::EMPTY);
+                if src_cell.is_transparent() {
+                    continue;
+                }
+                if let Some(target) = self.get_mut(dx, dy) {
+                    target.fg = target.fg.blend(src_cell.fg, mode);
+                    target.bg = target.bg.blend(src_cell.bg, mode);
+                    target.glyph = src_cell.glyph;
+                    target.attrs = src_cell.attrs;
+                }
+            }
+        }
+    }
+
     pub fn tint(&mut self, color: Color, alpha: f32) {
         let alpha = alpha.clamp(0.0, 1.0);
         if alpha <= 0.0 {
@@ -730,6 +785,50 @@ impl Grid {
         for cell in &mut self.cells {
             cell.fg = cell.fg.blend_alpha(color, alpha * 0.5);
             cell.bg = cell.bg.blend_alpha(color, alpha);
+        }
+    }
+
+    /// Applies a Fog of War shader/mask to a region of the grid, blending cell foreground and background colors
+    /// toward a specified target color (e.g. Black) based on visibility.
+    ///
+    /// - `rect`: The rectangular region on the grid to apply the fog to.
+    /// - `darken_color`: The target color to blend towards for `Explored` cells.
+    /// - `explored_factor`: Blends colors toward `darken_color` by this ratio (e.g., 0.6).
+    /// - `hidden_color`: The color to replace/fill for `Hidden` cells.
+    /// - `get_visibility`: A closure mapping grid coordinates `(x, y)` to `FowVisibility`.
+    pub fn apply_fog_of_war<F>(
+        &mut self,
+        rect: Rect,
+        darken_color: Color,
+        explored_factor: f32,
+        hidden_color: Color,
+        mut get_visibility: F,
+    ) where
+        F: FnMut(u16, u16) -> FowVisibility,
+    {
+        let clipped = rect.intersect(Rect::new(0, 0, self.width, self.height));
+        if clipped.is_empty() {
+            return;
+        }
+        let explored_factor = explored_factor.clamp(0.0, 1.0);
+        for y in clipped.y..clipped.bottom() {
+            for x in clipped.x..clipped.right() {
+                let vis = get_visibility(x, y);
+                if let Some(cell) = self.get_mut(x, y) {
+                    match vis {
+                        FowVisibility::Visible => {}
+                        FowVisibility::Explored => {
+                            cell.fg = cell.fg.blend_alpha(darken_color, explored_factor);
+                            cell.bg = cell.bg.blend_alpha(darken_color, explored_factor);
+                        }
+                        FowVisibility::Hidden => {
+                            cell.glyph = ' ';
+                            cell.fg = hidden_color;
+                            cell.bg = hidden_color;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -3068,5 +3167,96 @@ mod tests {
         assert_eq!(grid.get(2, 0).unwrap().fg, end_fg);
         // Middle character should be exactly mid-way lerp
         assert_eq!(grid.get(1, 0).unwrap().fg, start_fg.lerp(end_fg, 0.5));
+    }
+
+    #[test]
+    fn test_grid_blit_blend() {
+        let mut base = Grid::new(1, 1);
+        base.put(
+            0,
+            0,
+            Cell::new('A')
+                .with_fg(Color(100, 100, 100))
+                .with_bg(Color(50, 50, 50)),
+        );
+
+        let mut overlay = Grid::new(1, 1);
+        overlay.put(
+            0,
+            0,
+            Cell::new('B')
+                .with_fg(Color(50, 50, 50))
+                .with_bg(Color(20, 20, 20)),
+        );
+
+        base.blit_blend(&overlay, 0, 0, crate::color::BlendMode::Add);
+        let cell = base.get(0, 0).unwrap();
+        assert_eq!(cell.glyph, 'B');
+        assert_eq!(cell.fg, Color(150, 150, 150));
+        assert_eq!(cell.bg, Color(70, 70, 70));
+    }
+
+    #[test]
+    fn test_apply_fog_of_war() {
+        let mut grid = Grid::new(3, 3);
+        for y in 0..3 {
+            for x in 0..3 {
+                grid.put(
+                    x,
+                    y,
+                    Cell::new('.')
+                        .with_fg(Color(100, 100, 100))
+                        .with_bg(Color(50, 50, 50)),
+                );
+            }
+        }
+
+        grid.apply_fog_of_war(
+            Rect::new(0, 0, 3, 3),
+            Color::BLACK,
+            0.5,
+            Color::BLACK,
+            |x, y| {
+                if x == 1 && y == 1 {
+                    FowVisibility::Visible
+                } else if x == 0 {
+                    FowVisibility::Explored
+                } else {
+                    FowVisibility::Hidden
+                }
+            },
+        );
+
+        let center = grid.get(1, 1).unwrap();
+        assert_eq!(center.glyph, '.');
+        assert_eq!(center.fg, Color(100, 100, 100));
+
+        let explored = grid.get(0, 0).unwrap();
+        assert_eq!(explored.glyph, '.');
+        assert_eq!(explored.fg, Color(50, 50, 50));
+
+        let hidden = grid.get(2, 2).unwrap();
+        assert_eq!(hidden.glyph, ' ');
+        assert_eq!(hidden.fg, Color::BLACK);
+    }
+}
+
+/// Visibility status of a cell under a fog of war.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum FowVisibility {
+    #[default]
+    Hidden,
+    Explored,
+    Visible,
+}
+
+impl std::fmt::Display for FowVisibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FowVisibility::Hidden => write!(f, "Hidden"),
+            FowVisibility::Explored => write!(f, "Explored"),
+            FowVisibility::Visible => write!(f, "Visible"),
+        }
     }
 }

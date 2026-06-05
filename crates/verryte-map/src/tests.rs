@@ -364,6 +364,33 @@ fn test_shortest_path_limits() {
 }
 
 #[test]
+fn test_shortest_path_multi_goal() {
+    let grid = TileGrid::from_vec(
+        5,
+        5,
+        vec![
+            '.', '.', '.', '.', '.', '.', '#', '#', '#', '.', '.', '.', '.', '#', '.', '.', '#',
+            '.', '#', '.', '.', '.', '.', '.', '.',
+        ],
+    )
+    .unwrap();
+
+    let start = Point::new(0, 0);
+    // Goals: (2, 2) is at distance 4, (4, 4) is at distance 8, (0, 1) is at distance 1.
+    let goals = vec![Point::new(2, 2), Point::new(4, 4), Point::new(0, 1)];
+
+    let path = grid
+        .shortest_path4_multi_goal(start, &goals, None, |_, &tile| tile == '.')
+        .unwrap();
+    assert_eq!(path.last(), Some(&Point::new(0, 1)));
+
+    let path8 = grid
+        .shortest_path8_multi_goal(start, &goals, None, |_, &tile| tile == '.')
+        .unwrap();
+    assert_eq!(path8.last(), Some(&Point::new(0, 1)));
+}
+
+#[test]
 fn test_shortest_path_weighted_avoids_mud() {
     let grid = TileGrid::from_vec(3, 3, vec!['.', 'M', '.', '.', '.', '.', '.', '.', '.']).unwrap();
 
@@ -1934,4 +1961,37 @@ fn test_dijkstra_map_flee_path() {
     let d0 = map.get(path[0]).unwrap();
     let d1 = map.get(path[1]).unwrap();
     assert!(d1 > d0);
+}
+
+#[test]
+fn test_compress_path_to_waypoints() {
+    let path = vec![
+        Point::new(0, 0),
+        Point::new(0, 1),
+        Point::new(0, 2),
+        Point::new(1, 2),
+        Point::new(2, 2),
+        Point::new(3, 3),
+        Point::new(4, 4),
+    ];
+    let compressed = compress_path_to_waypoints(&path);
+    assert_eq!(
+        compressed,
+        vec![
+            Point::new(0, 0),
+            Point::new(0, 2),
+            Point::new(2, 2),
+            Point::new(4, 4),
+        ]
+    );
+}
+
+#[test]
+fn test_path_to_directions() {
+    let path = vec![Point::new(0, 0), Point::new(0, 1), Point::new(1, 1)];
+    let directions = path_to_directions(&path).unwrap();
+    assert_eq!(directions, vec![Direction8::South, Direction8::East,]);
+
+    let invalid_path = vec![Point::new(0, 0), Point::new(2, 2)];
+    assert!(path_to_directions(&invalid_path).is_err());
 }

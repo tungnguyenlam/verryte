@@ -67,3 +67,52 @@ impl Iterator for LineIter {
         Some(point)
     }
 }
+
+/// Compress a full grid path of coordinates into a list of waypoints (start, end, and points where direction changes).
+pub fn compress_path_to_waypoints(path: &[Point]) -> Vec<Point> {
+    if path.len() <= 2 {
+        return path.to_vec();
+    }
+    let mut compressed = vec![path[0]];
+    for i in 1..path.len() - 1 {
+        let prev = path[i - 1];
+        let curr = path[i];
+        let next = path[i + 1];
+
+        let dx1 = curr.x - prev.x;
+        let dy1 = curr.y - prev.y;
+        let dx2 = next.x - curr.x;
+        let dy2 = next.y - curr.y;
+
+        // If the direction vector changes (cross product is non-zero, or sign/scale changes), curr is a waypoint
+        if dx1 * dy2 != dx2 * dy1
+            || (dx1.signum() != dx2.signum())
+            || (dy1.signum() != dy2.signum())
+        {
+            compressed.push(curr);
+        }
+    }
+    compressed.push(*path.last().unwrap());
+    compressed
+}
+
+/// Convert a coordinate path into a list of 8-directional moves.
+/// Returns an error if two consecutive points in the path are not adjacent.
+pub fn path_to_directions(path: &[Point]) -> Result<Vec<crate::Direction8>, &'static str> {
+    if path.len() < 2 {
+        return Ok(Vec::new());
+    }
+    let mut directions = Vec::with_capacity(path.len() - 1);
+    for window in path.windows(2) {
+        let from = window[0];
+        let to = window[1];
+        let dx = to.x - from.x;
+        let dy = to.y - from.y;
+        if dx.abs() > 1 || dy.abs() > 1 || (dx == 0 && dy == 0) {
+            return Err("Path points must be adjacent and not equal");
+        }
+        let dir = crate::Direction8::from_offset(dx, dy).ok_or("Invalid step direction")?;
+        directions.push(dir);
+    }
+    Ok(directions)
+}

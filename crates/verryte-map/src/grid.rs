@@ -402,6 +402,199 @@ impl<T> TileGrid<T> {
         None
     }
 
+    /// Find the shortest 8-directional path from `start` to the closest of the specified `goals` points,
+    /// with an optional maximum path cost limit.
+    ///
+    /// The heuristic is the minimum Chebyshev distance from the current node to any of the goals.
+    pub fn shortest_path8_multi_goal<F>(
+        &self,
+        start: Point,
+        goals: &[Point],
+        max_cost: Option<u32>,
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) || goals.is_empty() {
+            return None;
+        }
+
+        let valid_goals: Vec<Point> = goals
+            .iter()
+            .copied()
+            .filter(|&g| self.in_bounds(g))
+            .collect();
+        if valid_goals.is_empty() {
+            return None;
+        }
+
+        if valid_goals.contains(&start) {
+            return Some(vec![start]);
+        }
+
+        const CARDINAL_COST: u32 = 10;
+        const DIAGONAL_COST: u32 = 14;
+        let limit = max_cost.unwrap_or(u32::MAX);
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+
+        let min_h = valid_goals
+            .iter()
+            .map(|&g| start.chebyshev_distance(g) as u32 * CARDINAL_COST)
+            .min()
+            .unwrap();
+        frontier.push(std::cmp::Reverse((min_h, start)));
+
+        while let Some(std::cmp::Reverse((_f, current))) = frontier.pop() {
+            if valid_goals.contains(&current) {
+                let mut path = vec![current];
+                let mut step = current;
+                while step != start {
+                    step = came_from[&step];
+                    path.push(step);
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            let current_g = *g_score.get(&current).unwrap();
+            if current_g >= limit {
+                continue;
+            }
+
+            for direction in Direction8::ALL {
+                let neighbor = current.step8(direction);
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = if direction.is_cardinal() {
+                    CARDINAL_COST
+                } else {
+                    DIAGONAL_COST
+                };
+                let tentative_g = current_g + step_cost;
+                if tentative_g > limit {
+                    continue;
+                }
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current);
+                    g_score.insert(neighbor, tentative_g);
+                    let h = valid_goals
+                        .iter()
+                        .map(|&g| neighbor.chebyshev_distance(g) as u32 * CARDINAL_COST)
+                        .min()
+                        .unwrap();
+                    frontier.push(std::cmp::Reverse((tentative_g + h, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find the shortest cardinal path from `start` to the closest of the specified `goals` points,
+    /// with an optional maximum path cost limit.
+    ///
+    /// The heuristic is the minimum Manhattan distance from the current node to any of the goals.
+    pub fn shortest_path4_multi_goal<F>(
+        &self,
+        start: Point,
+        goals: &[Point],
+        max_cost: Option<u32>,
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) || goals.is_empty() {
+            return None;
+        }
+
+        let valid_goals: Vec<Point> = goals
+            .iter()
+            .copied()
+            .filter(|&g| self.in_bounds(g))
+            .collect();
+        if valid_goals.is_empty() {
+            return None;
+        }
+
+        if valid_goals.contains(&start) {
+            return Some(vec![start]);
+        }
+
+        const STEP_COST: u32 = 10;
+        let limit = max_cost.unwrap_or(u32::MAX);
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+
+        let min_h = valid_goals
+            .iter()
+            .map(|&g| start.manhattan_distance(g) as u32 * STEP_COST)
+            .min()
+            .unwrap();
+        frontier.push(std::cmp::Reverse((min_h, start)));
+
+        while let Some(std::cmp::Reverse((_f, current))) = frontier.pop() {
+            if valid_goals.contains(&current) {
+                let mut path = vec![current];
+                let mut step = current;
+                while step != start {
+                    step = came_from[&step];
+                    path.push(step);
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            let current_g = *g_score.get(&current).unwrap();
+            if current_g >= limit {
+                continue;
+            }
+
+            for neighbor in current.neighbors4() {
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let tentative_g = current_g + STEP_COST;
+                if tentative_g > limit {
+                    continue;
+                }
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current);
+                    g_score.insert(neighbor, tentative_g);
+                    let h = valid_goals
+                        .iter()
+                        .map(|&g| neighbor.manhattan_distance(g) as u32 * STEP_COST)
+                        .min()
+                        .unwrap();
+                    frontier.push(std::cmp::Reverse((tentative_g + h, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn get(&self, point: Point) -> Option<&T> {
         self.index(point).map(|i| &self.tiles[i])
     }

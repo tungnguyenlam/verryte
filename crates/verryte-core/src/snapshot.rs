@@ -332,6 +332,82 @@ impl WorldRegistry {
     }
 }
 
+/// A resource that manages a stack of `WorldSnapshot`s for undo/redo capability.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct WorldCheckpointStack {
+    undo_stack: Vec<WorldSnapshot>,
+    redo_stack: Vec<WorldSnapshot>,
+    max_checkpoints: usize,
+}
+
+impl WorldCheckpointStack {
+    /// Create a new checkpoint stack with a limit on history size.
+    pub fn new(max_checkpoints: usize) -> Self {
+        Self {
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            max_checkpoints,
+        }
+    }
+
+    /// Push a new checkpoint, clearing the redo history.
+    pub fn push_checkpoint(&mut self, snapshot: WorldSnapshot) {
+        self.undo_stack.push(snapshot);
+        if self.undo_stack.len() > self.max_checkpoints {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    /// Undo a state transition. Takes the current state snapshot to push onto the redo stack.
+    /// Returns the previous state snapshot if undo was successful.
+    pub fn undo(&mut self, current: WorldSnapshot) -> Option<WorldSnapshot> {
+        let prev = self.undo_stack.pop()?;
+        self.redo_stack.push(current);
+        if self.redo_stack.len() > self.max_checkpoints {
+            self.redo_stack.remove(0);
+        }
+        Some(prev)
+    }
+
+    /// Redo a previously undone state transition. Takes the current state snapshot to push onto the undo stack.
+    /// Returns the next state snapshot if redo was successful.
+    pub fn redo(&mut self, current: WorldSnapshot) -> Option<WorldSnapshot> {
+        let next = self.redo_stack.pop()?;
+        self.undo_stack.push(current);
+        if self.undo_stack.len() > self.max_checkpoints {
+            self.undo_stack.remove(0);
+        }
+        Some(next)
+    }
+
+    /// Clear all undo and redo history.
+    pub fn clear(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+
+    /// Check if undo is available.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    /// Check if redo is available.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    /// Get the count of available undo checkpoints.
+    pub fn undo_len(&self) -> usize {
+        self.undo_stack.len()
+    }
+
+    /// Get the count of available redo checkpoints.
+    pub fn redo_len(&self) -> usize {
+        self.redo_stack.len()
+    }
+}
+
 #[cfg(all(test, feature = "serde"))]
 mod tests {
     use super::*;
@@ -611,5 +687,47 @@ mod tests {
             target.resource::<GlobalConfig>(),
             Some(&GlobalConfig { difficulty: 2 })
         );
+    }
+
+    #[test]
+    fn test_world_checkpoint_stack() {
+        let mut stack = WorldCheckpointStack::new(2);
+        let mut snap1 = WorldSnapshot::default();
+        snap1
+            .resources
+            .insert("val".to_string(), serde_json::Value::Number(1.into()));
+        let mut snap2 = WorldSnapshot::default();
+        snap2
+            .resources
+            .insert("val".to_string(), serde_json::Value::Number(2.into()));
+        let mut snap3 = WorldSnapshot::default();
+        snap3
+            .resources
+            .insert("val".to_string(), serde_json::Value::Number(3.into()));
+
+        assert!(!stack.can_undo());
+        assert!(!stack.can_redo());
+
+        stack.push_checkpoint(snap1.clone());
+        assert!(stack.can_undo());
+        assert_eq!(stack.undo_len(), 1);
+
+        stack.push_checkpoint(snap2.clone());
+        assert_eq!(stack.undo_len(), 2);
+
+        // Test capacity limit of 2: pushing snap3 should drop snap1
+        stack.push_checkpoint(snap3.clone());
+        assert_eq!(stack.undo_len(), 2);
+
+        let current = WorldSnapshot::default();
+        let undone = stack.undo(current.clone()).unwrap();
+        // We popped snap3
+        assert_eq!(undone.resources.get("val").unwrap().as_i64().unwrap(), 3);
+        assert_eq!(stack.redo_len(), 1);
+
+        let redone = stack.redo(current.clone()).unwrap();
+        assert_eq!(redone.resources, current.resources);
+        // We popped current (from redo stack)
+        assert_eq!(stack.undo_len(), 2);
     }
 }

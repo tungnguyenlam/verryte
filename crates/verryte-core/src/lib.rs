@@ -44,7 +44,7 @@ pub use log::MessageLog;
 pub use rng::Rng;
 pub use schedule::{NamedSystem, Schedule, System};
 #[cfg(feature = "serde")]
-pub use snapshot::{EntitySnapshot, WorldRegistry, WorldSnapshot};
+pub use snapshot::{EntitySnapshot, WorldCheckpointStack, WorldRegistry, WorldSnapshot};
 pub use state::{State, StateTransitionEvent};
 pub use tag::Tag;
 pub use world::{

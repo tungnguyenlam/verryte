@@ -24,7 +24,7 @@ pub use direction::{Direction, Direction8};
 pub use error::GridError;
 pub use grid::TileGrid;
 pub use grid3::TileGrid3;
-pub use line::{line_between, LineIter};
+pub use line::{compress_path_to_waypoints, line_between, path_to_directions, LineIter};
 pub use point::{Point, Point3};
 pub use rect::Rect;
 pub use size::Size;
