@@ -239,8 +239,8 @@ mod tests {
         assert_eq!(state.turn, 2);
         assert_eq!(state.phase, TurnPhase::Player);
 
-        // Kael AP should be replenished to max_ap (3)
-        assert_eq!(game.world.get::<Stats>(warrior).unwrap().ap, 3);
+        // Kael AP should be replenished to max_ap (3) + 1 SwiftFoot bonus = 4 AP
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().ap, 4);
     }
 
     #[test]
@@ -1381,7 +1381,7 @@ mod tests {
                     Tile::Wall => has_wall = true,
                     Tile::Water => has_water = true,
                     Tile::Lava => has_lava = true,
-                    Tile::Ice | Tile::Stairs => {}
+                    Tile::Ice | Tile::Stairs | Tile::Mud => {}
                 }
             }
         }
@@ -2625,5 +2625,219 @@ mod tests {
             .iter()
             .any(|(_, class, team)| **class == CharacterClass::Boss && **team == Team::Enemy);
         assert!(enemy_boss_exists, "Floor 2 must contain the boss");
+    }
+
+    #[test]
+    fn test_character_passive_traits() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, &c)| c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let lyra = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, &c)| c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mira = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, &c)| c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // 1. Warrior SwiftFoot AP replenishment (+1 bonus AP on turn start)
+        let char_trait = game
+            .world
+            .get::<crate::components::CharacterTrait>(kael)
+            .unwrap();
+        assert_eq!(
+            char_trait.trait_type,
+            crate::components::HeroTrait::SwiftFoot
+        );
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.phase = TurnPhase::Enemy;
+            let trans = game
+                .world
+                .resource_mut::<crate::components::TurnTransition>()
+                .unwrap();
+            trans.request_end = true;
+        }
+        crate::systems::turn_management_system(&mut game.world);
+        let stats = game.world.get::<Stats>(kael).unwrap();
+        assert_eq!(stats.ap, 4); // 3 max_ap + 1 bonus = 4 AP
+
+        // 2. Lyra StormChaser lightning reaction boost (+10 extra Shatter damage)
+        let target = game.world.spawn_character(
+            Position::new(10, 10),
+            Team::Enemy,
+            CharacterClass::ShadowStalker,
+        );
+        game.world.insert(
+            target,
+            crate::components::ElementalStatus::Ice { duration: 3 },
+        );
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(lyra);
+        }
+        let initial_hp = game.world.get::<Stats>(target).unwrap().hp;
+        game.apply_elemental_status(
+            target,
+            crate::components::ElementalStatus::Lightning { duration: 3 },
+        );
+        let final_hp = game.world.get::<Stats>(target).unwrap().hp;
+        assert_eq!(initial_hp - final_hp, 40); // 30 base + 10 StormChaser = 40 damage
+
+        // 3. Mira PurifyingTouch heal cleanse (50% chance to cleanse target negative status)
+        *game.world.get_mut::<Position>(mira).unwrap() = Position::new(4, 5);
+        game.world.insert(
+            kael,
+            crate::components::ElementalStatus::Ice { duration: 3 },
+        );
+        game.world
+            .insert(kael, crate::components::Rooted { duration: 3 });
+        let mut cleansed = false;
+        for _ in 0..20 {
+            if let Some(stats) = game.world.get_mut::<Stats>(kael) {
+                stats.hp = 50;
+            }
+            let kael_pos = *game.world.get::<Position>(kael).unwrap();
+            {
+                let state = game.world.resource_mut::<GameState>().unwrap();
+                state.selected_entity = Some(mira);
+                state.cursor = kael_pos;
+                state.targeting = crate::components::TargetingMode::Skill1;
+            }
+            {
+                let stats = game.world.get_mut::<Stats>(mira).unwrap();
+                stats.ap = 2;
+            }
+            game.apply_action(Action::Confirm, ActionSource::Terminal);
+            let status = game
+                .world
+                .get::<crate::components::ElementalStatus>(kael)
+                .unwrap();
+            if *status == crate::components::ElementalStatus::None
+                && game.world.get::<crate::components::Rooted>(kael).is_none()
+            {
+                cleansed = true;
+                break;
+            }
+        }
+        assert!(
+            cleansed,
+            "Mira's Purifying Touch should have cleansed the target negative status"
+        );
+    }
+
+    #[test]
+    fn test_new_crafting_recipes() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, &c)| c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(kael);
+        }
+
+        // Test Divine Remedy: Cleanse Remedy + Mega Potion -> Divine Remedy
+        let cleanse = game
+            .world
+            .spawn_item("Cleanse Remedy", crate::components::ItemEffect::Cleanse);
+        let mega = game
+            .world
+            .spawn_item("Mega Potion", crate::components::ItemEffect::Heal(75));
+        {
+            let inv = game.world.get_mut::<Inventory>(kael).unwrap();
+            inv.items.push(cleanse); // index 3
+            inv.items.push(mega); // index 4
+        }
+        game.apply_action(Action::CraftItem(3, 4), ActionSource::Terminal);
+
+        let inv = game.world.get::<Inventory>(kael).unwrap();
+        let has_divine = inv.items.iter().any(|&item_ent| {
+            game.world
+                .get::<crate::components::Item>(item_ent)
+                .is_some_and(|item| item.name == "Divine Remedy")
+        });
+        assert!(has_divine);
+
+        // Test Elixir of the Gods: Mega Potion + Mega Energy Elixir -> Elixir of the Gods
+        let mega_pot = game
+            .world
+            .spawn_item("Mega Potion", crate::components::ItemEffect::Heal(75));
+        let mega_elixir = game.world.spawn_item(
+            "Mega Energy Elixir",
+            crate::components::ItemEffect::ReplenishAp(4),
+        );
+        {
+            let inv = game.world.get_mut::<Inventory>(kael).unwrap();
+            inv.items.push(mega_pot); // index 4
+            inv.items.push(mega_elixir); // index 5
+        }
+        game.apply_action(Action::CraftItem(4, 5), ActionSource::Terminal);
+
+        let inv = game.world.get::<Inventory>(kael).unwrap();
+        let has_gods = inv.items.iter().any(|&item_ent| {
+            game.world
+                .get::<crate::components::Item>(item_ent)
+                .is_some_and(|item| item.name == "Elixir of the Gods")
+        });
+        assert!(has_gods);
+    }
+
+    #[test]
+    fn test_mud_terrain_movement() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, &c)| c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Spawn mud at Kael's east neighbor
+        let start_pos = *game.world.get::<Position>(kael).unwrap();
+        let mud_pos = Position::new(start_pos.x + 1, start_pos.y);
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(mud_pos, Tile::Mud);
+        }
+
+        // Verify Mud movement cost is 3
+        let map = game.world.resource::<TacticalMap>().unwrap();
+        assert_eq!(map.movement_cost(mud_pos), 3);
+
+        // Position cursor at mud tile and confirm movement when Kael has 3 AP
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(kael);
+            state.cursor = mud_pos;
+        }
+        {
+            let stats = game.world.get_mut::<Stats>(kael).unwrap();
+            stats.ap = 3;
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Kael should have moved to mud tile and spent 3 AP
+        let final_pos = *game.world.get::<Position>(kael).unwrap();
+        assert_eq!(final_pos, mud_pos);
+        let final_stats = game.world.get::<Stats>(kael).unwrap();
+        assert_eq!(final_stats.ap, 0);
     }
 }

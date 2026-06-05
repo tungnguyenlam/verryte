@@ -195,6 +195,45 @@ impl DijkstraMap {
         path
     }
 
+    /// Returns a path of up to `max_steps` that flees away from sources (maximizing distance).
+    ///
+    /// The path starts with `from`. Each step moves to the neighbor with the highest distance.
+    /// It stops if it cannot move to a tile with a strictly higher distance, or if no neighbors are reachable.
+    pub fn flee_path(&self, from: Point, max_steps: usize, diagonal: bool) -> Vec<Point> {
+        let mut path = Vec::new();
+        let mut current = from;
+
+        if self.get(current).is_none() {
+            return path;
+        }
+
+        path.push(current);
+
+        while path.len() <= max_steps {
+            let current_dist = match self.get(current) {
+                Some(d) => d,
+                None => break,
+            };
+
+            if let Some(next) = self.flee_direction(current, diagonal) {
+                if let Some(next_dist) = self.get(next) {
+                    if next_dist <= current_dist {
+                        // Stop if we cannot increase our distance from the threat
+                        break;
+                    }
+                    path.push(next);
+                    current = next;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        path
+    }
+
     /// Find all points in the Dijkstra map that have a distance <= max_range.
     pub fn find_all_within_range(&self, max_range: u32) -> Vec<(Point, u32)> {
         let mut results = Vec::new();

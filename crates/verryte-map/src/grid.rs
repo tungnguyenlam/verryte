@@ -2575,6 +2575,120 @@ impl<T> TileGrid<T> {
         }
         visited
     }
+
+    /// Find the shortest path through a sequence of waypoints using cardinal movement.
+    ///
+    /// The input waypoints must have at least 2 points (representing start and goal).
+    /// Returns the consolidated path visiting all waypoints in order, or None if any segment is unreachable.
+    pub fn shortest_path_via_waypoints4<F>(
+        &self,
+        waypoints: &[Point],
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if waypoints.len() < 2 {
+            return None;
+        }
+        let mut full_path = Vec::new();
+        for i in 0..waypoints.len() - 1 {
+            let start = waypoints[i];
+            let goal = waypoints[i + 1];
+            let segment = self.shortest_path4(start, goal, &passable)?;
+            if i > 0 {
+                full_path.extend(segment.into_iter().skip(1));
+            } else {
+                full_path.extend(segment);
+            }
+        }
+        Some(full_path)
+    }
+
+    /// Find the shortest path through a sequence of waypoints using 8-directional movement.
+    ///
+    /// The input waypoints must have at least 2 points (representing start and goal).
+    /// Returns the consolidated path visiting all waypoints in order, or None if any segment is unreachable.
+    pub fn shortest_path_via_waypoints8<F>(
+        &self,
+        waypoints: &[Point],
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if waypoints.len() < 2 {
+            return None;
+        }
+        let mut full_path = Vec::new();
+        for i in 0..waypoints.len() - 1 {
+            let start = waypoints[i];
+            let goal = waypoints[i + 1];
+            let segment = self.shortest_path8(start, goal, &passable)?;
+            if i > 0 {
+                full_path.extend(segment.into_iter().skip(1));
+            } else {
+                full_path.extend(segment);
+            }
+        }
+        Some(full_path)
+    }
+
+    /// Find the shortest path through a sequence of waypoints using weighted cardinal movement.
+    pub fn shortest_path_via_waypoints4_weighted<F, C>(
+        &self,
+        waypoints: &[Point],
+        passable: F,
+        cost: C,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+    {
+        if waypoints.len() < 2 {
+            return None;
+        }
+        let mut full_path = Vec::new();
+        for i in 0..waypoints.len() - 1 {
+            let start = waypoints[i];
+            let goal = waypoints[i + 1];
+            let segment = self.shortest_path4_weighted(start, goal, &passable, &cost)?;
+            if i > 0 {
+                full_path.extend(segment.into_iter().skip(1));
+            } else {
+                full_path.extend(segment);
+            }
+        }
+        Some(full_path)
+    }
+
+    /// Find the shortest path through a sequence of waypoints using weighted 8-directional movement.
+    pub fn shortest_path_via_waypoints8_weighted<F, C>(
+        &self,
+        waypoints: &[Point],
+        passable: F,
+        cost: C,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+        C: Fn(Point, Point, &T) -> u32,
+    {
+        if waypoints.len() < 2 {
+            return None;
+        }
+        let mut full_path = Vec::new();
+        for i in 0..waypoints.len() - 1 {
+            let start = waypoints[i];
+            let goal = waypoints[i + 1];
+            let segment = self.shortest_path8_weighted(start, goal, &passable, &cost)?;
+            if i > 0 {
+                full_path.extend(segment.into_iter().skip(1));
+            } else {
+                full_path.extend(segment);
+            }
+        }
+        Some(full_path)
+    }
 }
 
 impl<T> Index<Point> for TileGrid<T> {

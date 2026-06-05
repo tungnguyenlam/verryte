@@ -1852,3 +1852,42 @@ fn test_dijkstra_map_to_ascii_string() {
 234";
     assert_eq!(ascii, expected);
 }
+
+#[test]
+fn test_shortest_path_via_waypoints() {
+    let grid = TileGrid::new(5, 5, '.');
+
+    // Direct path from (0,0) -> (0,2) -> (2,2)
+    let waypoints = vec![Point::new(0, 0), Point::new(0, 2), Point::new(2, 2)];
+    let path = grid
+        .shortest_path_via_waypoints4(&waypoints, |_, _| true)
+        .unwrap();
+
+    // (0,0), (0,1), (0,2), (1,2), (2,2) -> length 5
+    assert_eq!(path.len(), 5);
+    assert_eq!(path[0], Point::new(0, 0));
+    assert_eq!(path[2], Point::new(0, 2));
+    assert_eq!(path[4], Point::new(2, 2));
+
+    // Weighted waypoints path
+    let path_w = grid
+        .shortest_path_via_waypoints4_weighted(&waypoints, |_, _| true, |_, _, _| 1u32)
+        .unwrap();
+    assert_eq!(path_w.len(), 5);
+}
+
+#[test]
+fn test_dijkstra_map_flee_path() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(5, 5, &[Point::new(2, 2)], passable, false);
+
+    // Fleeing from center (2,2) starting at (2,1)
+    // Distance at (2,1) is 1. Fleeing should go to (2,0) or (1,1) etc.
+    let path = map.flee_path(Point::new(2, 1), 2, false);
+    assert!(path.len() > 1);
+    assert_eq!(path[0], Point::new(2, 1));
+    // Verify distance increases
+    let d0 = map.get(path[0]).unwrap();
+    let d1 = map.get(path[1]).unwrap();
+    assert!(d1 > d0);
+}

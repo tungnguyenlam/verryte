@@ -3299,3 +3299,27 @@ runner that the shield is announced.
 **Gotchas.** Re-borrowing internal references when accessing state resources mutably inside `apply_state_transitions` required careful ownership scoping to satisfy Rust borrow checker constraints.
 
 **Follow-ups.** None. All 171 map tests, 143 input tests, 215 core tests, and 166 terminal tests pass cleanly, with clippy fully clean.
+
+## 2026-06-05 - autonomous improvements: pathfinding waypoints, Dijkstra fleeing, grid overlays, hero traits, mud terrain, advanced crafting
+
+**Goal.** Implement at least 5 meaningful improvements across the engine crates and the tactical RPG prototype, fixing existing borrow checker and non-exhaustive pattern match errors, verifying with tests/clippy/formatting, and updating documentation.
+
+**Changes.**
+- `crates/verryte-map/src/grid.rs` - Added waypoint-based grid pathfinding (`shortest_path_via_waypoints4` / `8` and weighted counterparts) with tests.
+- `crates/verryte-map/src/dijkstra.rs` - Added Dijkstra Map flee path generator (`flee_path`) with tests.
+- `crates/verryte-terminal/src/grid.rs` - Added grid overlay rendering helpers (`draw_crosshair`, `draw_diagonal_crosshair`, `draw_grid_pattern`) with tests.
+- `prototype/wuthering-terminal/src/components.rs` - Added `CharacterTrait` and `HeroTrait` components.
+- `prototype/wuthering-terminal/src/game.rs` - Added passive trait processing, item effect `CleanseAndHeal(i32)`, item recipes `Divine Remedy` and `Elixir of the Gods`.
+- `prototype/wuthering-terminal/src/spawn.rs` - Assigned passive traits to hero characters (Kael: SwiftFoot, Lyra: StormChaser, Mira: PurifyingTouch) on spawn.
+- `prototype/wuthering-terminal/src/map.rs` - Added `Tile::Mud` terrain with 3 AP movement cost.
+- `prototype/wuthering-terminal/src/systems.rs` - Updated turn systems to apply passive traits and handle mud VFX/pathfinding properly.
+- `prototype/wuthering-terminal/src/ui.rs` - Added color/character definitions for Mud rendering.
+- `prototype/wuthering-terminal/src/lib.rs` - Added comprehensive unit tests for mud terrain movement, character passive traits, new crafting recipes, and resolved borrow checker / compile errors.
+
+**Reasoning.** Waypoint-based pathfinding, Dijkstra flee mapping, and grid overlays are reusable primitives that provide value to any tactical terminal game. Hero traits, mud tiles with AP costs, and advanced item crafting showcase modular extension of the prototype systems.
+
+**Assumptions.** We assume hero passive traits are initialized once upon spawn and queried on player turn start or during combat resolution. Mud AP costs apply when moving into mud tiles.
+
+**Gotchas.** Borrow checker errors arose due to overlapping borrows of `world` when querying traits and mutably editing stats or game state. These were resolved by retrieving immutable values/positions into local variables first before mutably borrowing.
+
+**Follow-ups.** None. All workspace tests, formatting, and clippy compile check successfully.

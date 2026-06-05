@@ -2045,6 +2045,106 @@ impl Grid {
         }
         Ok(lines)
     }
+
+    /// Draws a crosshair (+ shape) centered at `(cx, cy)` extending up to `radius` in the cardinal directions.
+    pub fn draw_crosshair(&mut self, cx: i32, cy: i32, radius: u16, cell: Cell) {
+        if radius == 0 {
+            if cx >= 0 && cx < self.width as i32 && cy >= 0 && cy < self.height as i32 {
+                self.put(cx as u16, cy as u16, cell);
+            }
+            return;
+        }
+
+        // Draw center
+        if cx >= 0 && cx < self.width as i32 && cy >= 0 && cy < self.height as i32 {
+            self.put(cx as u16, cy as u16, cell);
+        }
+
+        // Draw arms
+        for i in 1..=radius {
+            let r = i as i32;
+            // North
+            if cy - r >= 0 && cy - r < self.height as i32 && cx >= 0 && cx < self.width as i32 {
+                self.put(cx as u16, (cy - r) as u16, cell);
+            }
+            // South
+            if cy + r >= 0 && cy + r < self.height as i32 && cx >= 0 && cx < self.width as i32 {
+                self.put(cx as u16, (cy + r) as u16, cell);
+            }
+            // West
+            if cx - r >= 0 && cx - r < self.width as i32 && cy >= 0 && cy < self.height as i32 {
+                self.put((cx - r) as u16, cy as u16, cell);
+            }
+            // East
+            if cx + r >= 0 && cx + r < self.width as i32 && cy >= 0 && cy < self.height as i32 {
+                self.put((cx + r) as u16, cy as u16, cell);
+            }
+        }
+    }
+
+    /// Draws a diagonal crosshair (X shape) centered at `(cx, cy)` extending up to `radius` in the diagonal directions.
+    pub fn draw_diagonal_crosshair(&mut self, cx: i32, cy: i32, radius: u16, cell: Cell) {
+        if radius == 0 {
+            if cx >= 0 && cx < self.width as i32 && cy >= 0 && cy < self.height as i32 {
+                self.put(cx as u16, cy as u16, cell);
+            }
+            return;
+        }
+
+        // Draw center
+        if cx >= 0 && cx < self.width as i32 && cy >= 0 && cy < self.height as i32 {
+            self.put(cx as u16, cy as u16, cell);
+        }
+
+        // Draw arms
+        for i in 1..=radius {
+            let r = i as i32;
+            // NW
+            if cx - r >= 0
+                && cx - r < self.width as i32
+                && cy - r >= 0
+                && cy - r < self.height as i32
+            {
+                self.put((cx - r) as u16, (cy - r) as u16, cell);
+            }
+            // NE
+            if cx + r >= 0
+                && cx + r < self.width as i32
+                && cy - r >= 0
+                && cy - r < self.height as i32
+            {
+                self.put((cx + r) as u16, (cy - r) as u16, cell);
+            }
+            // SW
+            if cx - r >= 0
+                && cx - r < self.width as i32
+                && cy + r >= 0
+                && cy + r < self.height as i32
+            {
+                self.put((cx - r) as u16, (cy + r) as u16, cell);
+            }
+            // SE
+            if cx + r >= 0
+                && cx + r < self.width as i32
+                && cy + r >= 0
+                && cy + r < self.height as i32
+            {
+                self.put((cx + r) as u16, (cy + r) as u16, cell);
+            }
+        }
+    }
+
+    /// Draws a regular grid pattern of the given cell at intervals of `interval_x` and `interval_y`.
+    pub fn draw_grid_pattern(&mut self, interval_x: u16, interval_y: u16, cell: Cell) {
+        if interval_x == 0 || interval_y == 0 {
+            return;
+        }
+        for y in (0..self.height).step_by(interval_y as usize) {
+            for x in (0..self.width).step_by(interval_x as usize) {
+                self.put(x, y, cell);
+            }
+        }
+    }
 }
 
 pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
@@ -2887,5 +2987,39 @@ mod tests {
         assert_eq!(rot270.get(1, 0).unwrap().glyph, '6');
         assert_eq!(rot270.get(0, 2).unwrap().glyph, '1');
         assert_eq!(rot270.get(1, 2).unwrap().glyph, '4');
+    }
+
+    #[test]
+    fn test_grid_overlays() {
+        let mut grid = Grid::new(5, 5);
+        let cell = Cell::new('+');
+
+        // Draw crosshair at (2,2) with radius 1
+        grid.draw_crosshair(2, 2, 1, cell);
+        assert_eq!(grid.get(2, 2).unwrap().glyph, '+');
+        assert_eq!(grid.get(2, 1).unwrap().glyph, '+'); // North
+        assert_eq!(grid.get(2, 3).unwrap().glyph, '+'); // South
+        assert_eq!(grid.get(1, 2).unwrap().glyph, '+'); // West
+        assert_eq!(grid.get(3, 2).unwrap().glyph, '+'); // East
+        assert_eq!(grid.get(1, 1).unwrap().glyph, ' '); // Diagonal should be empty
+
+        // Draw diagonal crosshair at (2,2) with radius 1 and char 'x'
+        let diag_cell = Cell::new('x');
+        grid.draw_diagonal_crosshair(2, 2, 1, diag_cell);
+        assert_eq!(grid.get(2, 2).unwrap().glyph, 'x'); // Center updated
+        assert_eq!(grid.get(1, 1).unwrap().glyph, 'x'); // NW
+        assert_eq!(grid.get(3, 1).unwrap().glyph, 'x'); // NE
+        assert_eq!(grid.get(1, 3).unwrap().glyph, 'x'); // SW
+        assert_eq!(grid.get(3, 3).unwrap().glyph, 'x'); // SE
+        assert_eq!(grid.get(2, 1).unwrap().glyph, '+'); // Cardinal preserved
+
+        // Draw grid pattern with interval 2
+        let mut grid2 = Grid::new(5, 5);
+        grid2.draw_grid_pattern(2, 2, Cell::new('.'));
+        assert_eq!(grid2.get(0, 0).unwrap().glyph, '.');
+        assert_eq!(grid2.get(2, 0).unwrap().glyph, '.');
+        assert_eq!(grid2.get(4, 0).unwrap().glyph, '.');
+        assert_eq!(grid2.get(0, 2).unwrap().glyph, '.');
+        assert_eq!(grid2.get(1, 1).unwrap().glyph, ' ');
     }
 }

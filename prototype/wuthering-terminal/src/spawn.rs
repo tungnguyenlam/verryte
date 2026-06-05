@@ -101,14 +101,33 @@ impl Spawner for World {
             },
         };
 
-        self.builder()
+        let trait_opt = match class {
+            CharacterClass::Warrior => Some(crate::components::CharacterTrait {
+                trait_type: crate::components::HeroTrait::SwiftFoot,
+            }),
+            CharacterClass::Mage => Some(crate::components::CharacterTrait {
+                trait_type: crate::components::HeroTrait::StormChaser,
+            }),
+            CharacterClass::Healer => Some(crate::components::CharacterTrait {
+                trait_type: crate::components::HeroTrait::PurifyingTouch,
+            }),
+            _ => None,
+        };
+
+        let mut builder = self
+            .builder()
             .with(pos)
             .with(team)
             .with(class)
             .with(stats)
             .with(ElementalStatus::None)
-            .with(Inventory::default())
-            .build()
+            .with(Inventory::default());
+
+        if let Some(t) = trait_opt {
+            builder = builder.with(t);
+        }
+
+        builder.build()
     }
 
     fn spawn_item(&mut self, name: &str, effect: ItemEffect) -> Entity {

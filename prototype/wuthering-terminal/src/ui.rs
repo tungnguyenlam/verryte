@@ -173,6 +173,7 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         Tile::Lava => "Lava",
         Tile::Ice => "Ice",
         Tile::Stairs => "Stairs",
+        Tile::Mud => "Mud",
     };
 
     let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
@@ -400,6 +401,9 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
                         crate::components::ItemEffect::Combined(heal, ap) => {
                             format!("(+{} HP, +{} AP)", heal, ap)
                         }
+                        crate::components::ItemEffect::CleanseAndHeal(v) => {
+                            format!("(Cleanse, +{} HP)", v)
+                        }
                     };
                     grid.write_str(panel_rect.x + 25, y, &effect_str, Color::GREY, panel_bg);
                 }
@@ -489,6 +493,7 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
                 }
                 Tile::Ice => ('-', Color(150, 220, 255)),
                 Tile::Stairs => ('>', Color(255, 215, 0)),
+                Tile::Mud => ('=', Color(100, 70, 40)),
             };
             grid.put(
                 inner_x + tx,

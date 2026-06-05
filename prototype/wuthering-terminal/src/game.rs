@@ -678,11 +678,12 @@ impl Game {
             |pt, tile| {
                 matches!(
                     tile,
-                    Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice | Tile::Stairs
+                    Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice | Tile::Stairs | Tile::Mud
                 ) && !occupied.contains(&pt)
             },
             |_from, _to, tile| match tile {
                 Tile::Water | Tile::Lava => 2,
+                Tile::Mud => 3,
                 _ => 1,
             },
         )
@@ -1529,6 +1530,37 @@ impl Game {
                         "Healed {} for {} HP! (HP: {})",
                         target_name, value, final_hp
                     ));
+
+                    let mut cleansed = false;
+                    if self
+                        .world
+                        .get::<crate::components::CharacterTrait>(caster)
+                        .is_some_and(|t| {
+                            t.trait_type == crate::components::HeroTrait::PurifyingTouch
+                        })
+                    {
+                        let roll = {
+                            let rng = self.world.resource_mut::<Rng>().unwrap();
+                            rng.next_u32(100)
+                        };
+                        if roll < 50 {
+                            cleansed = true;
+                            self.world
+                                .insert(te, crate::components::ElementalStatus::None);
+                            self.world.remove::<crate::components::Rooted>(te);
+                            self.world.remove::<crate::components::Stunned>(te);
+                        }
+                    }
+
+                    if cleansed {
+                        self.log(format!(
+                            "Mira's Purifying Touch cleansed negative statuses from {}!",
+                            target_name
+                        ));
+                        self.vfx_mut()
+                            .particles
+                            .extend(verryte_terminal::vfx::emit_bloom(cx, cy, 12));
+                    }
                     self.vfx_mut()
                         .floating_texts
                         .push(verryte_terminal::vfx::FloatingText::new(
@@ -1777,6 +1809,19 @@ impl Game {
 
         let target_name = Self::get_class_name(target_class);
 
+        let mut is_storm_chaser = false;
+        if let Some(state) = self.world.resource::<crate::components::GameState>() {
+            if let Some(active_hero) = state.selected_entity {
+                if self
+                    .world
+                    .get::<crate::components::CharacterTrait>(active_hero)
+                    .is_some_and(|t| t.trait_type == crate::components::HeroTrait::StormChaser)
+                {
+                    is_storm_chaser = true;
+                }
+            }
+        }
+
         match (old_status, new_status) {
             // Reaction: Ice + Lightning -> Shatter (or Lightning + Ice -> Shatter)
             (
@@ -1791,7 +1836,7 @@ impl Game {
                     "[fg:64C8FF][b]Elemental Reaction: SHATTER[/] on {}![/fg]",
                     target_name
                 ));
-                let bonus_damage = 30;
+                let bonus_damage = if is_storm_chaser { 40 } else { 30 };
                 let mut defeated = false;
                 if let Some(stats) = self.world.get_mut::<Stats>(target) {
                     stats.hp -= bonus_damage;
@@ -1819,7 +1864,7 @@ impl Game {
                     .push(verryte_terminal::vfx::FloatingText::new(
                         t_cx,
                         t_cy - 1.0,
-                        "SHATTER! -30",
+                        &format!("SHATTER! -{}", bonus_damage),
                         Color(100, 200, 255),
                         true,
                     ));
@@ -1865,7 +1910,7 @@ impl Game {
                     "[fg:32DC64][b]Elemental Reaction: OVERGROWTH[/] on {}![/fg]",
                     target_name
                 ));
-                let bonus_damage = 10;
+                let bonus_damage = if is_storm_chaser { 20 } else { 10 };
                 let mut defeated = false;
                 if let Some(stats) = self.world.get_mut::<Stats>(target) {
                     stats.hp -= bonus_damage;
@@ -1894,7 +1939,7 @@ impl Game {
                     .push(verryte_terminal::vfx::FloatingText::new(
                         t_cx,
                         t_cy - 1.0,
-                        "OVERGROWTH! -10 [ROOTED]",
+                        &format!("OVERGROWTH! -{} [ROOTED]", bonus_damage),
                         Color(50, 220, 100),
                         true,
                     ));
@@ -3157,6 +3202,22 @@ impl Game {
                                             }
                                         }
 
+                                        // Check for Mud entry effects
+                                        if final_dest_tile == Tile::Mud {
+                                            self.log(format!("{} trudged through MUD.", char_name));
+                                            let (tcx, tcy) =
+                                                self.get_tile_center_pixels(final_dest);
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_burst(
+                                                    tcx,
+                                                    tcy,
+                                                    10,
+                                                    Color(100, 70, 40),
+                                                    &['~', '≈', '·'],
+                                                ),
+                                            );
+                                        }
+
                                         self.try_absorb_echo(cursor);
 
                                         self.world
@@ -3370,6 +3431,41 @@ impl Game {
                                                     "replenish_ap",
                                                 ));
                                             }
+                                        }
+                                    }
+                                    crate::components::ItemEffect::CleanseAndHeal(amount) => {
+                                        self.world.insert(
+                                            entity,
+                                            crate::components::ElementalStatus::None,
+                                        );
+                                        self.world.remove::<crate::components::Rooted>(entity);
+                                        self.world.remove::<crate::components::Stunned>(entity);
+                                        let mut final_hp = 0;
+                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
+                                            stats.hp =
+                                                std::cmp::min(stats.max_hp, stats.hp + amount);
+                                            final_hp = stats.hp;
+                                        }
+                                        self.log(format!(
+                                            "Cleansed and healed for {} HP! (HP: {})",
+                                            amount, final_hp
+                                        ));
+                                        let (tcx, tcy) = self.get_tile_center_pixels(
+                                            *self.world.get::<Position>(entity).unwrap(),
+                                        );
+                                        self.vfx_mut().particles.extend(
+                                            verryte_terminal::vfx::emit_bloom(tcx, tcy, 18),
+                                        );
+                                        self.vfx_mut()
+                                            .particles
+                                            .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 15));
+                                        self.vfx_mut().trigger_flash(Color(100, 255, 100), 0.25);
+                                        if let Some(events) = self
+                                            .world
+                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                        {
+                                            events.send(verryte_core::AudioEvent::play("cleanse"));
+                                            events.send(verryte_core::AudioEvent::play("heal"));
                                         }
                                     }
                                     crate::components::ItemEffect::Cleanse => {
@@ -3793,6 +3889,18 @@ impl Game {
                                         30,
                                     ),
                                 ),
+                                ("Cleanse Remedy", "Mega Potion")
+                                | ("Mega Potion", "Cleanse Remedy") => (
+                                    true,
+                                    "Divine Remedy".to_string(),
+                                    crate::components::ItemEffect::CleanseAndHeal(80),
+                                ),
+                                ("Mega Potion", "Mega Energy Elixir")
+                                | ("Mega Energy Elixir", "Mega Potion") => (
+                                    true,
+                                    "Elixir of the Gods".to_string(),
+                                    crate::components::ItemEffect::Combined(100, 4),
+                                ),
                                 _ => (false, String::new(), crate::components::ItemEffect::Cleanse),
                             };
 
@@ -4113,6 +4221,7 @@ impl Game {
                     Tile::Lava => Color(120, 20, 10),
                     Tile::Ice => Color(100, 180, 200),
                     Tile::Stairs => Color(160, 120, 40),
+                    Tile::Mud => Color(80, 50, 30),
                 };
 
                 if matches!(vis, verryte_map::Visibility::Explored) {
@@ -4151,11 +4260,14 @@ impl Game {
                                 _ => {
                                     let is_ice = matches!(tile, Tile::Ice);
                                     let is_stairs = matches!(tile, Tile::Stairs);
+                                    let is_mud = matches!(tile, Tile::Mud);
                                     if dx == 0 || dy == 0 {
                                         if is_ice {
                                             '-'
                                         } else if is_stairs {
                                             '>'
+                                        } else if is_mud {
+                                            '='
                                         } else {
                                             '·'
                                         }
@@ -4169,6 +4281,7 @@ impl Game {
                                 Tile::Lava => Color(240, 100, 20),
                                 Tile::Ice => Color(200, 240, 255),
                                 Tile::Stairs => Color(255, 215, 0),
+                                Tile::Mud => Color(140, 90, 50),
                                 _ => Color(40, 40, 40),
                             };
                             if matches!(vis, verryte_map::Visibility::Explored) {

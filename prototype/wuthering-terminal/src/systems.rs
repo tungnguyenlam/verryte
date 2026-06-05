@@ -987,10 +987,16 @@ pub fn turn_management_system(world: &mut World) {
                         ),
                     );
                 } else {
+                    let has_swift_foot = world
+                        .get::<crate::components::CharacterTrait>(e)
+                        .is_some_and(|t| t.trait_type == crate::components::HeroTrait::SwiftFoot);
                     if let Some(stats) = world.get_mut::<Stats>(e) {
                         let mut bonus = 0;
                         if has_swift {
                             bonus = 1;
+                        }
+                        if has_swift_foot {
+                            bonus += 1;
                         }
                         stats.ap = stats.max_ap + bonus;
                     }

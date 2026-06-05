@@ -219,7 +219,8 @@ pub enum ItemEffect {
     ReplenishAp(i32),
     Cleanse,
     RestoreShield(ShieldType, i32),
-    Combined(i32, i32), // heal, ap
+    Combined(i32, i32),  // heal, ap
+    CleanseAndHeal(i32), // cleanse, heal amount
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -285,4 +286,16 @@ pub struct UndoStack {
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct RedoStack {
     pub states: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HeroTrait {
+    SwiftFoot,      // Kael: starts turn with 3 AP instead of 2
+    StormChaser,    // Lyra: Lightning reactions deal +10 damage
+    PurifyingTouch, // Mira: 50% chance to cleanse negative status effects when healing a character
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CharacterTrait {
+    pub trait_type: HeroTrait,
 }
