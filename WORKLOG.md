@@ -3353,3 +3353,30 @@ runner that the shield is announced.
 **Gotchas.** The ice sliding loop continues to advance the character until it hits a non-ice tile or obstruction, meaning the final sliding landing tile is one step beyond the last ice tile. Tests must expect this landing coordinate rather than the final ice tile index.
 
 **Follow-ups.** None. All 400+ workspace tests compile and pass cleanly, with clippy fully clean and formatted.
+
+## 2026-06-06 - WorldCheckpointStack, multi-goal A*, path compression, blit with blend modes, and Fog of War compositing
+
+**Goal.** Implement at least 5 meaningful systems-level enhancements across Verryte engine crates (`verryte-core`, `verryte-map`, and `verryte-terminal`) with comprehensive unit tests and clean workspace integration.
+
+**Changes.**
+- `crates/verryte-core/src/snapshot.rs:333` - Added `WorldCheckpointStack` to support undo/redo capabilities via `WorldSnapshot`.
+- `crates/verryte-core/src/snapshot.rs:690` - Added `test_world_checkpoint_stack` unit test.
+- `crates/verryte-core/src/lib.rs:47` - Exported `WorldCheckpointStack` from `verryte-core`.
+- `crates/verryte-map/src/grid.rs:405` - Added A* multi-goal pathfinders: `TileGrid::shortest_path8_multi_goal` and `TileGrid::shortest_path4_multi_goal`.
+- `crates/verryte-map/src/tests.rs:366` - Added `test_shortest_path_multi_goal` unit test.
+- `crates/verryte-map/src/line.rs:70` - Added `compress_path_to_waypoints` to simplify full coordinate paths, and `path_to_directions` to convert grid coordinates into `Direction8` vectors.
+- `crates/verryte-map/src/tests.rs:1964` - Added `test_compress_path_to_waypoints` and `test_path_to_directions` unit tests.
+- `crates/verryte-map/src/lib.rs:27` - Exported the new path compression and conversion helpers from `verryte-map`.
+- `crates/verryte-terminal/src/grid.rs:724` - Added `Grid::blit_blend` and `Grid::blit_blend_region` to allow grid compositing using standard blending modes (`BlendMode`).
+- `crates/verryte-terminal/src/grid.rs:3122` - Added `test_grid_blit_blend` unit test.
+- `crates/verryte-terminal/src/grid.rs:784` - Added `FowVisibility` enum and `Grid::apply_fog_of_war` to provide a decoupled fog-of-war compositor shader on cell grids.
+- `crates/verryte-terminal/src/grid.rs:3181` - Added `test_apply_fog_of_war` unit test.
+- `crates/verryte-terminal/src/lib.rs:29` - Exported `FowVisibility` from `verryte-terminal`.
+
+**Reasoning.** Moving multi-goal A* pathfinders, path waypoint compressors, blending modes, and Fog of War compositing directly into the engine's modular crates keeps the prototype clean while providing robust, high-performance TUI primitives for any future terminal games. `WorldCheckpointStack` provides a clean undo/redo mechanism using the engine's serialization capabilities.
+
+**Assumptions.** We assume that distance to the closest goal is the most optimal heuristic for A* multi-goal search.
+
+**Gotchas.** When testing multi-goal pathfinding, ensuring that target goals are not equidistant from the start point is critical to guarantee deterministic search results across different binary heap sorting orderings.
+
+**Follow-ups.** None. All workspace checks, clippy warnings, formatting, and unit/integration tests pass cleanly.
