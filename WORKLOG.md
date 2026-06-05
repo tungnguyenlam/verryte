@@ -3323,3 +3323,33 @@ runner that the shield is announced.
 **Gotchas.** Borrow checker errors arose due to overlapping borrows of `world` when querying traits and mutably editing stats or game state. These were resolved by retrieving immutable values/positions into local variables first before mutably borrowing.
 
 **Follow-ups.** None. All workspace tests, formatting, and clippy compile check successfully.
+
+## 2026-06-05 - Text color gradients, Button widget, path cost limits, Glacial Golem, and IceWalker trait
+
+**Goal.** Implement at least 5 meaningful improvements across the engine crates and prototype, including text color gradients, a Button UI widget, range-limited pathfinding, a new Glacial Golem enemy class, and an IceWalker trait that prevents sliding on ice terrain.
+
+**Changes.**
+- `crates/verryte-terminal/src/grid.rs:2149` - Added `Grid::write_gradient_str` to draw strings with a linear color gradient between two `Color` targets.
+- `crates/verryte-terminal/src/grid.rs:3052` - Added `test_write_gradient_str` unit test.
+- `crates/verryte-terminal/src/widgets.rs:594` - Added `Button` widget supporting normal, hovered, and active states.
+- `crates/verryte-terminal/src/widgets.rs:915` - Added `test_button_widget` unit test.
+- `crates/verryte-terminal/src/lib.rs:42` - Re-exported `Button` from the terminal crate.
+- `crates/verryte-map/src/grid.rs:322` - Added `TileGrid::shortest_path8_limit` to early-terminate A* searches when path cost exceeds `max_cost`.
+- `crates/verryte-map/src/grid.rs:643` - Added `TileGrid::shortest_path4_limit` to early-terminate BFS searches when steps exceed `max_cost`.
+- `crates/verryte-map/src/tests.rs:320` - Added `test_shortest_path_limits` unit test.
+- `prototype/wuthering-terminal/src/components.rs:21` and `:296` - Added `CharacterClass::GlacialGolem` and `HeroTrait::IceWalker` trait.
+- `prototype/wuthering-terminal/src/spawn.rs:99` and `:112` - Configured `GlacialGolem` spawning statistics and assigned it `HeroTrait::IceWalker` trait.
+- `prototype/wuthering-terminal/src/game.rs:2190` - Spawns `GlacialGolem` on Floor 2.
+- `prototype/wuthering-terminal/src/game.rs:3086` - Gated the ice sliding mechanic to check for `HeroTrait::IceWalker`.
+- `prototype/wuthering-terminal/src/systems.rs:516` - Programmed `GlacialGolem` attacks to afflict targets with `ElementalStatus::Ice`.
+- `prototype/wuthering-terminal/src/systems.rs:666` - Checked for `HeroTrait::IceWalker` to disable slide movement on Ice for enemies.
+- `prototype/wuthering-terminal/src/lib.rs:2845` - Added `test_glacial_golem_and_icewalker_trait` integration test.
+- `prototype/wuthering-terminal/README.md:22` - Documented `Glacial Golem` and `IceWalker` trait.
+
+**Reasoning.** Linear color gradients and button UI widgets are reusable presentation enhancements that make TUIs feel premium. Path cost limit parameters optimize pathfinding CPU overhead by avoiding full-map expansions when goals are far away. The `GlacialGolem` enemy and `IceWalker` trait show the modularity of the system and test the ice sliding mechanics under different trait configurations.
+
+**Assumptions.** We assume characters with the `IceWalker` trait should not slide on Ice terrain under any movement context, whether driven by the player or by the AI.
+
+**Gotchas.** The ice sliding loop continues to advance the character until it hits a non-ice tile or obstruction, meaning the final sliding landing tile is one step beyond the last ice tile. Tests must expect this landing coordinate rather than the final ice tile index.
+
+**Follow-ups.** None. All 400+ workspace tests compile and pass cleanly, with clippy fully clean and formatted.
