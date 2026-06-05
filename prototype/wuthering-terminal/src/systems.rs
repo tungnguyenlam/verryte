@@ -514,6 +514,27 @@ pub fn enemy_ai_system(world: &mut World) {
                         }
                     }
 
+                    // GlacialGolem applies Ice status on hit
+                    if enemy_class == CharacterClass::GlacialGolem && !defeated {
+                        let already_ice = world
+                            .get::<ElementalStatus>(player_entity)
+                            .map(|s| matches!(s, ElementalStatus::Ice { .. }))
+                            .unwrap_or(false);
+                        if !already_ice {
+                            world.insert(player_entity, ElementalStatus::Ice { duration: 2 });
+                            log(
+                                world,
+                                format!("{} is frozen by Glacial Golem!", player_name),
+                            );
+                            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                                events.send(GameEvent::ElementalApplied {
+                                    entity: player_entity,
+                                    status: ElementalStatus::Ice { duration: 2 },
+                                });
+                            }
+                        }
+                    }
+
                     if defeated {
                         let name_str = player_name.to_string();
                         handle_defeat(world, player_entity, &name_str, player_class, player_pos);
@@ -642,7 +663,11 @@ pub fn enemy_ai_system(world: &mut World) {
                     let map = world
                         .resource::<TacticalMap>()
                         .expect("TacticalMap must be registered");
-                    if dest_tile == Tile::Ice {
+                    let has_ice_walker = world
+                        .get::<crate::components::CharacterTrait>(enemy_entity)
+                        .map(|t| t.trait_type == crate::components::HeroTrait::IceWalker)
+                        .unwrap_or(false);
+                    if dest_tile == Tile::Ice && !has_ice_walker {
                         let dx = target_tile_pos.x - enemy_pos.x;
                         let dy = target_tile_pos.y - enemy_pos.y;
                         let mut curr = target_tile_pos;
@@ -1519,6 +1544,7 @@ pub fn handle_defeat(
             CharacterClass::ShadowStalker => 50,
             CharacterClass::CursedSentinel => 40,
             CharacterClass::PlagueWraith => 35,
+            CharacterClass::GlacialGolem => 60,
             _ => 20,
         };
         award_xp(world, xp_amount);

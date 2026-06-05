@@ -99,6 +99,17 @@ impl Spawner for World {
                 level: 2,
                 xp: 0,
             },
+            CharacterClass::GlacialGolem => Stats {
+                hp: 120,
+                max_hp: 120,
+                atk: 25,
+                def: 20,
+                spd: 2,
+                ap: 2,
+                max_ap: 2,
+                level: 4,
+                xp: 0,
+            },
         };
 
         let trait_opt = match class {
@@ -110,6 +121,9 @@ impl Spawner for World {
             }),
             CharacterClass::Healer => Some(crate::components::CharacterTrait {
                 trait_type: crate::components::HeroTrait::PurifyingTouch,
+            }),
+            CharacterClass::GlacialGolem => Some(crate::components::CharacterTrait {
+                trait_type: crate::components::HeroTrait::IceWalker,
             }),
             _ => None,
         };

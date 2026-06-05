@@ -2145,6 +2145,33 @@ impl Grid {
             }
         }
     }
+
+    /// Draws a string with a linear foreground color gradient from `start_fg` to `end_fg`.
+    pub fn write_gradient_str(
+        &mut self,
+        x: u16,
+        y: u16,
+        text: &str,
+        start_fg: Color,
+        end_fg: Color,
+        bg: Color,
+    ) {
+        let mut cx = x;
+        let char_count = text.chars().count();
+        for (i, ch) in text.chars().enumerate() {
+            if cx >= self.width {
+                break;
+            }
+            let t = if char_count > 1 {
+                i as f32 / (char_count - 1) as f32
+            } else {
+                0.0
+            };
+            let fg = start_fg.lerp(end_fg, t);
+            self.put(cx, y, Cell::new(ch).with_fg(fg).with_bg(bg));
+            cx = cx.saturating_add(1);
+        }
+    }
 }
 
 pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
@@ -3021,5 +3048,25 @@ mod tests {
         assert_eq!(grid2.get(4, 0).unwrap().glyph, '.');
         assert_eq!(grid2.get(0, 2).unwrap().glyph, '.');
         assert_eq!(grid2.get(1, 1).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn test_write_gradient_str() {
+        let mut grid = Grid::new(5, 1);
+        let start_fg = Color(10, 20, 30);
+        let end_fg = Color(100, 200, 250);
+        let bg = Color::BLACK;
+        grid.write_gradient_str(0, 0, "ABC", start_fg, end_fg, bg);
+
+        assert_eq!(grid.get(0, 0).unwrap().glyph, 'A');
+        assert_eq!(grid.get(1, 0).unwrap().glyph, 'B');
+        assert_eq!(grid.get(2, 0).unwrap().glyph, 'C');
+
+        // First character should be exactly start_fg
+        assert_eq!(grid.get(0, 0).unwrap().fg, start_fg);
+        // Last character should be exactly end_fg
+        assert_eq!(grid.get(2, 0).unwrap().fg, end_fg);
+        // Middle character should be exactly mid-way lerp
+        assert_eq!(grid.get(1, 0).unwrap().fg, start_fg.lerp(end_fg, 0.5));
     }
 }

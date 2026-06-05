@@ -599,6 +599,7 @@ mod tests {
                 CharacterClass::CorruptedSpore => {}
                 CharacterClass::CursedSentinel => {}
                 CharacterClass::PlagueWraith => {}
+                CharacterClass::GlacialGolem => {}
             }
         }
         let warrior = warrior.unwrap();
@@ -2839,5 +2840,99 @@ mod tests {
         assert_eq!(final_pos, mud_pos);
         let final_stats = game.world.get::<Stats>(kael).unwrap();
         assert_eq!(final_stats.ap, 0);
+    }
+
+    #[test]
+    fn test_glacial_golem_and_icewalker_trait() {
+        let mut game = Game::new();
+        // Spawn a GlacialGolem at (2, 2)
+        let golem = game.world.spawn_character(
+            Position::new(2, 2),
+            Team::Enemy,
+            CharacterClass::GlacialGolem,
+        );
+
+        // Verify it has GlacialGolem class and IceWalker trait
+        let class = *game.world.get::<CharacterClass>(golem).unwrap();
+        assert_eq!(class, CharacterClass::GlacialGolem);
+        let character_trait = game
+            .world
+            .get::<crate::components::CharacterTrait>(golem)
+            .unwrap();
+        assert_eq!(
+            character_trait.trait_type,
+            crate::components::HeroTrait::IceWalker
+        );
+
+        // Let's spawn ice terrain at Kael's east and further east
+        let kael = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, &c)| c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let start_pos = *game.world.get::<Position>(kael).unwrap();
+        let ice_pos1 = Position::new(start_pos.x + 1, start_pos.y);
+        let ice_pos2 = Position::new(start_pos.x + 2, start_pos.y);
+
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(ice_pos1, Tile::Ice);
+            map.tiles.set(ice_pos2, Tile::Ice);
+        }
+
+        // 1. Move Kael (does NOT have IceWalker) onto ice_pos1, he should slide to ice_pos2
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(kael);
+            state.cursor = ice_pos1;
+        }
+        {
+            let stats = game.world.get_mut::<Stats>(kael).unwrap();
+            stats.ap = 3;
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Kael should have slid through ice tiles and landed on the first non-ice tile (start_pos.x + 3, start_pos.y)
+        let kael_pos = *game.world.get::<Position>(kael).unwrap();
+        assert_eq!(kael_pos, Position::new(start_pos.x + 3, start_pos.y));
+
+        // 2. Spawn a custom character with IceWalker trait and verify they do NOT slide on Ice
+        let walker = game.world.spawn_character(
+            Position::new(start_pos.x, start_pos.y + 1),
+            Team::Player,
+            CharacterClass::Warrior, // Give them warrior class for stats
+        );
+        // Force IceWalker trait onto them
+        game.world.insert(
+            walker,
+            crate::components::CharacterTrait {
+                trait_type: crate::components::HeroTrait::IceWalker,
+            },
+        );
+
+        let walker_ice_pos1 = Position::new(start_pos.x + 1, start_pos.y + 1);
+        let walker_ice_pos2 = Position::new(start_pos.x + 2, start_pos.y + 1);
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(walker_ice_pos1, Tile::Ice);
+            map.tiles.set(walker_ice_pos2, Tile::Ice);
+        }
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(walker);
+            state.cursor = walker_ice_pos1;
+        }
+        {
+            let stats = game.world.get_mut::<Stats>(walker).unwrap();
+            stats.ap = 3;
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Walker should have stopped at walker_ice_pos1 and NOT slid to walker_ice_pos2
+        let walker_pos = *game.world.get::<Position>(walker).unwrap();
+        assert_eq!(walker_pos, walker_ice_pos1);
     }
 }

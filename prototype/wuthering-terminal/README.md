@@ -19,6 +19,15 @@ Three heroes descend into the heart of the corruption to seal its source.
 | Kael | Melee DPS / Tank | Ice | Greatsword |
 | Lyra | Ranged DPS | Lightning | Floating catalyst |
 | Mira | Healer / Support | Nature | Staff |
+| Glacial Golem | Floor 2 Heavy Enemy | Ice | Fists |
+
+## Passive Traits
+
+Characters can have unique traits that modify gameplay:
+- **SwiftFoot** (Kael): Starts each turn with 3 AP instead of 2.
+- **StormChaser** (Lyra): Lightning reactions deal +10 extra Shatter/Overgrowth damage.
+- **PurifyingTouch** (Mira): 50% chance to cleanse negative status effects when healing.
+- **IceWalker** (Glacial Golem / Custom): Prevents sliding on Ice terrain.
 
 ## Combat
 

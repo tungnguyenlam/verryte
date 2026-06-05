@@ -320,6 +320,88 @@ impl<T> TileGrid<T> {
         None
     }
 
+    /// Find the shortest 8-directional path between two in-bounds points, with a maximum path cost limit.
+    ///
+    /// If the path's tentative cost exceeds `max_cost`, the pathfinder will not expand beyond that point.
+    /// Returns None if no path exists within `max_cost`.
+    pub fn shortest_path8_limit<F>(
+        &self,
+        start: Point,
+        goal: Point,
+        max_cost: u32,
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) || !self.in_bounds(goal) {
+            return None;
+        }
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        const CARDINAL_COST: u32 = 10;
+        const DIAGONAL_COST: u32 = 14;
+
+        let mut g_score = HashMap::new();
+        let mut came_from = HashMap::new();
+        let mut frontier = std::collections::BinaryHeap::new();
+
+        g_score.insert(start, 0u32);
+        frontier.push(std::cmp::Reverse((
+            start.chebyshev_distance(goal) as u32 * CARDINAL_COST,
+            start,
+        )));
+
+        while let Some(std::cmp::Reverse((_f, current))) = frontier.pop() {
+            if current == goal {
+                let mut path = vec![goal];
+                let mut step = goal;
+                while step != start {
+                    step = came_from[&step];
+                    path.push(step);
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            let current_g = *g_score.get(&current).unwrap();
+            if current_g >= max_cost {
+                continue;
+            }
+
+            for direction in Direction8::ALL {
+                let neighbor = current.step8(direction);
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                let step_cost = if direction.is_cardinal() {
+                    CARDINAL_COST
+                } else {
+                    DIAGONAL_COST
+                };
+                let tentative_g = current_g + step_cost;
+                if tentative_g > max_cost {
+                    continue;
+                }
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current);
+                    g_score.insert(neighbor, tentative_g);
+                    let f = tentative_g + neighbor.chebyshev_distance(goal) as u32 * CARDINAL_COST;
+                    frontier.push(std::cmp::Reverse((f, neighbor)));
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn get(&self, point: Point) -> Option<&T> {
         self.index(point).map(|i| &self.tiles[i])
     }
@@ -541,6 +623,75 @@ impl<T> TileGrid<T> {
                 }
 
                 came_from.insert(neighbor, current);
+                if neighbor == goal {
+                    let mut path = vec![goal];
+                    let mut step = goal;
+                    while step != start {
+                        step = came_from[&step];
+                        path.push(step);
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+                frontier.push_back(neighbor);
+            }
+        }
+
+        None
+    }
+
+    /// Find the shortest cardinal path between two in-bounds points, with a maximum path step limit.
+    ///
+    /// If the path length (in steps) exceeds `max_cost`, the pathfinder will terminate early.
+    /// Returns None if no path exists within `max_cost` steps.
+    pub fn shortest_path4_limit<F>(
+        &self,
+        start: Point,
+        goal: Point,
+        max_cost: u32,
+        passable: F,
+    ) -> Option<Vec<Point>>
+    where
+        F: Fn(Point, &T) -> bool,
+    {
+        if !self.in_bounds(start) || !self.in_bounds(goal) {
+            return None;
+        }
+        if start == goal {
+            return Some(vec![start]);
+        }
+        if max_cost == 0 {
+            return None;
+        }
+
+        let mut frontier = VecDeque::new();
+        let mut came_from = HashMap::new();
+        let mut distance = HashMap::new();
+
+        frontier.push_back(start);
+        came_from.insert(start, start);
+        distance.insert(start, 0u32);
+
+        while let Some(current) = frontier.pop_front() {
+            let current_dist = *distance.get(&current).unwrap();
+            if current_dist >= max_cost {
+                continue;
+            }
+
+            for neighbor in current.neighbors4() {
+                if came_from.contains_key(&neighbor) {
+                    continue;
+                }
+                let Some(tile) = self.get(neighbor) else {
+                    continue;
+                };
+                if !passable(neighbor, tile) {
+                    continue;
+                }
+
+                came_from.insert(neighbor, current);
+                distance.insert(neighbor, current_dist + 1);
+
                 if neighbor == goal {
                     let mut path = vec![goal];
                     let mut step = goal;

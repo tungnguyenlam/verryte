@@ -591,6 +591,72 @@ impl Tooltip {
     }
 }
 
+/// A button widget with hover and active state support.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Button {
+    pub label: String,
+    pub rect: Rect,
+    pub fg: Color,
+    pub bg: Color,
+    pub border_color: Color,
+    pub hovered: bool,
+    pub active: bool,
+}
+
+impl Button {
+    pub fn new<S: Into<String>>(label: S, rect: Rect) -> Self {
+        Self {
+            label: label.into(),
+            rect,
+            fg: Color::WHITE,
+            bg: Color(30, 30, 50),
+            border_color: Color::GREY,
+            hovered: false,
+            active: false,
+        }
+    }
+
+    pub fn with_colors(mut self, fg: Color, bg: Color) -> Self {
+        self.fg = fg;
+        self.bg = bg;
+        self
+    }
+
+    pub fn set_hovered(&mut self, hovered: bool) {
+        self.hovered = hovered;
+    }
+
+    pub fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
+
+    pub fn render(&self, grid: &mut Grid) {
+        let (current_fg, current_bg) = if self.active {
+            (Color::BLACK, Color::WHITE)
+        } else if self.hovered {
+            (self.fg, self.bg.blend_alpha(Color::WHITE, 0.2))
+        } else {
+            (self.fg, self.bg)
+        };
+
+        grid.fill_rect(self.rect, Cell::new(' ').with_bg(current_bg));
+        grid.draw_border_styled(
+            self.rect,
+            BorderStyle::Single,
+            self.border_color,
+            current_bg,
+        );
+
+        // Center the label
+        let label_len = self.label.chars().count() as u16;
+        let start_x = self.rect.x + self.rect.width.saturating_sub(label_len) / 2;
+        let start_y = self.rect.y + self.rect.height.saturating_sub(1) / 2;
+
+        grid.write_str(start_x, start_y, &self.label, current_fg, current_bg);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -851,5 +917,36 @@ mod tests {
         let mut grid = Grid::new(5, 5);
         let diag = verryte_core::diagnostics::Diagnostics::new();
         overlay.render(&mut grid, &diag);
+    }
+
+    #[test]
+    fn test_button_widget() {
+        let mut button = Button::new("Click Me", Rect::new(0, 0, 12, 3));
+        assert_eq!(button.label, "Click Me");
+        assert!(!button.hovered);
+        assert!(!button.active);
+
+        button = button.with_colors(Color::RED, Color::BLACK);
+        assert_eq!(button.fg, Color::RED);
+
+        let mut grid = Grid::new(12, 3);
+        button.render(&mut grid);
+
+        // Check normal state rendering
+        assert_eq!(grid.get(0, 0).unwrap().bg, Color::BLACK);
+        // Border should be drawn
+        assert!(grid.get(0, 0).unwrap().glyph != ' ');
+
+        // Check hovered state rendering
+        button.set_hovered(true);
+        button.render(&mut grid);
+        // Bg should be blended with white
+        assert!(grid.get(0, 0).unwrap().bg != Color::BLACK);
+
+        // Check active state rendering
+        button.set_active(true);
+        button.render(&mut grid);
+        // active uses WHITE bg and BLACK fg
+        assert_eq!(grid.get(0, 0).unwrap().bg, Color::WHITE);
     }
 }

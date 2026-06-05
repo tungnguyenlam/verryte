@@ -320,6 +320,50 @@ fn shortest_path4_returns_none_when_goal_is_blocked_or_out_of_bounds() {
 }
 
 #[test]
+fn test_shortest_path_limits() {
+    let grid = TileGrid::from_vec(
+        5,
+        4,
+        vec![
+            '.', '.', '.', '.', '.', '.', '#', '#', '#', '.', '.', '.', '.', '.', '.', '#', '#',
+            '#', '.', '.',
+        ],
+    )
+    .unwrap();
+
+    // With sufficient limit, shortest_path4_limit should find the path
+    let path = grid
+        .shortest_path4_limit(Point::new(0, 0), Point::new(4, 3), 10, |_, tile| {
+            *tile == '.'
+        })
+        .unwrap();
+    assert_eq!(path.len(), 8);
+
+    // With a tight limit, shortest_path4_limit should return None
+    let path_tight = grid.shortest_path4_limit(Point::new(0, 0), Point::new(4, 3), 6, |_, tile| {
+        *tile == '.'
+    });
+    assert_eq!(path_tight, None);
+
+    // With sufficient cost, shortest_path8_limit should find a path
+    // cardinal = 10, diagonal = 14.
+    let path8 = grid
+        .shortest_path8_limit(Point::new(0, 0), Point::new(4, 3), 100, |_, tile| {
+            *tile == '.'
+        })
+        .unwrap();
+    assert_eq!(path8.first(), Some(&Point::new(0, 0)));
+    assert_eq!(path8.last(), Some(&Point::new(4, 3)));
+
+    // With a low limit, shortest_path8_limit should return None
+    let path8_tight =
+        grid.shortest_path8_limit(Point::new(0, 0), Point::new(4, 3), 30, |_, tile| {
+            *tile == '.'
+        });
+    assert_eq!(path8_tight, None);
+}
+
+#[test]
 fn test_shortest_path_weighted_avoids_mud() {
     let grid = TileGrid::from_vec(3, 3, vec!['.', 'M', '.', '.', '.', '.', '.', '.', '.']).unwrap();
 

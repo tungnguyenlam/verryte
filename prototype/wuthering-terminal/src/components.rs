@@ -19,6 +19,7 @@ pub enum CharacterClass {
     CorruptedSpore,
     CursedSentinel,
     PlagueWraith,
+    GlacialGolem,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -293,6 +294,7 @@ pub enum HeroTrait {
     SwiftFoot,      // Kael: starts turn with 3 AP instead of 2
     StormChaser,    // Lyra: Lightning reactions deal +10 damage
     PurifyingTouch, // Mira: 50% chance to cleanse negative status effects when healing a character
+    IceWalker,      // Glacial Golem / custom: prevents sliding on Ice terrain
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

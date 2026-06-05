@@ -40,5 +40,6 @@ pub use vfx::{
 };
 pub use viewport::TileViewport;
 pub use widgets::{
-    MenuView, MessageLogView, Panel, PerformanceOverlay, ProgressBar, Tooltip, VerticalProgressBar,
+    Button, MenuView, MessageLogView, Panel, PerformanceOverlay, ProgressBar, Tooltip,
+    VerticalProgressBar,
 };

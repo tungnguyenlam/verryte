@@ -249,6 +249,7 @@ impl Game {
             CharacterClass::CorruptedSpore => "Corrupted Spore",
             CharacterClass::CursedSentinel => "Cursed Sentinel",
             CharacterClass::PlagueWraith => "Plague Wraith",
+            CharacterClass::GlacialGolem => "Glacial Golem",
         }
     }
 
@@ -2188,17 +2189,23 @@ impl Game {
                     );
                 }
             } else {
-                if i % 2 == 0 {
+                if i % 3 == 0 {
                     self.world.spawn_character(
                         room_center,
                         Team::Enemy,
                         CharacterClass::ShadowStalker,
                     );
-                } else {
+                } else if i % 3 == 1 {
                     self.world.spawn_character(
                         room_center,
                         Team::Enemy,
                         CharacterClass::CorruptedSpore,
+                    );
+                } else {
+                    self.world.spawn_character(
+                        room_center,
+                        Team::Enemy,
+                        CharacterClass::GlacialGolem,
                     );
                 }
             }
@@ -3076,7 +3083,18 @@ impl Game {
                                             .filter(|(e, _, _)| *e != sel_entity)
                                             .map(|(_, p, _)| **p)
                                             .collect();
-                                        if dest_tile == Tile::Ice && path.len() >= 2 {
+                                        let has_ice_walker = self
+                                            .world
+                                            .get::<crate::components::CharacterTrait>(sel_entity)
+                                            .map(|t| {
+                                                t.trait_type
+                                                    == crate::components::HeroTrait::IceWalker
+                                            })
+                                            .unwrap_or(false);
+                                        if dest_tile == Tile::Ice
+                                            && path.len() >= 2
+                                            && !has_ice_walker
+                                        {
                                             let p_last = path[path.len() - 1];
                                             let p_prev = path[path.len() - 2];
                                             let dx = p_last.x - p_prev.x;
@@ -4472,6 +4490,7 @@ impl Game {
                 CharacterClass::CorruptedSpore => "blight-sovereign",
                 CharacterClass::CursedSentinel => "kael",
                 CharacterClass::PlagueWraith => "lyra",
+                CharacterClass::GlacialGolem => "blight-sovereign",
             };
 
             if let Some(asset) = registry.get(key) {
