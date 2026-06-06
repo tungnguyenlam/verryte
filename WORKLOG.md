@@ -3502,3 +3502,22 @@ character without moving is a state-only change. The Moved outcome only fires
 when an actual `GameEvent::Moved` was emitted.
 
 **Follow-ups.** None required; the fix is self-contained and all tests pass.
+
+## 2026-06-06 - terminal rendering polish: dialogue portraits, table enhancements, tile animations, SVG options
+
+**Goal.** Polish the terminal rendering system with five new features: dialogue portrait rendering with animations, table widget enhancements (sorting, filtering, alternating rows, scroll), animated terrain tile effects, Grid SVG improvements, and new tests.
+
+**Changes.**
+- `crates/verryte-terminal/src/dialogue.rs:5-69` - added `PortraitAnimation` enum (`None`, `Bob`, `Glow`), `Portrait` struct with grid, animation state, tick/bob_y_offset/glow_alpha methods. Added `portrait: Option<Portrait>` field to `DialogueBox`, `set_portrait()`, `clear_portrait()`, `tick_portrait()` methods. Updated `render()` to use stored portrait with bob offset and glow tint animation when no parameter portrait is provided.
+- `crates/verryte-terminal/src/widgets.rs:684-919` - enhanced `Table` widget with `alt_row_bg`, `sort_column`, `sort_ascending`, `filtered_indices`, `scroll_offset` fields. Added `toggle_sort()`, `apply_sort()`, `filter_rows()`, `clear_filter()`, `scroll_up()`, `scroll_down()` methods. Render now supports sort indicators (▲/▼), alternating row colors, row filtering, and scrollbar when rows exceed visible area.
+- `crates/verryte-terminal/src/grid.rs:1949-2030` - refactored `to_svg_string()` to delegate to new `to_svg_string_with_options(&SvgOptions)`. Added `SvgOptions` struct with configurable `cell_width`, `cell_height`, `font_family`, `font_size`, `default_bg`, `cell_borders`, `cell_border_color`, `cell_border_width`. Supports per-cell border rendering and configurable defaults.
+- `crates/verryte-terminal/src/lib.rs:26,29` - re-exported `Portrait`, `PortraitAnimation`, `SvgOptions`.
+- `prototype/wuthering-terminal/src/ui.rs:10-103` - added `get_tile_animated_cell()` for animated terrain overlays: Water (wave glyph/color cycling), Lava (pulsing red/orange glow with bold), Ice (occasional sparkle with `✦` glyph), Mud (subtle darkening/lightening cycle with dim). Added `render_tile_overlays()` for batch rendering tile animations across the map grid.
+
+**Reasoning.** These are polish features that make the terminal rendering system more capable for RPG-style games. Dialogue portraits with animation are standard in RPG dialogues. Table sorting/filtering/alternating rows are essential for inventory, stats, and status screens. Animated tile effects bring the tactical map to life. SVG options enable customized export for debugging and web display. All reusable primitives live in `verryte-terminal`, game-specific tile effects in the prototype.
+
+**Assumptions.** Portrait bob uses sin-wave oscillation mapped to integer pixel offset. Glow uses sin-wave alpha with Screen blend mode at low intensity (0.15). Table sorting uses string comparison (lexicographic). Table filtering stores indices rather than closures to keep `Table` Clone-compatible. SVG options default to the existing behavior.
+
+**Gotchas.** The initial `bob_y_offset` returned `f32` instead of `i32`, causing a type mismatch. The SVG test initially used `Color::RED` which is `(220, 60, 60)`, not `(255, 0, 0)`. The table scroll indicator test initially checked the wrong column (13 instead of 14 for a 15-wide grid with no border). A duplicate `test_svg_options` function was accidentally introduced and had to be removed.
+
+**Follow-ups.** The `render_tile_overlays` function is available in the prototype but not yet wired into the main render loop — it needs integration with the tactical map rendering. The wuthering-terminal has a pre-existing compile error (`[Point; 4]` not implementing Iterator in `systems.rs:921`) that predates these changes. SVG options could support gradient fills and text wrapping in the future.

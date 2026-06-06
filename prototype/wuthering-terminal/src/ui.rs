@@ -4,7 +4,118 @@ use crate::components::{
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
 use verryte_core::{MessageLog, World};
-use verryte_terminal::{Cell, Color, Grid};
+use verryte_terminal::{Cell, CellAttrs, Color, Grid};
+
+pub fn get_tile_animated_cell(tile: Tile, x: u16, y: u16, ticks: u64) -> Option<Cell> {
+    match tile {
+        Tile::Water => {
+            let phase = ((ticks + (x as u64) * 5 + (y as u64) * 11) / 6) % 4;
+            let (glyph, fg) = match phase {
+                0 => ('~', Color(60, 80, 180)),
+                1 => ('≈', Color(80, 100, 200)),
+                2 => ('∽', Color(50, 70, 160)),
+                _ => ('~', Color(70, 90, 190)),
+            };
+            Some(
+                Cell::new(glyph)
+                    .with_fg(fg)
+                    .with_bg(Color(20, 30, 80))
+                    .with_attrs(CellAttrs::NONE),
+            )
+        }
+        Tile::Lava => {
+            let pulse = ((ticks + (x as u64) * 3 + (y as u64) * 7) / 5) % 6;
+            let (glyph, fg, bg) = match pulse {
+                0 => ('^', Color(255, 80, 20), Color(180, 30, 10)),
+                1 => ('*', Color(255, 120, 30), Color(200, 50, 10)),
+                2 => ('v', Color(255, 60, 10), Color(160, 20, 5)),
+                3 => ('^', Color(255, 140, 40), Color(220, 60, 15)),
+                4 => ('*', Color(255, 100, 20), Color(190, 40, 10)),
+                _ => ('v', Color(255, 70, 15), Color(170, 25, 8)),
+            };
+            Some(
+                Cell::new(glyph)
+                    .with_fg(fg)
+                    .with_bg(bg)
+                    .with_attrs(CellAttrs::NONE.bold()),
+            )
+        }
+        Tile::Ice => {
+            let sparkle = ((ticks + (x as u64) * 13 + (y as u64) * 17) / 15) % 20;
+            if sparkle == 0 {
+                Some(
+                    Cell::new('✦')
+                        .with_fg(Color(255, 255, 255))
+                        .with_bg(Color(100, 160, 220))
+                        .with_attrs(CellAttrs::NONE.bold()),
+                )
+            } else if sparkle == 10 {
+                Some(
+                    Cell::new('·')
+                        .with_fg(Color(220, 240, 255))
+                        .with_bg(Color(90, 150, 210))
+                        .with_attrs(CellAttrs::NONE),
+                )
+            } else {
+                Some(
+                    Cell::new('-')
+                        .with_fg(Color(150, 220, 255))
+                        .with_bg(Color(80, 140, 200))
+                        .with_attrs(CellAttrs::NONE),
+                )
+            }
+        }
+        Tile::Mud => {
+            let cycle = ((ticks + (x as u64) * 7 + (y as u64) * 3) / 12) % 4;
+            let bg = match cycle {
+                0 => Color(60, 40, 20),
+                1 => Color(70, 48, 25),
+                2 => Color(55, 38, 18),
+                _ => Color(65, 44, 22),
+            };
+            Some(
+                Cell::new('=')
+                    .with_fg(Color(100, 70, 40))
+                    .with_bg(bg)
+                    .with_attrs(CellAttrs::NONE.dim()),
+            )
+        }
+        _ => None,
+    }
+}
+
+pub fn render_tile_overlays(
+    grid: &mut Grid,
+    map: &TacticalMap,
+    ticks: u64,
+    offset_x: u16,
+    offset_y: u16,
+    tile_w: u16,
+    tile_h: u16,
+) {
+    for ty in 0..map.height {
+        for tx in 0..map.width {
+            let tile = map.tile(tx as i16, ty as i16);
+            if let Some(anim_cell) = get_tile_animated_cell(tile, tx, ty, ticks) {
+                let base_x = offset_x + tx * tile_w;
+                let base_y = offset_y + ty * tile_h;
+                for dy in 0..tile_h {
+                    for dx in 0..tile_w {
+                        let px = base_x + dx;
+                        let py = base_y + dy;
+                        if px < grid.width() && py < grid.height() {
+                            if let Some(existing) = grid.get(px, py) {
+                                if existing.glyph == ' ' || existing.bg == Color::BLACK {
+                                    grid.put(px, py, anim_cell);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     let state = world.resource::<GameState>().unwrap();
@@ -62,6 +173,12 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
                 }
                 ElementalStatus::Nature { duration } => {
                     format!(" [NATURE:{}]", duration)
+                }
+                ElementalStatus::Poison { duration } => {
+                    format!(" [POISON:{}]", duration)
+                }
+                ElementalStatus::Regen { duration } => {
+                    format!(" [REGEN:{}]", duration)
                 }
                 _ => "".to_string(),
             };
@@ -205,6 +322,12 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
             }
             ElementalStatus::Nature { duration } => {
                 format!(" [NATURE:{}]", duration)
+            }
+            ElementalStatus::Poison { duration } => {
+                format!(" [POISON:{}]", duration)
+            }
+            ElementalStatus::Regen { duration } => {
+                format!(" [REGEN:{}]", duration)
             }
             _ => "".to_string(),
         };

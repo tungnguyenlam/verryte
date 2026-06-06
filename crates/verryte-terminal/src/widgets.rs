@@ -683,7 +683,8 @@ impl Button {
 
 /// A table widget for rendering structured rows and columns of text.
 ///
-/// Supports header row, horizontal dividers, alignment, and column width constraints.
+/// Supports header row, horizontal dividers, alignment, column width constraints,
+/// column sorting, row filtering, alternating row colors, and scroll indicators.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Table {
@@ -695,10 +696,15 @@ pub struct Table {
     pub header_bg: Color,
     pub row_fg: Color,
     pub row_bg: Color,
+    pub alt_row_bg: Option<Color>,
     pub constraints: Vec<Constraint>,
     pub headers: Option<Vec<String>>,
     pub rows: Vec<Vec<String>>,
     pub alignments: Vec<Alignment>,
+    pub sort_column: Option<usize>,
+    pub sort_ascending: bool,
+    pub filtered_indices: Option<Vec<usize>>,
+    pub scroll_offset: usize,
 }
 
 impl Table {
@@ -712,10 +718,15 @@ impl Table {
             header_bg: Color::BLACK,
             row_fg: Color::WHITE,
             row_bg: Color::BLACK,
+            alt_row_bg: None,
             constraints: Vec::new(),
             headers: None,
             rows: Vec::new(),
             alignments: Vec::new(),
+            sort_column: None,
+            sort_ascending: true,
+            filtered_indices: None,
+            scroll_offset: 0,
         }
     }
 
@@ -742,6 +753,11 @@ impl Table {
         self
     }
 
+    pub fn with_alt_row_bg(mut self, alt_bg: Color) -> Self {
+        self.alt_row_bg = Some(alt_bg);
+        self
+    }
+
     pub fn with_constraints(mut self, constraints: Vec<Constraint>) -> Self {
         self.constraints = constraints;
         self
@@ -760,6 +776,83 @@ impl Table {
     pub fn with_alignments(mut self, alignments: Vec<Alignment>) -> Self {
         self.alignments = alignments;
         self
+    }
+
+    pub fn toggle_sort(&mut self, col: usize) {
+        if self.sort_column == Some(col) {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_column = Some(col);
+            self.sort_ascending = true;
+        }
+    }
+
+    pub fn apply_sort(&mut self) {
+        if let Some(col) = self.sort_column {
+            let asc = self.sort_ascending;
+            self.rows.sort_by(|a, b| {
+                let av = a.get(col).map(|s| s.as_str()).unwrap_or("");
+                let bv = b.get(col).map(|s| s.as_str()).unwrap_or("");
+                let ord = av.cmp(bv);
+                if asc {
+                    ord
+                } else {
+                    ord.reverse()
+                }
+            });
+            self.filtered_indices = None;
+        }
+    }
+
+    pub fn filter_rows<F>(&mut self, predicate: F)
+    where
+        F: Fn(&[String]) -> bool,
+    {
+        let indices: Vec<usize> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| predicate(row))
+            .map(|(i, _)| i)
+            .collect();
+        self.filtered_indices = Some(indices);
+        self.scroll_offset = 0;
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filtered_indices = None;
+    }
+
+    fn visible_row_count(&self) -> u16 {
+        let inner = if self.border != BorderStyle::None {
+            self.rect.inset(1, 1)
+        } else {
+            self.rect
+        };
+        let header_rows: u16 = if self.headers.is_some() { 2 } else { 0 };
+        inner.height.saturating_sub(header_rows)
+    }
+
+    fn effective_rows(&self) -> Vec<&Vec<String>> {
+        if let Some(ref indices) = self.filtered_indices {
+            indices.iter().filter_map(|&i| self.rows.get(i)).collect()
+        } else {
+            self.rows.iter().collect()
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        let vis = self.visible_row_count() as usize;
+        let total = self.effective_rows().len();
+        if total > vis && self.scroll_offset < total - vis {
+            self.scroll_offset += 1;
+        }
+    }
+
+    pub fn scroll_up(&mut self) {
+        if self.scroll_offset > 0 {
+            self.scroll_offset -= 1;
+        }
     }
 
     pub fn render(&self, grid: &mut Grid) {
@@ -783,6 +876,15 @@ impl Table {
             return;
         }
 
+        let effective = self.effective_rows();
+        let has_scrollbar = effective.len() > self.visible_row_count() as usize;
+        let content_width = if has_scrollbar {
+            inner_rect.width.saturating_sub(1)
+        } else {
+            inner_rect.width
+        };
+        let content_rect = Rect::new(inner_rect.x, inner_rect.y, content_width, inner_rect.height);
+
         let mut layout = Layout::horizontal();
         for &constraint in &self.constraints {
             match constraint {
@@ -798,12 +900,12 @@ impl Table {
             }
         }
 
-        let col_rects = layout.split(inner_rect);
-        let mut current_y = inner_rect.y;
+        let col_rects = layout.split(content_rect);
+        let mut current_y = content_rect.y;
 
         if let Some(ref headers) = self.headers {
-            if current_y < inner_rect.bottom() {
-                let header_row_rect = Rect::new(inner_rect.x, current_y, inner_rect.width, 1);
+            if current_y < content_rect.bottom() {
+                let header_row_rect = Rect::new(content_rect.x, current_y, content_rect.width, 1);
                 grid.fill_rect(header_row_rect, Cell::new(' ').with_bg(self.header_bg));
 
                 for (col_idx, header) in headers.iter().enumerate() {
@@ -820,9 +922,19 @@ impl Table {
                         .copied()
                         .unwrap_or(Alignment::Left);
 
+                    let display_header = if self.sort_column == Some(col_idx) {
+                        if self.sort_ascending {
+                            format!("{} ▲", header)
+                        } else {
+                            format!("{} ▼", header)
+                        }
+                    } else {
+                        header.clone()
+                    };
+
                     self.render_cell(
                         grid,
-                        header,
+                        &display_header,
                         col_rect.x,
                         current_y,
                         col_rect.width,
@@ -834,7 +946,7 @@ impl Table {
                 current_y += 1;
             }
 
-            if current_y < inner_rect.bottom() {
+            if current_y < content_rect.bottom() {
                 let sep_char = match self.border {
                     BorderStyle::Ascii => '-',
                     BorderStyle::Double => '═',
@@ -844,20 +956,35 @@ impl Table {
                 let cell = Cell::new(sep_char)
                     .with_fg(self.border_color)
                     .with_bg(self.bg);
-                for x in inner_rect.x..inner_rect.right() {
+                for x in content_rect.x..content_rect.right() {
                     grid.put(x, current_y, cell);
                 }
                 current_y += 1;
             }
         }
 
-        for row in &self.rows {
-            if current_y >= inner_rect.bottom() {
+        let visible = self.visible_row_count() as usize;
+        let start = self.scroll_offset.min(effective.len().saturating_sub(1));
+        let end = (start + visible).min(effective.len());
+
+        for (view_idx, row) in effective[start..end].iter().enumerate() {
+            if current_y >= content_rect.bottom() {
                 break;
             }
 
-            let row_rect = Rect::new(inner_rect.x, current_y, inner_rect.width, 1);
-            grid.fill_rect(row_rect, Cell::new(' ').with_bg(self.row_bg));
+            let actual_row_idx = start + view_idx;
+            let row_bg = if let Some(alt_bg) = self.alt_row_bg {
+                if actual_row_idx % 2 == 1 {
+                    alt_bg
+                } else {
+                    self.row_bg
+                }
+            } else {
+                self.row_bg
+            };
+
+            let row_rect = Rect::new(content_rect.x, current_y, content_rect.width, 1);
+            grid.fill_rect(row_rect, Cell::new(' ').with_bg(row_bg));
 
             for (col_idx, cell_value) in row.iter().enumerate() {
                 if col_idx >= col_rects.len() {
@@ -881,10 +1008,27 @@ impl Table {
                     col_rect.width,
                     alignment,
                     self.row_fg,
-                    self.row_bg,
+                    row_bg,
                 );
             }
             current_y += 1;
+        }
+
+        if has_scrollbar {
+            let scrollbar_rect = Rect::new(
+                inner_rect.right().saturating_sub(1),
+                inner_rect.y,
+                1,
+                inner_rect.height,
+            );
+            grid.draw_scrollbar(
+                scrollbar_rect,
+                effective.len(),
+                visible,
+                self.scroll_offset,
+                self.border_color,
+                self.bg,
+            );
         }
     }
 
@@ -1250,5 +1394,100 @@ mod tests {
         assert_eq!(grid.get(2, 3).unwrap().glyph, 'n');
         assert_eq!(grid.get(3, 3).unwrap().glyph, 'g');
         assert_eq!(grid.get(9, 3).unwrap().glyph, 'c');
+    }
+
+    #[test]
+    fn test_table_toggle_sort() {
+        let mut table = Table::new(Rect::new(0, 0, 10, 5))
+            .with_headers(vec!["A".to_string(), "B".to_string()])
+            .with_rows(vec![
+                vec!["c".to_string(), "3".to_string()],
+                vec!["a".to_string(), "1".to_string()],
+                vec!["b".to_string(), "2".to_string()],
+            ]);
+
+        assert!(table.sort_column.is_none());
+        table.toggle_sort(0);
+        assert_eq!(table.sort_column, Some(0));
+        assert!(table.sort_ascending);
+        table.apply_sort();
+        assert_eq!(table.rows[0][0], "a");
+        assert_eq!(table.rows[1][0], "b");
+        assert_eq!(table.rows[2][0], "c");
+
+        table.toggle_sort(0);
+        assert_eq!(table.sort_column, Some(0));
+        assert!(!table.sort_ascending);
+        table.apply_sort();
+        assert_eq!(table.rows[0][0], "c");
+        assert_eq!(table.rows[1][0], "b");
+        assert_eq!(table.rows[2][0], "a");
+    }
+
+    #[test]
+    fn test_table_filter_rows() {
+        let mut table = Table::new(Rect::new(0, 0, 10, 5)).with_rows(vec![
+            vec!["a".to_string(), "10".to_string()],
+            vec!["b".to_string(), "5".to_string()],
+            vec!["c".to_string(), "10".to_string()],
+        ]);
+
+        table.filter_rows(|row| row.get(1).map(|s| s == "10").unwrap_or(false));
+        let effective = table.effective_rows();
+        assert_eq!(effective.len(), 2);
+        assert_eq!(effective[0][0], "a");
+        assert_eq!(effective[1][0], "c");
+
+        table.clear_filter();
+        let effective = table.effective_rows();
+        assert_eq!(effective.len(), 3);
+    }
+
+    #[test]
+    fn test_table_alternating_row_bg() {
+        let table = Table::new(Rect::new(0, 0, 10, 7))
+            .with_constraints(vec![Constraint::Remaining])
+            .with_headers(vec!["Name".to_string()])
+            .with_alt_row_bg(Color(20, 20, 30))
+            .with_rows(vec![
+                vec!["row0".to_string()],
+                vec!["row1".to_string()],
+                vec!["row2".to_string()],
+                vec!["row3".to_string()],
+            ]);
+
+        let mut grid = Grid::new(10, 7);
+        table.render(&mut grid);
+
+        // Row 0 (even) uses default row_bg (black)
+        assert_eq!(grid.get(0, 2).unwrap().bg, Color::BLACK);
+        // Row 1 (odd) uses alt_row_bg
+        assert_eq!(grid.get(0, 3).unwrap().bg, Color(20, 20, 30));
+        // Row 2 (even) uses default row_bg
+        assert_eq!(grid.get(0, 4).unwrap().bg, Color::BLACK);
+        // Row 3 (odd) uses alt_row_bg
+        assert_eq!(grid.get(0, 5).unwrap().bg, Color(20, 20, 30));
+    }
+
+    #[test]
+    fn test_table_scroll_indicator() {
+        let rows: Vec<Vec<String>> = (0..20).map(|i| vec![format!("row{}", i)]).collect();
+        let mut table = Table::new(Rect::new(0, 0, 15, 8))
+            .with_constraints(vec![Constraint::Remaining])
+            .with_headers(vec!["Name".to_string()])
+            .with_rows(rows);
+
+        table.scroll_offset = 5;
+        let mut grid = Grid::new(15, 8);
+        table.render(&mut grid);
+
+        // With no border, inner rect is (0,0,15,8). Scrollbar at x=14.
+        let scrollbar_col = 14;
+        let has_scrollbar_content = (0..8).any(|y| {
+            grid.get(scrollbar_col, y)
+                .map(|c| c.glyph == '░' || c.glyph == '█')
+                .unwrap_or(false)
+        });
+        assert!(has_scrollbar_content);
     }
 }

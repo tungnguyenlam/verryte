@@ -2,6 +2,72 @@ use crate::color::Color;
 use crate::grid::{Cell, Grid};
 use crate::layout::{BorderStyle, Rect};
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PortraitAnimation {
+    None,
+    Bob { speed: f32, amplitude: f32 },
+    Glow { speed: f32, color: Color },
+}
+
+impl Default for PortraitAnimation {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Portrait {
+    pub grid: Grid,
+    pub animation: PortraitAnimation,
+    pub time: f32,
+}
+
+impl Portrait {
+    pub fn new(grid: Grid) -> Self {
+        Self {
+            grid,
+            animation: PortraitAnimation::None,
+            time: 0.0,
+        }
+    }
+
+    pub fn with_animation(mut self, animation: PortraitAnimation) -> Self {
+        self.animation = animation;
+        self
+    }
+
+    pub fn tick(&mut self, dt: f32) {
+        self.time += dt;
+    }
+
+    pub fn bob_y_offset(&self) -> i32 {
+        match self.animation {
+            PortraitAnimation::Bob { speed, amplitude } => {
+                ((self.time * speed).sin() * amplitude) as i32
+            }
+            _ => 0,
+        }
+    }
+
+    pub fn glow_alpha(&self) -> f32 {
+        match self.animation {
+            PortraitAnimation::Glow { speed, .. } => {
+                ((self.time * speed).sin() * 0.5 + 0.5).clamp(0.0, 1.0)
+            }
+            _ => 0.0,
+        }
+    }
+
+    pub fn glow_color(&self) -> Option<Color> {
+        match self.animation {
+            PortraitAnimation::Glow { color, .. } => Some(color),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DialogueTheme {
@@ -69,7 +135,8 @@ pub struct DialogueBox {
     pub bg: Color,
     pub title_fg: Color,
     pub text_fg: Color,
-    pub typewriter_speed: f32, // chars per second
+    pub typewriter_speed: f32,
+    pub portrait: Option<Portrait>,
 }
 
 impl DialogueBox {
@@ -82,6 +149,7 @@ impl DialogueBox {
             title_fg: Color::YELLOW,
             text_fg: Color::WHITE,
             typewriter_speed: 30.0,
+            portrait: None,
         }
     }
 
@@ -91,6 +159,20 @@ impl DialogueBox {
         self.bg = theme.bg_color();
         self.text_fg = Color::WHITE;
         self
+    }
+
+    pub fn set_portrait(&mut self, portrait: Portrait) {
+        self.portrait = Some(portrait);
+    }
+
+    pub fn clear_portrait(&mut self) {
+        self.portrait = None;
+    }
+
+    pub fn tick_portrait(&mut self, dt: f32) {
+        if let Some(ref mut p) = self.portrait {
+            p.tick(dt);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -120,11 +202,36 @@ impl DialogueBox {
             return;
         }
 
-        // Draw portrait if provided
+        // Draw portrait if provided (parameter takes priority, then stored portrait)
         let text_x_offset = if let Some(p) = portrait {
             let px = inner.x + 1;
             let py = inner.y + (inner.height.saturating_sub(p.height())) / 2;
             grid.blit(p, px as i32, py as i32);
+            p.width() + 2
+        } else if let Some(ref stored_portrait) = self.portrait {
+            let p = &stored_portrait.grid;
+            let px = inner.x + 1;
+            let bob_offset = stored_portrait.bob_y_offset();
+            let base_y = inner.y as i32 + (inner.height.saturating_sub(p.height())) as i32 / 2;
+            let py = (base_y + bob_offset).max(0) as u16;
+            grid.blit(p, px as i32, py as i32);
+
+            if let Some(glow_color) = stored_portrait.glow_color() {
+                let alpha = stored_portrait.glow_alpha();
+                let portrait_rect = Rect::new(
+                    px,
+                    py,
+                    p.width().min(inner.width),
+                    p.height().min(inner.height),
+                );
+                grid.apply_tint(
+                    portrait_rect,
+                    glow_color,
+                    alpha * 0.15,
+                    crate::color::BlendMode::Screen,
+                );
+            }
+
             p.width() + 2
         } else {
             0
@@ -420,5 +527,82 @@ mod tests {
         let state = DialogueState::new("Q", "Pick one").with_choices(vec!["A".into(), "B".into()]);
         let s = format!("{state}");
         assert!(s.contains("choices=2"));
+    }
+
+    #[test]
+    fn test_portrait_new_and_animation() {
+        let grid = Grid::new(6, 6);
+        let portrait = Portrait::new(grid).with_animation(PortraitAnimation::Bob {
+            speed: 2.0,
+            amplitude: 1.0,
+        });
+        assert_eq!(
+            portrait.animation,
+            PortraitAnimation::Bob {
+                speed: 2.0,
+                amplitude: 1.0
+            }
+        );
+        assert_eq!(portrait.time, 0.0);
+    }
+
+    #[test]
+    fn test_portrait_bob_y_offset() {
+        let grid = Grid::new(4, 4);
+        let mut portrait = Portrait::new(grid).with_animation(PortraitAnimation::Bob {
+            speed: std::f32::consts::PI,
+            amplitude: 2.0,
+        });
+        portrait.tick(0.0);
+        let offset_0 = portrait.bob_y_offset();
+        portrait.tick(0.5);
+        let offset_0_5 = portrait.bob_y_offset();
+        assert_ne!(offset_0, offset_0_5);
+    }
+
+    #[test]
+    fn test_portrait_glow() {
+        let grid = Grid::new(4, 4);
+        let mut portrait = Portrait::new(grid).with_animation(PortraitAnimation::Glow {
+            speed: 1.0,
+            color: Color(100, 200, 255),
+        });
+        portrait.tick(0.0);
+        let alpha = portrait.glow_alpha();
+        assert!(alpha >= 0.0 && alpha <= 1.0);
+        assert_eq!(portrait.glow_color(), Some(Color(100, 200, 255)));
+    }
+
+    #[test]
+    fn test_dialogue_box_set_portrait() {
+        let mut b = DialogueBox::new(Rect::new(2, 2, 30, 10));
+        assert!(b.portrait.is_none());
+        let portrait = Portrait::new(Grid::new(6, 6));
+        b.set_portrait(portrait);
+        assert!(b.portrait.is_some());
+        b.clear_portrait();
+        assert!(b.portrait.is_none());
+    }
+
+    #[test]
+    fn test_dialogue_box_render_with_stored_portrait() {
+        let mut b = DialogueBox::new(Rect::new(2, 2, 30, 10));
+        let portrait = Portrait::new(Grid::new(6, 6)).with_animation(PortraitAnimation::Bob {
+            speed: 1.0,
+            amplitude: 0.5,
+        });
+        b.set_portrait(portrait);
+        b.tick_portrait(1.0);
+        let mut grid = Grid::new(40, 20);
+        b.render(&mut grid, "Speaker", "Hello there!", 12, None, &[], None);
+        assert!(b.portrait.as_ref().unwrap().time > 0.0);
+    }
+
+    #[test]
+    fn test_portrait_none_animation() {
+        let portrait = Portrait::new(Grid::new(2, 2));
+        assert_eq!(portrait.bob_y_offset(), 0);
+        assert_eq!(portrait.glow_alpha(), 0.0);
+        assert_eq!(portrait.glow_color(), None);
     }
 }

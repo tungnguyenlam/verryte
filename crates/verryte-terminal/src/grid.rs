@@ -928,12 +928,7 @@ impl Grid {
         let thumb_y = thumb_y.min(rect.height - thumb_height);
 
         // Draw thumb
-        let thumb_rect = Rect::new(
-            rect.x,
-            rect.y + thumb_y,
-            rect.width,
-            thumb_height,
-        );
+        let thumb_rect = Rect::new(rect.x, rect.y + thumb_y, rect.width, thumb_height);
         self.fill_rect(thumb_rect, Cell::new('█').with_fg(fg).with_bg(bg));
     }
 
@@ -1952,8 +1947,12 @@ impl Grid {
     }
 
     pub fn to_svg_string(&self) -> String {
-        let cell_w = 9.0;
-        let cell_h = 18.0;
+        self.to_svg_string_with_options(&SvgOptions::default())
+    }
+
+    pub fn to_svg_string_with_options(&self, opts: &SvgOptions) -> String {
+        let cell_w = opts.cell_width;
+        let cell_h = opts.cell_height;
         let svg_w = self.width as f32 * cell_w;
         let svg_h = self.height as f32 * cell_h;
         let mut out = String::with_capacity(self.cells.len() * 80 + 300);
@@ -1961,15 +1960,22 @@ impl Grid {
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="{:.1}" height="{:.1}" viewBox="0 0 {:.1} {:.1}">"#,
             svg_w, svg_h, svg_w, svg_h
         ));
-        out.push_str(r#"<style>text { font-family: monospace; font-size: 14px; text-anchor: middle; dominant-baseline: middle; }</style>"#);
         out.push_str(&format!(
-            r#"<rect width="{:.1}" height="{:.1}" fill="black"/>"#,
-            svg_w, svg_h
+            r#"<style>text {{ font-family: {}; font-size: {}px; text-anchor: middle; dominant-baseline: middle; }}</style>"#,
+            opts.font_family, opts.font_size
         ));
+
+        // Background fill
+        out.push_str(&format!(
+            r#"<rect width="{:.1}" height="{:.1}" fill="rgb({},{},{})"/>"#,
+            svg_w, svg_h, opts.default_bg.0, opts.default_bg.1, opts.default_bg.2
+        ));
+
+        // Cell backgrounds
         for y in 0..self.height {
             for x in 0..self.width {
                 let cell = &self.cells[(y as usize) * (self.width as usize) + (x as usize)];
-                if cell.bg != Color::BLACK {
+                if cell.bg != opts.default_bg {
                     let rx = x as f32 * cell_w;
                     let ry = y as f32 * cell_h;
                     out.push_str(&format!(
@@ -1977,8 +1983,20 @@ impl Grid {
                         rx, ry, cell_w, cell_h, cell.bg.0, cell.bg.1, cell.bg.2
                     ));
                 }
+
+                if opts.cell_borders {
+                    let rx = x as f32 * cell_w;
+                    let ry = y as f32 * cell_h;
+                    let Color(br, bg_c, bb) = opts.cell_border_color;
+                    out.push_str(&format!(
+                        r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" fill="none" stroke="rgb({},{},{})" stroke-width="{}"/>"#,
+                        rx, ry, cell_w, cell_h, br, bg_c, bb, opts.cell_border_width
+                    ));
+                }
             }
         }
+
+        // Text
         for y in 0..self.height {
             for x in 0..self.width {
                 let cell = &self.cells[(y as usize) * (self.width as usize) + (x as usize)];
@@ -2323,6 +2341,34 @@ impl Grid {
             let fg = start_fg.lerp(end_fg, t);
             self.put(cx, y, Cell::new(ch).with_fg(fg).with_bg(bg));
             cx = cx.saturating_add(1);
+        }
+    }
+}
+
+/// Configuration options for SVG grid rendering.
+#[derive(Clone, Debug)]
+pub struct SvgOptions {
+    pub cell_width: f32,
+    pub cell_height: f32,
+    pub font_family: String,
+    pub font_size: u32,
+    pub default_bg: Color,
+    pub cell_borders: bool,
+    pub cell_border_color: Color,
+    pub cell_border_width: f32,
+}
+
+impl Default for SvgOptions {
+    fn default() -> Self {
+        Self {
+            cell_width: 9.0,
+            cell_height: 18.0,
+            font_family: "monospace".to_string(),
+            font_size: 14,
+            default_bg: Color::BLACK,
+            cell_borders: false,
+            cell_border_color: Color(60, 60, 60),
+            cell_border_width: 0.5,
         }
     }
 }
@@ -3333,6 +3379,52 @@ mod tests {
         assert_eq!(grid.get(4, 7).unwrap().glyph, '░');
         assert_eq!(grid.get(4, 8).unwrap().glyph, '█');
         assert_eq!(grid.get(4, 9).unwrap().glyph, '█');
+    }
+
+    #[test]
+    fn test_svg_options() {
+        let mut grid = Grid::new(2, 1);
+        grid.put(
+            0,
+            0,
+            Cell::new('A')
+                .with_fg(Color::WHITE)
+                .with_bg(Color(200, 50, 50)),
+        );
+        grid.put(1, 0, Cell::new('B').with_fg(Color::GREEN));
+
+        let opts = SvgOptions {
+            cell_width: 12.0,
+            cell_height: 24.0,
+            font_family: "Courier New".to_string(),
+            font_size: 18,
+            default_bg: Color::BLACK,
+            cell_borders: true,
+            cell_border_color: Color(100, 100, 100),
+            cell_border_width: 1.0,
+        };
+        let svg = grid.to_svg_string_with_options(&opts);
+        assert!(svg.contains("Courier New"));
+        assert!(svg.contains("18px"));
+        assert!(svg.contains("stroke=\"rgb(100,100,100)\""));
+        assert!(svg.contains("fill=\"rgb(200,50,50)\""));
+
+        let default_svg = grid.to_svg_string();
+        assert!(default_svg.contains("monospace"));
+        assert!(default_svg.contains("14px"));
+        assert!(!default_svg.contains("stroke="));
+    }
+
+    #[test]
+    fn test_svg_options_cell_borders() {
+        let grid = Grid::new(1, 1);
+        let opts = SvgOptions {
+            cell_borders: true,
+            ..Default::default()
+        };
+        let svg = grid.to_svg_string_with_options(&opts);
+        assert!(svg.contains("stroke="));
+        assert!(svg.contains("stroke-width="));
     }
 }
 

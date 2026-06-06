@@ -23,20 +23,20 @@ pub use assets::{image_to_grid, image_to_grid_with_chroma_key};
 pub use assets::{VisualAsset, VisualRegistry};
 pub use camera::Camera;
 pub use color::{BlendMode, Color};
-pub use dialogue::{DialogueBox, DialogueState, DialogueTheme};
+pub use dialogue::{DialogueBox, DialogueState, DialogueTheme, Portrait, PortraitAnimation};
 pub use grid::{
     draw_sparkline, wrap_text, write_wrapped_text, Cell, CellAttrs, CellChange, FowVisibility,
-    Grid, RichTextSegment,
+    Grid, RichTextSegment, SvgOptions,
 };
 pub use layer::{Layer, Layers};
-pub use layout::{Alignment, BorderStyle, Constraint, Layout, GridLayout, Rect};
+pub use layout::{Alignment, BorderStyle, Constraint, GridLayout, Layout, Rect};
 pub use math::easing;
 pub use palette::ColorPalette;
 pub use sprite::{Frame, ResolutionTier, Sprite, SpriteSheet};
 pub use vfx::{
-    blend_color, emit_bloom, emit_burst, emit_homeward, emit_fire, emit_heal, emit_ice, emit_lightning,
-    emit_shatter, emit_shockwave, emit_slash, AoeRing, EasingMode, Flash, FloatingText, Particle,
-    ScreenShake, SpatialHighlight, Trajectory, VfxEmitter, VfxSystem,
+    blend_color, emit_bloom, emit_burst, emit_fire, emit_heal, emit_homeward, emit_ice,
+    emit_lightning, emit_shatter, emit_shockwave, emit_slash, AoeRing, EasingMode, Flash,
+    FloatingText, Particle, ScreenShake, SpatialHighlight, Trajectory, VfxEmitter, VfxSystem,
 };
 pub use viewport::TileViewport;
 pub use widgets::{
