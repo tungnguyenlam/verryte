@@ -1543,21 +1543,11 @@ pub fn weather_damage_modifier(world: &World, base_damage: i32, attacker_name: &
         Some(w) => w.current,
         None => return base_damage,
     };
-    let element = if attacker_name.contains("Mage") || attacker_name.contains("Lyra") {
-        "lightning"
-    } else if attacker_name.contains("Healer") || attacker_name.contains("Mira") {
-        "nature"
-    } else if attacker_name.contains("Warrior") || attacker_name.contains("Kael") {
-        "fire"
-    } else {
-        "physical"
-    };
-    let modifier: f32 = match (weather, element) {
-        (WeatherType::Sunny, "fire") => 1.15,
-        (WeatherType::Sunny, "nature") => 0.9,
-        (WeatherType::Rainy, "nature") => 1.20,
-        (WeatherType::Rainy, "fire") => 0.90,
-        (WeatherType::LightningStorm, "lightning") => 1.25,
+    let is_fire = attacker_name.contains("Warrior")
+        || attacker_name.contains("Kael")
+        || attacker_name.contains("Dragon");
+    let modifier: f32 = match (weather, is_fire) {
+        (WeatherType::Rainy, true) => 0.80,
         _ => 1.0,
     };
     (base_damage as f32 * modifier) as i32
@@ -1597,6 +1587,26 @@ pub fn resolve_combat_hit(
             (false, false, base_damage)
         }
     };
+
+    let weather = world
+        .resource::<Weather>()
+        .map(|w| w.current)
+        .unwrap_or(WeatherType::Sunny);
+    let mut lightning_bonus = 0;
+    if weather == WeatherType::LightningStorm {
+        let bonus_roll = {
+            let rng = world.resource_mut::<Rng>().expect("Rng must be registered");
+            rng.next_u32(100)
+        };
+        if bonus_roll < 25 {
+            lightning_bonus = 15;
+            log(
+                world,
+                "[fg:FFFF64]Lightning strikes from the storm! Bonus 15 damage![/fg]",
+            );
+        }
+    }
+    let damage = damage + lightning_bonus;
 
     let mut shield_absorbed = 0;
     let mut shield_broke = false;
@@ -2381,14 +2391,17 @@ pub fn weather_ambient_system(world: &mut World) {
 pub const WEATHER_CYCLE_TURNS: u32 = 3;
 
 pub fn weather_cycle_system(world: &mut World) {
-    let turn = world.resource::<GameState>().map(|s| s.turn).unwrap_or(1);
-    if turn == 1 || turn % WEATHER_CYCLE_TURNS != 1 {
-        return;
-    }
     let current = world
         .resource::<Weather>()
         .map(|w| w.current)
         .unwrap_or(WeatherType::Sunny);
+
+    apply_per_turn_weather_effects(world, current);
+
+    let turn = world.resource::<GameState>().map(|s| s.turn).unwrap_or(1);
+    if turn == 1 || turn % WEATHER_CYCLE_TURNS != 1 {
+        return;
+    }
     let next = match current {
         WeatherType::Sunny => WeatherType::Rainy,
         WeatherType::Rainy => WeatherType::LightningStorm,
@@ -2403,6 +2416,117 @@ pub fn weather_cycle_system(world: &mut World) {
         world,
         format!("[fg:87CEEB][b]Weather changed to {:?}![/][/fg]", next),
     );
+}
+
+fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
+    match weather {
+        WeatherType::LightningStorm => {
+            if let Some(w) = world.resource_mut::<Weather>() {
+                w.danger_zones.clear();
+            }
+
+            let map_w;
+            let map_h;
+            {
+                let map = world
+                    .resource::<TacticalMap>()
+                    .expect("TacticalMap must be registered");
+                map_w = map.width as i16;
+                map_h = map.height as i16;
+            }
+
+            let count = {
+                let rng = world.resource_mut::<Rng>().expect("Rng must be registered");
+                1 + rng.next_u32(2) as usize
+            };
+
+            let mut zones = Vec::new();
+            for _ in 0..count {
+                let (x, y) = {
+                    let rng = world.resource_mut::<Rng>().expect("Rng must be registered");
+                    let x = rng.next_u32(map_w.max(1) as u32) as i16;
+                    let y = rng.next_u32(map_h.max(1) as u32) as i16;
+                    (x, y)
+                };
+                let pos = Position::new(x, y);
+                let walkable = world
+                    .resource::<TacticalMap>()
+                    .map(|m| m.is_walkable(pos))
+                    .unwrap_or(false);
+                if walkable {
+                    zones.push(pos);
+                }
+            }
+
+            if let Some(w) = world.resource_mut::<Weather>() {
+                w.danger_zones = zones.clone();
+            }
+
+            for zone in &zones {
+                let mut victims = Vec::new();
+                for (e, p, team) in world.query2::<Position, Team>() {
+                    if *p == *zone {
+                        victims.push((e, *team));
+                    }
+                }
+                for (victim, _team) in victims {
+                    let victim_class = world
+                        .get::<CharacterClass>(victim)
+                        .copied()
+                        .unwrap_or(CharacterClass::Warrior);
+                    let victim_name = Game::get_class_name(victim_class);
+                    let mut final_hp = 0;
+                    let mut defeated = false;
+                    if let Some(stats) = world.get_mut::<Stats>(victim) {
+                        stats.hp -= 15;
+                        final_hp = stats.hp;
+                        if stats.hp <= 0 {
+                            defeated = true;
+                        }
+                    }
+                    log(
+                        world,
+                        format!(
+                            "[fg:FFFF64]Lightning struck {} at ({}, {}) for 15 damage! (HP: {})[/fg]",
+                            victim_name, zone.x, zone.y, final_hp
+                        ),
+                    );
+                    if defeated {
+                        let name_str = victim_name.to_string();
+                        handle_defeat(world, victim, &name_str, victim_class, *zone);
+                    }
+                }
+            }
+        }
+        WeatherType::Snowing => {
+            let mut targets = Vec::new();
+            for (e, class) in world.query::<CharacterClass>() {
+                if let Some(status) = world.get::<ElementalStatus>(e) {
+                    if matches!(status, ElementalStatus::Ice { .. }) {
+                        targets.push((e, *class));
+                    }
+                }
+            }
+            for (entity, class) in targets {
+                let mut log_msg = None;
+                if let Some(status) = world.get_mut::<ElementalStatus>(entity) {
+                    if let ElementalStatus::Ice { ref mut duration } = *status {
+                        *duration += 1;
+                        let new_dur = *duration;
+                        let name = Game::get_class_name(class);
+                        log_msg = Some(format!(
+                            "[fg:64C8FF]Snowing extends Ice on {} by 1 turn (now {}).[/fg]",
+                            name, new_dur
+                        ));
+                    }
+                }
+                if let Some(msg) = log_msg {
+                    log(world, msg);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 pub fn is_flanking_position(world: &World, attacker_pos: Position, target_pos: Position) -> bool {

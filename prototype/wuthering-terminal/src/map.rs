@@ -1,3 +1,4 @@
+use crate::components::WeatherType;
 use verryte_map::{Point, TileGrid};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -75,6 +76,43 @@ impl TacticalMap {
             Tile::Water | Tile::Lava => 2,
             Tile::Mud => 3,
             Tile::Wall => 999,
+        }
+    }
+
+    pub fn movement_cost_with_weather(&self, pt: Point, weather: WeatherType) -> i32 {
+        match (self.tile(pt.x, pt.y), weather) {
+            (Tile::Water, WeatherType::Rainy) => 1,
+            (Tile::Ice, WeatherType::Snowing) => 0,
+            _ => self.movement_cost(pt),
+        }
+    }
+
+    pub fn add_ice_patches(&mut self, seed: u64, patch_count: usize) {
+        let mut state = seed | 1;
+        let mut rng = || -> u64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        for _ in 0..patch_count {
+            let cx = (rng() % (self.width.saturating_sub(2)) as u64) as i16 + 1;
+            let cy = (rng() % (self.height.saturating_sub(2)) as u64) as i16 + 1;
+            for dx in -1i16..=1 {
+                for dy in -1i16..=1 {
+                    let x = cx + dx;
+                    let y = cy + dy;
+                    if x >= 0
+                        && x < self.width as i16
+                        && y >= 0
+                        && y < self.height as i16
+                        && self.tile(x, y) == Tile::Grass
+                    {
+                        self.tiles.set(Point::new(x, y), Tile::Ice);
+                    }
+                }
+            }
         }
     }
 

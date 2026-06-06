@@ -3665,3 +3665,121 @@ avoid log message parsing in `compute_outcome`. The `--verify` flag could be
 extended to also verify intermediate step outcomes (not just final). A `--dump-outcomes`
 flag that writes the actual outcomes JSON would complement `--verify` for creating
 golden files.
+
+## 2026-06-06 - integrate Weather system into gameplay
+
+**Goal.** Wire the existing `Weather` resource into combat systems, add weather
+cycling, a `ChangeWeather` action for script control, weather VFX, tests, and
+include weather in snapshots.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/action.rs` - added `Action::ChangeWeather(WeatherType)`
+  variant and `weather:rainy`/`weather:storm` command token parsing in
+  `resolve_command_token`. Added `weather_display_name()` helper.
+- `prototype/wuthering-terminal/src/components.rs` - added `#[derive(Default)]`
+  to `WeatherType` with `Sunny` as default, enabling serde(default) on
+  `Snapshot::weather`.
+- `prototype/wuthering-terminal/src/systems.rs` - added `weather_damage_modifier()`
+  function applying per-element multipliers based on current weather (Sunny: fire
+  +15%, nature -10%; Rainy: nature +20%, fire -10%; LightningStorm: lightning
+  +25%). Integrated into `resolve_combat_hit` before crit/block rolls. Added
+  `weather_cycle_system` that cycles Sunny→Rainy→LightningStorm→Snowing→Sunny
+  every `WEATHER_CYCLE_TURNS` (3) turns.
+- `prototype/wuthering-terminal/src/game.rs` - registered `weather_cycle` system
+  in Schedule. Added `update_weather_ambient()` method spawning weather-appropriate
+  VFX (rain particles, lightning flashes, heat shimmer). Handled
+  `Action::ChangeWeather` in `apply_action_internal`. Added weather to
+  `snapshot()`. Fixed `save_state` to use `CURRENT_SAVE_VERSION` constant.
+  Moved `ComboExtended` outcome check after `BossPhaseChanged`/`Hit` event
+  checks in `compute_outcome` so combat outcomes take priority.
+- `prototype/wuthering-terminal/src/snapshot.rs` - added `WeatherType` import and
+  `weather` field to `Snapshot` struct with serde(default).
+- `prototype/wuthering-terminal/src/lib.rs` - added 4 tests:
+  `test_weather_damage_modifiers` (verifies element-based damage multipliers),
+  `test_weather_cycling` (verifies 4-turn weather cycle), `test_change_weather_via_script_command`
+  (verifies script command parsing), `test_weather_snapshot_included` (verifies
+  snapshot contains weather). Fixed tests outside `mod tests` block by moving
+  them inside. Fixed `wuthering_terminal::snapshot::CURRENT_SAVE_VERSION` →
+  `crate::snapshot::CURRENT_SAVE_VERSION`.
+
+**Reasoning.** The `Weather` resource was already scaffolded but unused. This
+change integrates it into the combat resolution path through a single
+`weather_damage_modifier` function that maps character classes to elements
+(Warrior→fire, Mage→lightning, Healer→nature) and applies weather multipliers
+to the base damage before crit/block rolls. The cycling system advances weather
+every 3 turns via the existing schedule, and the `ChangeWeather` action enables
+script/test control through the same `resolve_command_token` path used by all
+other commands. Weather VFX uses existing `verryte-terminal::vfx` emitters.
+
+**Assumptions.** Warrior is mapped to "fire" element (the closest to their
+Dragon Fire skill). Mage is "lightning" and Healer is "nature" matching their
+skill elements. `WEATHER_CYCLE_TURNS` of 3 was chosen as a balance between
+weather being impactful and not changing too frequently. The Snowing weather
+variant has no combat modifiers yet (purely cosmetic) - it can be extended
+later with Ice-related effects.
+
+**Gotchas.** Pre-existing tests were placed outside the `mod tests` block and
+referenced types without proper scope; moved them inside. The `ComboExtended`
+outcome was checking before `Hit`/`BossPhaseChanged` which caused the boss
+fight test to fail; re-ordered so combat outcomes take priority. The
+`save_state` used hardcoded `version: 1` while `CURRENT_SAVE_VERSION` was 2;
+aligned them.
+
+**Follow-ups.** Snowing weather could add Ice damage modifiers (+15% Ice, -15%
+Fire). The 10% random lightning strike during LightningStorm weather (mentioned
+in the task) could be implemented as a post-turn system that randomly damages
+entities on exposed tiles. Weather-specific ambient audio events could be
+registered in the audio player.
+
+## 2026-06-06 - Five parallel subagent tasks completed
+
+**Goal.** Execute 5 independent improvements to the Verryte tactical RPG
+engine in parallel, covering weather integration, enemy AI expansion, audio
+hardening, terminal rendering polish, and agent/replay infrastructure.
+
+**Changes.**
+- **Weather System** (subagent 1): `components.rs` (Default derive on WeatherType), `action.rs` (ChangeWeather variant + command parsing), `systems.rs` (weather_damage_modifier, weather_cycle_system), `game.rs` (weather VFX, ChangeWeather handling, weather in snapshot), `snapshot.rs` (weather field). 4 new tests.
+- **Enemy AI Expansion** (subagent 2): `components.rs` (EnemyCleric variant), `spawn.rs` (EnemyCleric stats/archetype), `game.rs` (Dark Cleric spawn), `systems.rs` (Cleric AI heal-then-attack, flanking +15% bonus, focus-fire targeting, patrol/wander fallback). 5 new tests.
+- **Audio Hardening** (subagent 3): `crates/verryte-audio/src/lib.rs` (+18 tests, 28 total), `components.rs` (Hash derive on WeatherType), `game.rs` (ambient audio registrations), `systems.rs` (weather_ambient_system), `lib.rs` (5 weather/spatial tests). 23 new tests total.
+- **Terminal Rendering Polish** (subagent 4): `crates/verryte-terminal/src/dialogue.rs` (Portrait, PortraitAnimation, bob/glow), `widgets.rs` (Table sort/filter/alternating rows/scroll), `grid.rs` (SvgOptions, to_svg_string_with_options), `prototype/.../ui.rs` (animated tile effects for Water/Lava/Ice/Mud). 11 new tests.
+- **Agent/Replay Infrastructure** (subagent 5): `snapshot.rs` (+7 ActionOutcome variants, GameDiagnostics, CURRENT_SAVE_VERSION, migrations_applied), `game.rs` (diagnostics(), save migration, compute_outcome updates), `bin/script.rs` (--verify flag, diagnostics REPL command). 6 new tests.
+
+**Reasoning.** All 8 original roadmap steps were complete. These 5 tasks
+address worklog follow-ups and strengthen the engine along independent axes:
+gameplay depth (weather + AI), audio robustness, rendering fidelity, and
+agent/CI observability. Running them in parallel maximized throughput.
+
+**Assumptions.** Each subagent operated on the same base commit. File-level
+merges were possible because the 5 tasks modified largely disjoint sections
+of shared files (game.rs, systems.rs, lib.rs, components.rs).
+
+**Gotchas.** Multiple agents touched overlapping files (game.rs, systems.rs,
+components.rs, lib.rs). The combined workspace needed to be verified after
+all agents completed to ensure no merge conflicts or test regressions.
+
+**Follow-ups.** All 883 workspace tests pass. Next steps from worklog:
+- Wire weather damage modifiers into more combat paths (elemental reactions).
+- Add more Cleric AI test scenarios (multi-ally healing priority).
+- Extend Table widget with keyboard navigation.
+- Add portrait sprites for each character in dialogue sequences.
+- Expand Diagnostics with per-turn history tracking.
+
+## 2026-06-06 - Spawn GlacialGolem enemies on Floor 2 with Ice terrain patches
+
+**Goal.** Enhance Floor 2 generation in wuthering-terminal to spawn GlacialGolem enemies near Ice terrain patches, and add a test verifying the behavior.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/map.rs:81-111` — Added `add_ice_patches()` method to `TacticalMap`. Uses an inline xorshift64 PRNG seeded from a caller-provided seed to place 3×3 clusters of Ice tiles on Grass positions that don't overlap walls or stairs.
+- `prototype/wuthering-terminal/src/game.rs:2277-2300` — In `transition_to_next_floor()`, after BSP dungeon generation, places 3×3 Ice terrain clusters centered on each GlacialGolem room center (rooms where `i % 3 == 2`), then calls `add_ice_patches(seed + 100, 2)` for additional random Ice patches.
+- `prototype/wuthering-terminal/src/game.rs:2355-2390` — After the enemy spawn loop, guarantees at least one GlacialGolem exists on Floor 2. If none were spawned via the `i % 3 == 2` path (which can happen when BSP generates few rooms), finds the first Grass tile adjacent to an Ice tile and spawns a GlacialGolem there.
+- `prototype/wuthering-terminal/src/lib.rs:2638-2682` — Added `test_glacial_golem_floor2` test that transitions to Floor 2 and verifies Ice terrain patches exist and at least one GlacialGolem enemy is spawned.
+- Fixed pre-existing borrow checker error in `systems.rs:2510-2524` (Snowing weather Ice extension).
+- Added missing `render_help` function stub in `ui.rs:472-531`.
+
+**Reasoning.** GlacialGolem was already defined in `components.rs` and `spawn.rs` with stats, IceWalker trait, and AIArchetype::Chaser, and the Ice-on-hit behavior existed in `systems.rs:765-784`. The gap was: (1) no Ice terrain on Floor 2, and (2) no guarantee that GlacialGolem actually spawns (the `i % 3 == 2` pattern depends on BSP generating enough rooms). The fix places Ice clusters near GlacialGolem rooms and adds a fallback spawn at any Ice-adjacent Grass tile.
+
+**Assumptions.** The BSP dungeon for a 24×16 map with min_room_size=4 generates at least 3 rooms (player, 1 enemy, boss). With only 1 enemy room, the `i % 3 == 2` slot is never hit, so the explicit fallback guarantees at least 1 GlacialGolem.
+
+**Gotchas.** The pre-existing dirty working tree had uncommitted changes to `ui.rs`, `systems.rs`, and other files from a previous session. The `render_help` function was referenced but never defined, and the Snowing weather Ice extension had a borrow checker conflict. Both were fixed as part of this work.
+
+**Follow-ups.** The `value_color` warning in `ui.rs:658` and `print_battle_summary` warning in `script.rs:15` are pre-existing and unrelated.

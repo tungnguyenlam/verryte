@@ -385,6 +385,12 @@ impl Game {
             }
         }
 
+        boosted_base_damage = crate::systems::weather_damage_modifier(
+            &self.world,
+            boosted_base_damage,
+            attacker_name,
+        );
+
         let (is_crit, is_block, damage) = {
             let rng = self.world.resource_mut::<Rng>().unwrap();
             let roll = rng.next_u32(100);
@@ -396,6 +402,24 @@ impl Game {
                 (false, false, boosted_base_damage)
             }
         };
+
+        let weather = self
+            .world
+            .resource::<crate::components::Weather>()
+            .map(|w| w.current)
+            .unwrap_or(crate::components::WeatherType::Sunny);
+        let mut lightning_bonus = 0;
+        if weather == crate::components::WeatherType::LightningStorm {
+            let bonus_roll = {
+                let rng = self.world.resource_mut::<Rng>().unwrap();
+                rng.next_u32(100)
+            };
+            if bonus_roll < 25 {
+                lightning_bonus = 15;
+                self.log("[fg:FFFF64]Lightning strikes from the storm! Bonus 15 damage![/fg]");
+            }
+        }
+        let damage = damage + lightning_bonus;
 
         let mut defeated = false;
         let mut final_hp = 0;
@@ -692,6 +716,11 @@ impl Game {
         }
 
         let map = self.world.resource::<TacticalMap>().unwrap();
+        let weather = self
+            .world
+            .resource::<crate::components::Weather>()
+            .map(|w| w.current)
+            .unwrap_or(crate::components::WeatherType::Sunny);
 
         let mut occupied = HashSet::new();
         for (e, p) in self.world.query::<Position>() {
@@ -725,7 +754,7 @@ impl Game {
                 if matches!(tile, Tile::Wall) {
                     continue;
                 }
-                let move_cost = map.movement_cost(neighbor);
+                let move_cost = map.movement_cost_with_weather(neighbor, weather);
                 let new_cost = cost_so_far + move_cost;
                 if new_cost <= max_ap {
                     let entry = best_cost.entry(neighbor).or_insert(i32::MAX);
@@ -743,6 +772,11 @@ impl Game {
     pub fn get_path_to(&self, entity: Entity, target: Position) -> Option<Vec<Position>> {
         let pos = *self.world.get::<Position>(entity)?;
         let map = self.world.resource::<TacticalMap>().unwrap();
+        let weather = self
+            .world
+            .resource::<crate::components::Weather>()
+            .map(|w| w.current)
+            .unwrap_or(crate::components::WeatherType::Sunny);
         let mut occupied = HashSet::new();
         for (e, p) in self.world.query::<Position>() {
             if e != entity && self.world.get::<Team>(e).is_some() {
@@ -758,10 +792,15 @@ impl Game {
                     Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice | Tile::Stairs | Tile::Mud
                 ) && !occupied.contains(&pt)
             },
-            |_from, _to, tile| match tile {
-                Tile::Water | Tile::Lava => 2,
-                Tile::Mud => 3,
-                _ => 1,
+            |_from, to, tile| {
+                let pt = to;
+                match (tile, weather) {
+                    (Tile::Water, crate::components::WeatherType::Rainy) => 1,
+                    (Tile::Ice, crate::components::WeatherType::Snowing) => 0,
+                    (Tile::Water | Tile::Lava, _) => 2,
+                    (Tile::Mud, _) => 3,
+                    _ => 1,
+                }
             },
         )
     }
@@ -2275,6 +2314,30 @@ impl Game {
 
         self.world.insert_resource(map);
 
+        // Place Ice terrain patches near GlacialGolem spawn rooms
+        {
+            let map = self.world.resource_mut::<TacticalMap>().unwrap();
+            for (i, &rc) in room_centers.iter().enumerate().skip(1) {
+                if i < room_centers.len() - 1 && i % 3 == 2 {
+                    for dx in -1i16..=1 {
+                        for dy in -1i16..=1 {
+                            let x = rc.x + dx;
+                            let y = rc.y + dy;
+                            if x >= 0
+                                && x < width as i16
+                                && y >= 0
+                                && y < height as i16
+                                && map.tile(x, y) == Tile::Grass
+                            {
+                                map.tiles.set(Position::new(x, y), Tile::Ice);
+                            }
+                        }
+                    }
+                }
+            }
+            map.add_ice_patches(seed + 100, 2);
+        }
+
         // 4. Position players in the first room center
         let player_spawn = room_centers.first().copied().unwrap_or(Position::new(4, 4));
         let mut player_entities = Vec::new();
@@ -2337,6 +2400,41 @@ impl Game {
                         CharacterClass::GlacialGolem,
                     );
                 }
+            }
+        }
+
+        // 5b. Guarantee at least one GlacialGolem near Ice terrain
+        let has_golem = self
+            .world
+            .query2::<CharacterClass, Team>()
+            .iter()
+            .any(|(_, c, t)| **c == CharacterClass::GlacialGolem && **t == Team::Enemy);
+        if !has_golem {
+            let map = self.world.resource::<TacticalMap>().unwrap();
+            let mut ice_adjacent = None;
+            for y in 1..(height as i16 - 1) {
+                for x in 1..(width as i16 - 1) {
+                    if map.tile(x, y) == Tile::Ice {
+                        for (dx, dy) in &[(0i16, -1i16), (0, 1), (-1, 0), (1, 0)] {
+                            let nx = x + dx;
+                            let ny = y + dy;
+                            if map.tile(nx, ny) == Tile::Grass {
+                                ice_adjacent = Some(Position::new(nx, ny));
+                                break;
+                            }
+                        }
+                    }
+                    if ice_adjacent.is_some() {
+                        break;
+                    }
+                }
+                if ice_adjacent.is_some() {
+                    break;
+                }
+            }
+            if let Some(pos) = ice_adjacent {
+                self.world
+                    .spawn_character(pos, Team::Enemy, CharacterClass::GlacialGolem);
             }
         }
 
@@ -2840,6 +2938,7 @@ impl Game {
                 | Action::ToggleInventory
                 | Action::TogglePerf
                 | Action::ToggleMinimap
+                | Action::ToggleHelp
                 | Action::AutoBattle
         ) {
             return ActionOutcome::StateUpdated;
@@ -2953,6 +3052,20 @@ impl Game {
                 }
                 Action::UseItem(_) | Action::Quit => {} // Allow these to fall through
                 _ => return,                            // Ignore others in inventory
+            }
+        }
+
+        if self.world.resource::<GameState>().unwrap().ui_state == crate::components::UIState::Help
+        {
+            match action {
+                Action::Cancel | Action::ToggleHelp => {
+                    self.world.resource_mut::<GameState>().unwrap().ui_state =
+                        crate::components::UIState::Normal;
+                    self.log("Help closed.");
+                    return;
+                }
+                Action::Quit => {} // Allow quit to fall through
+                _ => return,       // Ignore others in help overlay
             }
         }
 
@@ -3268,10 +3381,15 @@ impl Game {
                                 if let Some(path) = self.get_path_to(sel_entity, cursor) {
                                     let (total_cost, dest_tile) = {
                                         let map = self.world.resource::<TacticalMap>().unwrap();
+                                        let weather = self
+                                            .world
+                                            .resource::<crate::components::Weather>()
+                                            .map(|w| w.current)
+                                            .unwrap_or(crate::components::WeatherType::Sunny);
                                         let total_cost: i32 = path
                                             .iter()
                                             .skip(1)
-                                            .map(|p| map.movement_cost(*p))
+                                            .map(|p| map.movement_cost_with_weather(*p, weather))
                                             .sum();
                                         let dest_tile = map.tile(cursor.x, cursor.y);
                                         (total_cost, dest_tile)
@@ -3783,6 +3901,16 @@ impl Game {
                     }
                 } else {
                     self.log("Select a character first to view their inventory!");
+                }
+            }
+            Action::ToggleHelp => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.ui_state == crate::components::UIState::Help {
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.log("Help closed.");
+                } else {
+                    state.ui_state = crate::components::UIState::Help;
+                    self.log("Help overlay opened. Press [?] or [Esc] to close.");
                 }
             }
             Action::EndTurn => {

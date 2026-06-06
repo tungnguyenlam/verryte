@@ -1,5 +1,6 @@
 use crate::components::{
-    CharacterClass, ElementalStatus, GameState, Rooted, Stats, Team, TurnPhase,
+    BattleStats, CharacterClass, ElementalStatus, GameState, Outcome, Rooted, Stats, Team,
+    TurnPhase,
 };
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
@@ -462,6 +463,64 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     if state.ui_state == crate::components::UIState::Inventory {
         render_inventory(grid, world, term_w, term_h);
     }
+
+    // Render Overlay if in Help state
+    if state.ui_state == crate::components::UIState::Help {
+        render_help(grid, term_w, term_h);
+    }
+}
+
+pub fn render_help(grid: &mut Grid, term_w: u16, term_h: u16) {
+    let panel_w: u16 = 48.min(term_w.saturating_sub(4));
+    let panel_h: u16 = 20.min(term_h.saturating_sub(2));
+    let panel_x = (term_w.saturating_sub(panel_w)) / 2;
+    let panel_y = (term_h.saturating_sub(panel_h)) / 2;
+    let panel_bg = Color(15, 15, 25);
+
+    let rect = verryte_terminal::Rect::new(panel_x, panel_y, panel_w, panel_h);
+    grid.fill_rect(rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(rect, " HELP ", Color::CYAN, panel_bg, Color::WHITE);
+
+    let help_lines = [
+        "Arrow keys / hjkl - Move cursor",
+        "Enter / Space    - Confirm action",
+        "Tab              - Swap character",
+        "1/2/3            - Skills",
+        "i                - Inventory",
+        "?                - Toggle help",
+        "Esc              - Cancel / Close",
+        ">                - Descend stairs",
+        ".                - Wait (end turn)",
+        "w/s              - Weather cycle",
+    ];
+
+    let left_x = panel_x + 3;
+    let mut row = panel_y + 2;
+    for line in &help_lines {
+        if row >= panel_y + panel_h - 2 {
+            break;
+        }
+        let max_w = (panel_w.saturating_sub(6)) as usize;
+        let truncated = if line.len() > max_w {
+            &line[..max_w]
+        } else {
+            line
+        };
+        grid.write_str(left_x, row, truncated, Color::WHITE, panel_bg);
+        row += 1;
+    }
+
+    let hint = "Press [?] or [Esc] to close";
+    let hint_x = panel_x + (panel_w.saturating_sub(hint.len() as u16)) / 2;
+    if panel_y + panel_h >= 2 {
+        grid.write_str(
+            hint_x,
+            panel_y + panel_h - 2,
+            hint,
+            Color(100, 100, 120),
+            panel_bg,
+        );
+    }
 }
 
 pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
@@ -541,6 +600,259 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
         Color::CYAN,
         panel_bg,
     );
+}
+
+pub fn render_help(grid: &mut Grid, term_w: u16, term_h: u16) {
+    let layout = verryte_terminal::Layout::vertical()
+        .add_percent(5)
+        .add_percent(90)
+        .add_percent(5)
+        .split(verryte_terminal::Rect::new(0, 0, term_w, term_h));
+
+    let main_rect = layout[1];
+    let sub_layout = verryte_terminal::Layout::horizontal()
+        .add_percent(15)
+        .add_percent(70)
+        .add_percent(15)
+        .split(main_rect);
+
+    let panel_rect = sub_layout[1];
+    let panel_bg = Color(15, 15, 25);
+    grid.fill_rect(panel_rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        panel_rect,
+        " HELP / CONTROLS ",
+        Color::CYAN,
+        panel_bg,
+        Color::WHITE,
+    );
+
+    let left_col_x = panel_rect.x + 2;
+    let right_col_x = panel_rect.x + (panel_rect.width / 2) + 1;
+    let mut y = panel_rect.y + 2;
+    let bottom = panel_rect.bottom() - 2;
+
+    let controls: &[(&str, &str)] = &[
+        ("WASD / Arrows", "Move cursor"),
+        ("Enter", "Confirm / Select"),
+        ("Esc", "Cancel / Back"),
+        ("E", "End Turn"),
+        ("Tab", "Cycle characters"),
+        ("1, 2, 3", "Skills (or QTE Swap)"),
+        ("4, 5, 6", "Direct swap to char"),
+        ("I", "Open inventory"),
+        ("1-9 (in inv)", "Use inventory item"),
+        ("F5", "Save game"),
+        ("F9", "Load game"),
+        ("B", "Auto battle toggle"),
+        ("R", "Step to safety"),
+        ("M", "Toggle minimap"),
+        ("U / Y", "Undo / Redo"),
+        ("F3", "Performance overlay"),
+        (">", "Descend stairs"),
+        ("F10", "Toggle recording"),
+        ("F11 / F12 / P", "Replay controls"),
+        ("?", "This help overlay"),
+        ("Q", "Quit game"),
+    ];
+
+    for &(key, desc) in controls {
+        if y >= bottom {
+            break;
+        }
+        grid.write_str(left_col_x, y, key, Color::YELLOW, panel_bg);
+        grid.write_str(left_col_x + 18, y, desc, Color::WHITE, panel_bg);
+        y += 1;
+    }
+
+    let mut ry = panel_rect.y + 2;
+    grid.write_str(right_col_x, ry, "MECHANICS", Color(255, 215, 0), panel_bg);
+    ry += 2;
+
+    let mechanics: &[&str] = &[
+        "Move to an enemy tile to attack.",
+        "Skills cost AP to use.",
+        "",
+        "QTE Swap: Costs 100 Concert",
+        "Energy. Each character has an",
+        "intro skill on swap-in.",
+        "",
+        "Telegraphed attacks shown in",
+        "RED tiles. Attack the boss to",
+        "Parry and stun it.",
+        "",
+        "Defeated enemies may drop",
+        "Echoes. Move a character to",
+        "the tile to absorb and gain",
+        "new abilities.",
+        "",
+        "Elemental reactions:",
+        "  Ice + Lightning = Shatter",
+        "  Lightning + Nature = Overgrow",
+        "  Nature + Ice = Bloom",
+        "",
+        "Terrain costs: Water=2 AP,",
+        "  Mud=3 AP, Ice is slippery.",
+    ];
+
+    for &line in mechanics {
+        if ry >= bottom {
+            break;
+        }
+        if line.is_empty() {
+            ry += 1;
+            continue;
+        }
+        let color = if line.starts_with("  ") {
+            Color(200, 200, 200)
+        } else {
+            Color::WHITE
+        };
+        grid.write_str(right_col_x, ry, line, color, panel_bg);
+        ry += 1;
+    }
+
+    grid.write_str(
+        panel_rect.x + 2,
+        bottom,
+        "Press [?] or [Esc] to close.",
+        Color::CYAN,
+        panel_bg,
+    );
+}
+
+pub fn render_battle_summary(
+    grid: &mut Grid,
+    world: &World,
+    outcome: Outcome,
+    term_w: u16,
+    term_h: u16,
+) {
+    let panel_w: u16 = 48.min(term_w.saturating_sub(4));
+    let panel_h: u16 = 20.min(term_h.saturating_sub(2));
+    let panel_x = (term_w.saturating_sub(panel_w)) / 2;
+    let panel_y = (term_h.saturating_sub(panel_h)) / 2;
+    let panel_bg = Color(15, 15, 25);
+
+    let rect = verryte_terminal::Rect::new(panel_x, panel_y, panel_w, panel_h);
+    grid.fill_rect(rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        rect,
+        " BATTLE SUMMARY ",
+        Color::CYAN,
+        panel_bg,
+        Color::WHITE,
+    );
+
+    let title = match outcome {
+        Outcome::Victory => "VICTORY!",
+        Outcome::Defeat => "DEFEAT",
+        _ => "BATTLE ENDED",
+    };
+    let title_color = match outcome {
+        Outcome::Victory => Color(255, 215, 0),
+        Outcome::Defeat => Color(255, 50, 50),
+        _ => Color::WHITE,
+    };
+    let title_x = panel_x + (panel_w.saturating_sub(title.len() as u16)) / 2;
+    grid.write_str(title_x, panel_y + 2, title, title_color, panel_bg);
+
+    let state = world.resource::<GameState>().unwrap();
+    let stats = world.resource::<BattleStats>().cloned().unwrap_or_default();
+
+    let echoes = world
+        .resource::<crate::components::EquippedEchoes>()
+        .map(|e| {
+            e.abilities
+                .iter()
+                .map(|a| format!("{:?}", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|| "None".to_string());
+
+    let left_x = panel_x + 3;
+    let mut row = panel_y + 4;
+    let label_color = Color(160, 180, 200);
+    let value_color = Color::WHITE;
+    let line_gap = 1u16;
+
+    let rows: Vec<(&str, String, Color)> = vec![
+        ("Floor", format!("{}", state.floor), Color(200, 200, 200)),
+        (
+            "Turns",
+            format!("{}", stats.total_turns),
+            Color(200, 200, 200),
+        ),
+        (
+            "Damage Dealt",
+            format!("{}", stats.total_damage_dealt),
+            Color(255, 120, 80),
+        ),
+        (
+            "Damage Taken",
+            format!("{}", stats.total_damage_taken),
+            Color(255, 80, 80),
+        ),
+        (
+            "Healing Done",
+            format!("{}", stats.total_healing_done),
+            Color(80, 255, 80),
+        ),
+        (
+            "Enemies Killed",
+            format!("{}", stats.total_kills),
+            Color(255, 200, 50),
+        ),
+        (
+            "Max Combo",
+            format!("x{}", stats.max_combo_reached),
+            Color(255, 160, 50),
+        ),
+        (
+            "Team Swaps",
+            format!("{}", stats.total_swaps),
+            Color(153, 51, 255),
+        ),
+        (
+            "Concert Energy",
+            format!("{}/100", state.concert_energy),
+            Color(100, 200, 255),
+        ),
+        ("Equipped Echoes", echoes, Color(255, 215, 0)),
+    ];
+
+    let max_label_w = rows.iter().map(|(l, _, _)| l.len()).max().unwrap_or(0) as u16;
+
+    for (label, value, val_color) in &rows {
+        if row >= panel_y + panel_h - 3 {
+            break;
+        }
+        grid.write_str(left_x, row, label, label_color, panel_bg);
+        let vx = left_x + max_label_w + 2;
+        if vx < panel_x + panel_w - 2 {
+            let max_val = (panel_x + panel_w - 2 - vx) as usize;
+            let truncated = if value.len() > max_val && max_val > 3 {
+                format!("{}...", &value[..max_val - 3])
+            } else {
+                value.clone()
+            };
+            grid.write_str(vx, row, &truncated, *val_color, panel_bg);
+        }
+        row += line_gap;
+    }
+
+    let hint = "Press any key to exit...";
+    let hint_x = panel_x + (panel_w.saturating_sub(hint.len() as u16)) / 2;
+    if panel_y + panel_h >= 2 {
+        grid.write_str(
+            hint_x,
+            panel_y + panel_h - 2,
+            hint,
+            Color(100, 100, 120),
+            panel_bg,
+        );
+    }
 }
 
 fn get_entity_at(

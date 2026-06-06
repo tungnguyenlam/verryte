@@ -2637,6 +2637,52 @@ mod tests {
     }
 
     #[test]
+    fn test_glacial_golem_floor2() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query3::<Position, Team, CharacterClass>()
+            .iter()
+            .find(|(_, _, team, class)| {
+                **team == Team::Player && **class == CharacterClass::Warrior
+            })
+            .map(|(e, _, _, _)| *e)
+            .unwrap();
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(kael);
+        }
+
+        let player_pos = *game.world.get::<Position>(kael).unwrap();
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(player_pos, Tile::Stairs);
+        }
+
+        game.apply_action(Action::NextFloor, ActionSource::Terminal);
+        assert_eq!(game.world.resource::<GameState>().unwrap().floor, 2);
+
+        let map = game.world.resource::<TacticalMap>().unwrap();
+        let mut ice_count = 0;
+        for &tile in map.tiles.tiles() {
+            if tile == Tile::Ice {
+                ice_count += 1;
+            }
+        }
+        assert!(ice_count > 0, "Floor 2 should contain Ice terrain patches");
+
+        let mut golem_found = false;
+        for (_, class, team) in game.world.query2::<CharacterClass, Team>().iter() {
+            if **class == CharacterClass::GlacialGolem && **team == Team::Enemy {
+                golem_found = true;
+                break;
+            }
+        }
+        assert!(golem_found, "GlacialGolem should be spawned on Floor 2");
+    }
+
+    #[test]
     fn test_character_passive_traits() {
         let mut game = Game::new();
         let kael = game
@@ -3667,6 +3713,70 @@ mod tests {
     }
 
     #[test]
+    fn test_json_output_structure() {
+        let mut game = Game::new();
+        *game.world.resource_mut::<verryte_core::Rng>().unwrap() = verryte_core::Rng::seed(42);
+
+        let count = game
+            .router
+            .inject_script_with(
+                &default_commands(),
+                "inspect:4,4 confirm",
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let reports = game.run_pending_reports();
+        assert_eq!(reports.len(), 2);
+
+        let diag = game.diagnostics();
+        let snap = game.snapshot();
+
+        let output = serde_json::json!({
+            "seed": 42u64,
+            "steps": reports,
+            "diagnostics": diag,
+            "snapshot": snap,
+            "outcome": format!("{:?}", game.outcome()),
+        });
+
+        let json_str = serde_json::to_string_pretty(&output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed["seed"], 42);
+        assert!(parsed["steps"].is_array());
+        assert_eq!(parsed["steps"].as_array().unwrap().len(), 2);
+        assert!(parsed["diagnostics"].is_object());
+        assert!(parsed["diagnostics"]["alive_entities"].as_u64().unwrap() > 0);
+        assert!(parsed["snapshot"].is_object());
+        assert_eq!(parsed["snapshot"]["turn"], 1);
+        assert_eq!(parsed["outcome"], "Playing");
+    }
+
+    #[test]
+    fn test_seed_override_determinism() {
+        let mut game1 = Game::new();
+        *game1.world.resource_mut::<verryte_core::Rng>().unwrap() = verryte_core::Rng::seed(99);
+
+        let mut game2 = Game::new();
+        *game2.world.resource_mut::<verryte_core::Rng>().unwrap() = verryte_core::Rng::seed(99);
+
+        let rng1 = game1
+            .world
+            .resource_mut::<verryte_core::Rng>()
+            .unwrap()
+            .next_u32(1000);
+        let rng2 = game2
+            .world
+            .resource_mut::<verryte_core::Rng>()
+            .unwrap()
+            .next_u32(1000);
+        assert_eq!(rng1, rng2, "Same seed should produce same first RNG value");
+    }
+
+    #[test]
     fn test_combo_extended_outcome_detection() {
         let mut game = Game::new();
 
@@ -3708,5 +3818,39 @@ mod tests {
             | ActionOutcome::Blocked { .. } => {}
             _ => {}
         }
+    }
+
+    #[test]
+    fn test_help_overlay_toggle() {
+        let mut game = Game::new();
+
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Normal
+        );
+
+        game.apply_action(Action::ToggleHelp, ActionSource::Terminal);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Help
+        );
+
+        game.apply_action(Action::Cancel, ActionSource::Terminal);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Normal
+        );
+
+        game.apply_action(Action::ToggleHelp, ActionSource::Terminal);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Help
+        );
+
+        game.apply_action(Action::ToggleHelp, ActionSource::Terminal);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Normal
+        );
     }
 }
