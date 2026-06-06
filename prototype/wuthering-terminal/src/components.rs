@@ -99,6 +99,7 @@ impl Default for BossConfig {
 pub enum UIState {
     Normal,
     Inventory,
+    Help,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

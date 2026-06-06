@@ -3510,20 +3510,34 @@ impl Game {
                                         let final_dest_tile = map.tile(final_dest.x, final_dest.y);
                                         // Check for Lava damage on player movement
                                         if final_dest_tile == Tile::Lava {
+                                            let lava_dmg = {
+                                                let w = self
+                                                    .world
+                                                    .resource::<crate::components::Weather>()
+                                                    .map(|w| w.current)
+                                                    .unwrap_or(
+                                                        crate::components::WeatherType::Sunny,
+                                                    );
+                                                if w == crate::components::WeatherType::Rainy {
+                                                    16
+                                                } else {
+                                                    20
+                                                }
+                                            };
                                             let mut final_hp = 0;
                                             let mut defeated = false;
                                             if let Some(stats) =
                                                 self.world.get_mut::<Stats>(sel_entity)
                                             {
-                                                stats.hp = std::cmp::max(0, stats.hp - 20);
+                                                stats.hp = std::cmp::max(0, stats.hp - lava_dmg);
                                                 final_hp = stats.hp;
                                                 if stats.hp <= 0 {
                                                     defeated = true;
                                                 }
                                             }
                                             self.log(format!(
-                                                "{} stepped into LAVA and took 20 damage! (HP: {})",
-                                                char_name, final_hp
+                                                "{} stepped into LAVA and took {} damage! (HP: {})",
+                                                char_name, lava_dmg, final_hp
                                             ));
 
                                             // Spawn fire/lava particles

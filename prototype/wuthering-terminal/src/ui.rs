@@ -470,59 +470,6 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     }
 }
 
-pub fn render_help(grid: &mut Grid, term_w: u16, term_h: u16) {
-    let panel_w: u16 = 48.min(term_w.saturating_sub(4));
-    let panel_h: u16 = 20.min(term_h.saturating_sub(2));
-    let panel_x = (term_w.saturating_sub(panel_w)) / 2;
-    let panel_y = (term_h.saturating_sub(panel_h)) / 2;
-    let panel_bg = Color(15, 15, 25);
-
-    let rect = verryte_terminal::Rect::new(panel_x, panel_y, panel_w, panel_h);
-    grid.fill_rect(rect, Cell::new(' ').with_bg(panel_bg));
-    grid.draw_rounded_panel(rect, " HELP ", Color::CYAN, panel_bg, Color::WHITE);
-
-    let help_lines = [
-        "Arrow keys / hjkl - Move cursor",
-        "Enter / Space    - Confirm action",
-        "Tab              - Swap character",
-        "1/2/3            - Skills",
-        "i                - Inventory",
-        "?                - Toggle help",
-        "Esc              - Cancel / Close",
-        ">                - Descend stairs",
-        ".                - Wait (end turn)",
-        "w/s              - Weather cycle",
-    ];
-
-    let left_x = panel_x + 3;
-    let mut row = panel_y + 2;
-    for line in &help_lines {
-        if row >= panel_y + panel_h - 2 {
-            break;
-        }
-        let max_w = (panel_w.saturating_sub(6)) as usize;
-        let truncated = if line.len() > max_w {
-            &line[..max_w]
-        } else {
-            line
-        };
-        grid.write_str(left_x, row, truncated, Color::WHITE, panel_bg);
-        row += 1;
-    }
-
-    let hint = "Press [?] or [Esc] to close";
-    let hint_x = panel_x + (panel_w.saturating_sub(hint.len() as u16)) / 2;
-    if panel_y + panel_h >= 2 {
-        grid.write_str(
-            hint_x,
-            panel_y + panel_h - 2,
-            hint,
-            Color(100, 100, 120),
-            panel_bg,
-        );
-    }
-}
-
 pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     let state = world.resource::<GameState>().unwrap();
     let Some(selected) = state.selected_entity else {

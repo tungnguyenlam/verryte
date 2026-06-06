@@ -37,6 +37,7 @@ pub enum Action {
     NextFloor,
     CraftItem(usize, usize),
     ChangeWeather(crate::components::WeatherType),
+    ToggleHelp,
 }
 
 impl Action {
@@ -116,6 +117,11 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('Y'), Action::Redo);
     b.bind(Key::Char('>'), Action::NextFloor);
 
+    // Help
+    b.bind(Key::Char('?'), Action::ToggleHelp);
+    b.bind(Key::Char('h'), Action::ToggleHelp);
+    b.bind(Key::Char('H'), Action::ToggleHelp);
+
     b
 }
 
@@ -145,6 +151,7 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("stairs", Action::NextFloor);
 
     c.bind_name("next_floor", Action::NextFloor);
+    c.bind_name("help", Action::ToggleHelp);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('s', Action::MoveSouth);
@@ -167,6 +174,8 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('m', Action::ToggleMinimap);
     c.bind_glyph('u', Action::Undo);
     c.bind_glyph('y', Action::Redo);
+    c.bind_glyph('?', Action::ToggleHelp);
+    c.bind_glyph('h', Action::ToggleHelp);
 
     c
 }
@@ -196,6 +205,10 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
 
     if token == "minimap" || token == "map" {
         return Some(Action::ToggleMinimap);
+    }
+
+    if token == "help" {
+        return Some(Action::ToggleHelp);
     }
 
     if token == "undo" {
