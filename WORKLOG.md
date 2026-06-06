@@ -3862,3 +3862,45 @@ Wait — looking at the schedule, `weather_cycle_system` runs after `turn_manage
 - Consider adding a `turn_applied: u32` guard to `apply_per_turn_weather_effects` so Snowing ice extension only fires once per turn.
 - The weather display/rendering in `ui.rs` may need updates to show danger zone tiles visually during LightningStorm.
 - Rainy water movement cost reduction and Snowing ice movement cost reduction are wired into `movement_cost_with_weather()` on TacticalMap, `get_path_to()`, and the player movement cost calculation, but NOT into the enemy AI Dijkstra weighted cost function (`|_, to| map.movement_cost(to) as u32` in enemy_ai_system). This means enemies don't benefit from weather-affected movement costs. This could be intentional (weather only helps the player) or a follow-up item.
+
+## 2026-06-06 - tactical RPG: 5 parallel feature improvements
+
+**Goal.** Improve the wuthering-terminal tactical RPG prototype with 5 independent features delegated to parallel subagents: script runner enhancements, help overlay, GlacialGolem spawning, weather combat modifiers, and battle summary screen.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/bin/script.rs` - Added `--json` output mode (structured JSON with all step reports, diagnostics, snapshot, and outcome), `--seed <N>` flag for deterministic RNG seeding, and `--quiet` flag to suppress ANSI frame output. Existing `--verify` and `-i` REPL mode unchanged. Added `test_json_output_structure` and `test_seed_override_determinism` tests.
+- `prototype/wuthering-terminal/src/action.rs` - Added `ToggleHelp` action variant bound to `?`, `h`, `H` keys with command bindings `"help"`, glyph `?`/`h`, and `resolve_command_token` support.
+- `prototype/wuthering-terminal/src/components.rs` - Added `UIState::Help` variant.
+- `prototype/wuthering-terminal/src/game.rs` - Added `ToggleHelp` handler toggling Help/Normal UI state with interception block (like Inventory pattern). Wired `BattleStats` event tracking for damage dealt/taken, kills, healing, combos, and turns. Removed unused variable warning in weather movement cost closure.
+- `prototype/wuthering-terminal/src/ui.rs` - Added comprehensive help overlay via `render_help()` with two-column layout: 21 keyboard shortcuts (left) and game mechanics explanations (right). Added `render_battle_summary()` showing victory/defeat stats panel with damage, healing, kills, combos, swaps, echoes, and turns. Fixed unused `value_color` warning.
+- `prototype/wuthering-terminal/src/main.rs` - Added battle summary rendering on game exit (Victory/Defeat). Renders summary grid, waits for keypress before returning.
+- `prototype/wuthering-terminal/src/systems.rs` - Added `BattleStats.total_turns` increment in `turn_management_system` when Enemy→Player transition occurs. Added GlacialGolem Ice status application on attack. Fixed borrow checker issue in weather Ice extension.
+- `prototype/wuthering-terminal/src/map.rs` - Added `TacticalMap::add_ice_patches()` for 3×3 Ice cluster placement using inline xorshift64 PRNG. Enhanced Floor 2 generation with Ice terrain patches around GlacialGolem spawn locations.
+- `prototype/wuthering-terminal/src/spawn.rs` - No changes needed; GlacialGolem stats and IceWalker trait already defined.
+- `prototype/wuthering-terminal/src/lib.rs` - Added 9 new tests: `test_json_output_structure`, `test_seed_override_determinism`, `test_help_overlay_toggle`, `test_glacial_golem_floor2`, `test_weather_rainy_reduces_fire_damage`, `test_weather_lightning_storm_bonus_damage`, `test_weather_snowing_extends_ice_duration`, `test_weather_rainy_water_movement_cost`, `test_battle_stats_tracking`, `test_battle_stats_turn_tracking`. Total: 89 tests passing.
+
+**Reasoning.** All 5 features were delegated to parallel subagents with non-overlapping file targets. The script runner JSON output enables structured CI/agent consumption. The help overlay makes the game's 21+ controls discoverable. GlacialGolem spawning validates that Floor 2 procedural generation includes the full enemy roster. Weather combat modifiers make the existing weather system gameplay-relevant. The battle summary screen provides closure and stats visibility on game end.
+
+**Assumptions.** Each subagent would commit its own changes independently, which worked for tasks 2-4 (committed to separate files). Tasks 1 and 5 had overlapping file targets (lib.rs tests, main.rs) that required manual merge. The `BattleStats.total_turns` wiring was missing from the turn management system and had to be added post-hoc.
+
+**Gotchas.** Two subagents added a test named `test_battle_stats_tracking` causing E0428 duplicate definition error. Resolved by renaming one to `test_battle_stats_turn_tracking`. The `total_turns` counter was only incremented via `ActionOutcome::TurnAdvanced` in `apply_action`, but turn transitions happen in `game.update()` → `turn_management_system`, so the counter stayed at 0. Fixed by adding `BattleStats` tracking in the turn management system. Two unused variable warnings (`pt`, `value_color`) from subagent code required cleanup.
+
+**Follow-ups.** The battle summary screen could be enhanced with animation or a detailed per-character breakdown. Weather effects could be expanded to affect FOV range (fog in rain, better visibility in sun). The script runner JSON output could include action provenance metadata for agent pipelines.
+
+## 2026-06-06 - Add RingPulse, Trail, and Aura VFX effect types
+
+**Goal.** Add three new reusable VFX effect types to `verryte-terminal`'s VFX system: RingPulse (expanding ring/shockwave), Trail (fading path behind a moving entity), and Aura (pulsing glow around a position).
+
+**Changes.**
+- `crates/verryte-terminal/src/vfx.rs` — Added `RingPulse` struct (lines ~745-788): expanding ring with center, radius, max_radius, speed, color, alpha fade, configurable glyph. `Trail` struct (lines ~790-818): Vec of (x, y, age) points with max_length cap and per-frame fade. `Aura` struct (lines ~820-868): pulsing glow with phase oscillation, configurable glyphs, lifetime.
+- `crates/verryte-terminal/src/vfx.rs` — Added `ring_pulses: Vec<RingPulse>`, `trails: Vec<Trail>`, `auras: Vec<Aura>` fields to `VfxSystem`. Updated `new()`, `clear()`, `update()`, `render()`, `render_world()` to handle the new types. Added `trigger_ring_pulse`, `trigger_trail`, `trigger_aura` convenience methods.
+- `crates/verryte-terminal/src/lib.rs` — Added `Aura`, `RingPulse`, `Trail` to the `pub use vfx::` re-export block.
+- Added 16 new unit tests covering construction, alive/alpha, update tick, trigger helpers, clear, render (both screen and world-space), and glyph cycling.
+
+**Reasoning.** The three effects fill distinct visual niches: RingPulse for AoE/shockwave indicators (complements existing AoeRing but with simpler single-ring semantics and alpha-driven fade), Trail for motion trails on characters/projectiles, Aura for persistent character buffs/debuffs. All follow the same patterns as existing VFX types (pub fields, new() constructor, alive()/alpha_ratio() lifecycle, serde derives, render into Grid).
+
+**Assumptions.** The existing `Color::blend_alpha` and `Grid::draw_circle` methods are sufficient for rendering. The `TileViewport::new(rect, tile_w, tile_h)` signature was confirmed from the viewport module.
+
+**Gotchas.** The initial test for trail fade used a fade_speed that would remove all points before the assertion — fixed by using slower fade_speed and smaller dt. The `render_world` test needed a `TileViewport` with correct 3-arg constructor.
+
+**Follow-ups.** These are pure engine additions; prototypes can adopt them at their own pace. No existing behavior changed.

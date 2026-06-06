@@ -35,8 +35,9 @@ pub use palette::ColorPalette;
 pub use sprite::{Frame, ResolutionTier, Sprite, SpriteSheet};
 pub use vfx::{
     blend_color, emit_bloom, emit_burst, emit_fire, emit_heal, emit_homeward, emit_ice,
-    emit_lightning, emit_shatter, emit_shockwave, emit_slash, AoeRing, EasingMode, Flash,
-    FloatingText, Particle, ScreenShake, SpatialHighlight, Trajectory, VfxEmitter, VfxSystem,
+    emit_lightning, emit_shatter, emit_shockwave, emit_slash, AoeRing, Aura, EasingMode, Flash,
+    FloatingText, Particle, RingPulse, ScreenShake, SpatialHighlight, Trail, Trajectory,
+    VfxEmitter, VfxSystem,
 };
 pub use viewport::TileViewport;
 pub use widgets::{

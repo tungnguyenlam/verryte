@@ -739,6 +739,146 @@ impl SpatialHighlight {
     }
 }
 
+// ── Ring Pulse ────────────────────────────────────────────────────────────────
+
+/// An expanding ring effect that grows outward and fades.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RingPulse {
+    pub center_x: f32,
+    pub center_y: f32,
+    pub radius: f32,
+    pub max_radius: f32,
+    pub speed: f32,
+    pub color: Color,
+    pub alpha: f32,
+    pub glyph: char,
+}
+
+impl RingPulse {
+    pub fn new(center_x: f32, center_y: f32, max_radius: f32, speed: f32, color: Color) -> Self {
+        Self {
+            center_x,
+            center_y,
+            radius: 0.0,
+            max_radius,
+            speed,
+            color,
+            alpha: 1.0,
+            glyph: '○',
+        }
+    }
+
+    pub fn with_glyph(mut self, glyph: char) -> Self {
+        self.glyph = glyph;
+        self
+    }
+
+    pub fn alive(&self) -> bool {
+        self.alpha > 0.0 && self.radius < self.max_radius
+    }
+
+    pub fn alpha_ratio(&self) -> f32 {
+        self.alpha.clamp(0.0, 1.0)
+    }
+}
+
+// ── Trail ─────────────────────────────────────────────────────────────────────
+
+/// A series of fading points left behind by a moving entity.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Trail {
+    pub points: Vec<(f32, f32, f32)>,
+    pub max_length: usize,
+    pub color: Color,
+    pub fade_speed: f32,
+}
+
+impl Trail {
+    pub fn new(max_length: usize, color: Color, fade_speed: f32) -> Self {
+        Self {
+            points: Vec::new(),
+            max_length,
+            color,
+            fade_speed,
+        }
+    }
+
+    pub fn push(&mut self, x: f32, y: f32) {
+        self.points.push((x, y, 1.0));
+        if self.points.len() > self.max_length {
+            self.points.remove(0);
+        }
+    }
+
+    pub fn alive(&self) -> bool {
+        !self.points.is_empty() && self.points.iter().any(|&(_, _, age)| age > 0.0)
+    }
+}
+
+// ── Aura ──────────────────────────────────────────────────────────────────────
+
+/// A pulsing glow effect around a position.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Aura {
+    pub center_x: f32,
+    pub center_y: f32,
+    pub radius: f32,
+    pub color: Color,
+    pub phase: f32,
+    pub pulse_speed: f32,
+    pub glyphs: [char; 4],
+    pub lifetime: f32,
+    pub max_lifetime: f32,
+}
+
+impl Aura {
+    pub fn new(center_x: f32, center_y: f32, radius: f32, color: Color) -> Self {
+        Self {
+            center_x,
+            center_y,
+            radius,
+            color,
+            phase: 0.0,
+            pulse_speed: 3.0,
+            glyphs: ['·', '∘', '°', '○'],
+            lifetime: 3.0,
+            max_lifetime: 3.0,
+        }
+    }
+
+    pub fn with_pulse_speed(mut self, pulse_speed: f32) -> Self {
+        self.pulse_speed = pulse_speed;
+        self
+    }
+
+    pub fn with_glyphs(mut self, glyphs: [char; 4]) -> Self {
+        self.glyphs = glyphs;
+        self
+    }
+
+    pub fn with_lifetime(mut self, lifetime: f32) -> Self {
+        self.lifetime = lifetime;
+        self.max_lifetime = lifetime;
+        self
+    }
+
+    pub fn alive(&self) -> bool {
+        self.lifetime > 0.0
+    }
+
+    pub fn alpha_ratio(&self) -> f32 {
+        (self.lifetime / self.max_lifetime).clamp(0.0, 1.0)
+    }
+
+    pub fn current_glyph(&self) -> char {
+        let index = ((self.phase * self.pulse_speed) as usize) % self.glyphs.len();
+        self.glyphs[index]
+    }
+}
+
 // ── VFX System ────────────────────────────────────────────────────────────────
 
 /// Manages all active visual effects and renders them into a [`Grid`].
@@ -749,6 +889,9 @@ pub struct VfxSystem {
     pub floating_texts: Vec<FloatingText>,
     pub aoe_rings: Vec<AoeRing>,
     pub highlights: Vec<SpatialHighlight>,
+    pub ring_pulses: Vec<RingPulse>,
+    pub trails: Vec<Trail>,
+    pub auras: Vec<Aura>,
 }
 
 impl VfxSystem {
@@ -760,6 +903,9 @@ impl VfxSystem {
             floating_texts: Vec::new(),
             aoe_rings: Vec::new(),
             highlights: Vec::new(),
+            ring_pulses: Vec::new(),
+            trails: Vec::new(),
+            auras: Vec::new(),
         }
     }
 
@@ -771,6 +917,9 @@ impl VfxSystem {
         self.floating_texts.clear();
         self.aoe_rings.clear();
         self.highlights.clear();
+        self.ring_pulses.clear();
+        self.trails.clear();
+        self.auras.clear();
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -860,6 +1009,26 @@ impl VfxSystem {
             h.lifetime -= dt;
         }
         self.highlights.retain(|h| h.alive());
+
+        for r in &mut self.ring_pulses {
+            r.radius += r.speed * dt;
+            r.alpha = (1.0 - r.radius / r.max_radius).clamp(0.0, 1.0);
+        }
+        self.ring_pulses.retain(|r| r.alive());
+
+        for t in &mut self.trails {
+            for point in &mut t.points {
+                point.2 -= t.fade_speed * dt;
+            }
+            t.points.retain(|p| p.2 > 0.0);
+        }
+        self.trails.retain(|t| t.alive());
+
+        for a in &mut self.auras {
+            a.phase += dt;
+            a.lifetime -= dt;
+        }
+        self.auras.retain(|a| a.alive());
     }
 
     /// Add a screen shake effect.
@@ -943,6 +1112,37 @@ impl VfxSystem {
         self.particles.extend(emit_vortex(cx, cy, count, color));
     }
 
+    /// Add a ring pulse effect.
+    pub fn trigger_ring_pulse(
+        &mut self,
+        center_x: f32,
+        center_y: f32,
+        max_radius: f32,
+        speed: f32,
+        color: Color,
+    ) {
+        self.ring_pulses
+            .push(RingPulse::new(center_x, center_y, max_radius, speed, color));
+    }
+
+    /// Add a trail effect.
+    pub fn trigger_trail(&mut self, max_length: usize, color: Color, fade_speed: f32) {
+        self.trails.push(Trail::new(max_length, color, fade_speed));
+    }
+
+    /// Add an aura effect.
+    pub fn trigger_aura(
+        &mut self,
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        color: Color,
+        lifetime: f32,
+    ) {
+        self.auras
+            .push(Aura::new(center_x, center_y, radius, color).with_lifetime(lifetime));
+    }
+
     pub fn shake_offset(&self) -> (i16, i16) {
         let mut ox = 0i16;
         let mut oy = 0i16;
@@ -1008,6 +1208,59 @@ impl VfxSystem {
                     let mut cell = Cell::new(ch).with_fg(color).with_bg(Color::BLACK);
                     cell.attrs = attrs;
                     grid.put(x, ty, cell);
+                }
+            }
+        }
+
+        for rp in &self.ring_pulses {
+            if rp.alive() {
+                let color = rp.color.blend_alpha(Color::BLACK, 1.0 - rp.alpha_ratio());
+                let radius = rp.radius as u16;
+                if radius > 0 {
+                    grid.draw_circle(
+                        rp.center_x as i32,
+                        rp.center_y as i32,
+                        radius,
+                        Cell::new(rp.glyph).with_fg(color),
+                    );
+                }
+            }
+        }
+
+        for trail in &self.trails {
+            for &(px, py, age) in &trail.points {
+                let tx = px as i32;
+                let ty = py as i32;
+                if tx >= 0 && ty >= 0 && (tx as u16) < w && (ty as u16) < h {
+                    let alpha = age.clamp(0.0, 1.0);
+                    let color = trail.color.blend_alpha(Color::BLACK, 1.0 - alpha);
+                    let glyph = if alpha > 0.6 { '·' } else { '∘' };
+                    grid.put(tx as u16, ty as u16, Cell::new(glyph).with_fg(color));
+                }
+            }
+        }
+
+        for a in &self.auras {
+            if a.alive() {
+                let life_alpha = a.alpha_ratio();
+                let pulse_val = (a.phase * a.pulse_speed).sin() * 0.5 + 0.5;
+                let alpha = (life_alpha * pulse_val).clamp(0.0, 1.0);
+                let glyph = a.current_glyph();
+                let color = a.color.blend_alpha(Color::BLACK, 1.0 - alpha);
+                let radius = a.radius as i32;
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        let dist_sq = dx * dx + dy * dy;
+                        let r_sq = radius * radius;
+                        let inner_sq = ((radius - 1).max(0)) * ((radius - 1).max(0));
+                        if dist_sq <= r_sq && dist_sq >= inner_sq {
+                            let px = (a.center_x as i32 + dx) as u16;
+                            let py = (a.center_y as i32 + dy) as u16;
+                            if px < w && py < h {
+                                grid.put(px, py, Cell::new(glyph).with_fg(color));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1099,6 +1352,64 @@ impl VfxSystem {
                     let mut cell = Cell::new(ch).with_fg(color).with_bg(Color::BLACK);
                     cell.attrs = attrs;
                     grid.put(cx, ty, cell);
+                }
+            }
+        }
+
+        for rp in &self.ring_pulses {
+            if rp.alive() {
+                let (sx, sy) = viewport.world_to_screen(rp.center_x, rp.center_y);
+                let color = rp.color.blend_alpha(Color::BLACK, 1.0 - rp.alpha_ratio());
+                let radius = rp.radius as u16;
+                if radius > 0 {
+                    grid.draw_circle(
+                        viewport.rect.x as i32 + sx,
+                        viewport.rect.y as i32 + sy,
+                        radius,
+                        Cell::new(rp.glyph).with_fg(color),
+                    );
+                }
+            }
+        }
+
+        for trail in &self.trails {
+            for &(px, py, age) in &trail.points {
+                let (sx, sy) = viewport.world_to_screen(px, py);
+                let tx = (viewport.rect.x as i32 + sx) as u16;
+                let ty = (viewport.rect.y as i32 + sy) as u16;
+                if viewport.rect.contains(tx, ty) {
+                    let alpha = age.clamp(0.0, 1.0);
+                    let color = trail.color.blend_alpha(Color::BLACK, 1.0 - alpha);
+                    let glyph = if alpha > 0.6 { '·' } else { '∘' };
+                    grid.put(tx, ty, Cell::new(glyph).with_fg(color));
+                }
+            }
+        }
+
+        for a in &self.auras {
+            if a.alive() {
+                let (sx, sy) = viewport.world_to_screen(a.center_x, a.center_y);
+                let screen_cx = viewport.rect.x as i32 + sx;
+                let screen_cy = viewport.rect.y as i32 + sy;
+                let life_alpha = a.alpha_ratio();
+                let pulse_val = (a.phase * a.pulse_speed).sin() * 0.5 + 0.5;
+                let alpha = (life_alpha * pulse_val).clamp(0.0, 1.0);
+                let glyph = a.current_glyph();
+                let color = a.color.blend_alpha(Color::BLACK, 1.0 - alpha);
+                let radius = a.radius as i32;
+                for dy in -radius..=radius {
+                    for dx in -radius..=radius {
+                        let dist_sq = dx * dx + dy * dy;
+                        let r_sq = radius * radius;
+                        let inner_sq = ((radius - 1).max(0)) * ((radius - 1).max(0));
+                        if dist_sq <= r_sq && dist_sq >= inner_sq {
+                            let px = (screen_cx + dx) as u16;
+                            let py = (screen_cy + dy) as u16;
+                            if viewport.rect.contains(px, py) {
+                                grid.put(px, py, Cell::new(glyph).with_fg(color));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1651,5 +1962,193 @@ mod tests {
             .sqrt();
         // Distance should be closer!
         assert!(new_dist < initial_dist);
+    }
+
+    #[test]
+    fn test_ring_pulse_alive_and_alpha() {
+        let mut rp = RingPulse::new(5.0, 5.0, 4.0, 2.0, Color::CYAN);
+        assert!(rp.alive());
+        assert_eq!(rp.alpha_ratio(), 1.0);
+        assert_eq!(rp.glyph, '○');
+
+        rp.radius = 4.0;
+        assert!(!rp.alive());
+    }
+
+    #[test]
+    fn test_ring_pulse_with_glyph() {
+        let rp = RingPulse::new(0.0, 0.0, 3.0, 1.0, Color::RED).with_glyph('◎');
+        assert_eq!(rp.glyph, '◎');
+    }
+
+    #[test]
+    fn test_ring_pulse_update() {
+        let mut vfx = VfxSystem::new();
+        vfx.ring_pulses
+            .push(RingPulse::new(5.0, 5.0, 4.0, 2.0, Color::CYAN));
+        vfx.update(0.5);
+        assert!(vfx.ring_pulses[0].radius > 0.0);
+        assert!(vfx.ring_pulses[0].alpha < 1.0);
+    }
+
+    #[test]
+    fn test_ring_pulse_render_does_not_panic() {
+        let mut vfx = VfxSystem::new();
+        vfx.ring_pulses
+            .push(RingPulse::new(10.0, 10.0, 4.0, 2.0, Color::CYAN));
+        let mut grid = Grid::new(20, 20);
+        vfx.render(&mut grid, 20, 20);
+    }
+
+    #[test]
+    fn test_trail_push_and_alive() {
+        let mut trail = Trail::new(5, Color::WHITE, 1.0);
+        assert!(!trail.alive());
+
+        trail.push(1.0, 1.0);
+        assert!(trail.alive());
+        assert_eq!(trail.points.len(), 1);
+
+        for i in 0..10 {
+            trail.push(i as f32, i as f32);
+        }
+        assert_eq!(trail.points.len(), 5);
+    }
+
+    #[test]
+    fn test_trail_update_fades_points() {
+        let mut vfx = VfxSystem::new();
+        let mut trail = Trail::new(10, Color::WHITE, 0.5);
+        trail.push(5.0, 5.0);
+        trail.push(6.0, 6.0);
+        vfx.trails.push(trail);
+
+        vfx.update(0.4);
+        assert!(!vfx.trails[0].points.is_empty());
+        for &(_, _, age) in &vfx.trails[0].points {
+            assert!(age < 1.0);
+            assert!(age > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_trail_render_does_not_panic() {
+        let mut vfx = VfxSystem::new();
+        let mut trail = Trail::new(5, Color::GREEN, 1.0);
+        trail.push(5.0, 5.0);
+        trail.push(6.0, 6.0);
+        vfx.trails.push(trail);
+        let mut grid = Grid::new(20, 20);
+        vfx.render(&mut grid, 20, 20);
+    }
+
+    #[test]
+    fn test_aura_alive_and_alpha() {
+        let mut aura = Aura::new(5.0, 5.0, 3.0, Color::BLUE);
+        assert!(aura.alive());
+        assert_eq!(aura.alpha_ratio(), 1.0);
+
+        aura.lifetime = 0.0;
+        assert!(!aura.alive());
+        assert_eq!(aura.alpha_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_aura_with_glyphs_and_pulse_speed() {
+        let aura = Aura::new(0.0, 0.0, 2.0, Color::YELLOW)
+            .with_glyphs(['*', '+', 'x', '#'])
+            .with_pulse_speed(5.0)
+            .with_lifetime(10.0);
+        assert_eq!(aura.glyphs, ['*', '+', 'x', '#']);
+        assert_eq!(aura.pulse_speed, 5.0);
+        assert_eq!(aura.max_lifetime, 10.0);
+    }
+
+    #[test]
+    fn test_aura_current_glyph_cycles() {
+        let mut aura = Aura::new(0.0, 0.0, 2.0, Color::WHITE);
+        aura.phase = 0.0;
+        let g0 = aura.current_glyph();
+        aura.phase = std::f32::consts::PI / aura.pulse_speed;
+        let g1 = aura.current_glyph();
+        // With default glyphs ['·', '∘', '°', '○'] and different phases,
+        // the glyph index should differ.
+        assert_eq!(g0, '·');
+        // phase * pulse_speed = PI ≈ 3.14, as usize = 3, 3 % 4 = 3 → '○'
+        assert_eq!(g1, '○');
+    }
+
+    #[test]
+    fn test_aura_update() {
+        let mut vfx = VfxSystem::new();
+        vfx.auras
+            .push(Aura::new(5.0, 5.0, 2.0, Color::GREEN).with_lifetime(2.0));
+        vfx.update(0.5);
+        assert!(vfx.auras[0].phase > 0.0);
+        assert!(vfx.auras[0].lifetime < 2.0);
+    }
+
+    #[test]
+    fn test_aura_render_does_not_panic() {
+        let mut vfx = VfxSystem::new();
+        vfx.auras.push(Aura::new(10.0, 10.0, 3.0, Color::MAGENTA));
+        let mut grid = Grid::new(20, 20);
+        vfx.render(&mut grid, 20, 20);
+    }
+
+    #[test]
+    fn test_trigger_ring_pulse() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_ring_pulse(5.0, 5.0, 4.0, 2.0, Color::CYAN);
+        assert_eq!(vfx.ring_pulses.len(), 1);
+    }
+
+    #[test]
+    fn test_trigger_trail() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_trail(8, Color::WHITE, 1.0);
+        assert_eq!(vfx.trails.len(), 1);
+        assert_eq!(vfx.trails[0].max_length, 8);
+    }
+
+    #[test]
+    fn test_trigger_aura() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_aura(5.0, 5.0, 3.0, Color::BLUE, 5.0);
+        assert_eq!(vfx.auras.len(), 1);
+        assert_eq!(vfx.auras[0].max_lifetime, 5.0);
+    }
+
+    #[test]
+    fn test_vfx_system_clear_includes_new_types() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_ring_pulse(5.0, 5.0, 4.0, 2.0, Color::CYAN);
+        vfx.trigger_trail(5, Color::WHITE, 1.0);
+        vfx.trigger_aura(5.0, 5.0, 2.0, Color::GREEN, 3.0);
+        assert_eq!(vfx.ring_pulses.len(), 1);
+        assert_eq!(vfx.trails.len(), 1);
+        assert_eq!(vfx.auras.len(), 1);
+
+        vfx.clear();
+        assert_eq!(vfx.ring_pulses.len(), 0);
+        assert_eq!(vfx.trails.len(), 0);
+        assert_eq!(vfx.auras.len(), 0);
+    }
+
+    #[test]
+    fn test_new_effects_render_world_does_not_panic() {
+        let mut vfx = VfxSystem::new();
+        vfx.ring_pulses
+            .push(RingPulse::new(5.0, 5.0, 4.0, 2.0, Color::CYAN));
+        let mut trail = Trail::new(5, Color::WHITE, 1.0);
+        trail.push(5.0, 5.0);
+        vfx.trails.push(trail);
+        vfx.auras.push(Aura::new(5.0, 5.0, 2.0, Color::GREEN));
+        vfx.highlights
+            .push(SpatialHighlight::new(vec![(5, 5)], Color::BLUE, 1.0));
+
+        let mut grid = Grid::new(20, 20);
+        let viewport = crate::TileViewport::new(Rect::new(0, 0, 20, 20), 1, 1);
+        vfx.render_world(&mut grid, &viewport);
     }
 }
