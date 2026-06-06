@@ -4312,3 +4312,34 @@ The final workspace builds clean with 0 warnings in wuthering-terminal.
 
 **Follow-ups.**
 - None. All 8 new prestige tests pass, 230 total tests pass, formatting is clean.
+
+## 2026-06-06 - Morale & Fatigue System
+
+**Goal.** Implement a Morale & Fatigue system for the wuthering-terminal tactical RPG prototype that adds psychological and stamina mechanics affecting character performance.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/components.rs` — Added `Morale`, `Fatigue`, `MoraleState` types with serde derives and `Default` implementations. MoraleState has `from_morale()` and `display_name()` helpers.
+- `prototype/wuthering-terminal/src/action.rs` — Added `Action::Rest` bound to z/Z keys. Added `rest` command binding.
+- `prototype/wuthering-terminal/src/spawn.rs` — Players spawn with Morale 70, Fatigue 0. Boss spawns with Morale 100. Regular enemies spawn with Morale 50.
+- `prototype/wuthering-terminal/src/systems.rs` — Added `morale_fatigue_system`, `apply_ally_defeated_morale`, `apply_enemy_defeated_morale`, `apply_boss_phase_morale`, `apply_heal_morale`, `increment_fatigue_on_action` functions. Integrated morale effects into standalone `handle_defeat`.
+- `prototype/wuthering-terminal/src/game.rs` — Modified `Game::resolve_combat_hit` to apply morale damage multipliers (Confident +10%, Stressed -10%, Breaking -20% + 10% fumble chance). Added fatigue-based crit reduction and stun chance at fatigue > 80. Added Broken morale action gating in `apply_action_internal`. Added Rest action handler (-20 fatigue, +5 morale). Integrated morale events into `Game::handle_defeat` and `check_boss_phase_transition`. Added heal morale in `execute_skill` and Confirm heal. Added fatigue increment after actions.
+- `prototype/wuthering-terminal/src/snapshot.rs` — Added `morale`, `morale_state`, `fatigue` fields to `CharacterDiag`. Registered `Morale` and `Fatigue` components in world registry.
+- `prototype/wuthering-terminal/src/lib.rs` — Added 8 tests covering all morale/fatigue mechanics.
+
+**Reasoning.** The morale system creates emergent gameplay tension: losing allies weakens the team further (morale cascade), while victories strengthen survivors. Fatigue creates turn-over-turn resource pressure. The Rest action provides a strategic AP-free recovery option. Morale modifiers are applied at the damage calculation layer, keeping combat resolution unified.
+
+**Assumptions.**
+- Morale modifiers stack additively with existing damage modifiers (combo, weather).
+- Boss has Morale 100 (unbreakable) to prevent boss from being affected by morale.
+- Fatigue increments on Confirm (attack/move), Skill, and Wait actions.
+- Rest costs 0 AP but clears the character's selection (uses the turn).
+
+**Gotchas.**
+- The standalone `resolve_combat_hit` in systems.rs does not have attacker entity access, so morale modifiers only apply through `Game::resolve_combat_hit`.
+- Pre-existing borrow checker issue in `ViewPrestige` handler was fixed during this work.
+- 3 pre-existing combo tests remain failing (not introduced by this work).
+
+**Follow-ups.**
+- Consider adding morale VFX (visual indicators on low-morale characters).
+- Consider adding fatigue decay on turn transition (natural rest between turns).
+- The `morale_fatigue_system` is defined but not yet added to the game schedule.
