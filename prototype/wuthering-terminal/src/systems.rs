@@ -425,10 +425,21 @@ pub fn enemy_ai_system(world: &mut World) {
 
                     // Check for Lava damage on retreat
                     if dest_tile == Tile::Lava {
+                        let lava_dmg = {
+                            let w = world
+                                .resource::<Weather>()
+                                .map(|w| w.current)
+                                .unwrap_or(WeatherType::Sunny);
+                            if w == WeatherType::Rainy {
+                                16
+                            } else {
+                                20
+                            }
+                        };
                         let mut final_hp = 0;
                         let mut defeated = false;
                         if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
-                            stats.hp = std::cmp::max(0, stats.hp - 20);
+                            stats.hp = std::cmp::max(0, stats.hp - lava_dmg);
                             final_hp = stats.hp;
                             if stats.hp <= 0 {
                                 defeated = true;
@@ -437,8 +448,8 @@ pub fn enemy_ai_system(world: &mut World) {
                         log(
                             world,
                             format!(
-                                "{} retreated into LAVA and took 20 damage! (HP: {})",
-                                enemy_name, final_hp
+                                "{} retreated into LAVA and took {} damage! (HP: {})",
+                                enemy_name, lava_dmg, final_hp
                             ),
                         );
 
@@ -1027,10 +1038,21 @@ pub fn enemy_ai_system(world: &mut World) {
 
                     // Check for Lava damage on normal move
                     if final_dest_tile == Tile::Lava {
+                        let lava_dmg = {
+                            let w = world
+                                .resource::<Weather>()
+                                .map(|w| w.current)
+                                .unwrap_or(WeatherType::Sunny);
+                            if w == WeatherType::Rainy {
+                                16
+                            } else {
+                                20
+                            }
+                        };
                         let mut final_hp = 0;
                         let mut defeated = false;
                         if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
-                            stats.hp = std::cmp::max(0, stats.hp - 20);
+                            stats.hp = std::cmp::max(0, stats.hp - lava_dmg);
                             final_hp = stats.hp;
                             if stats.hp <= 0 {
                                 defeated = true;
@@ -1039,8 +1061,8 @@ pub fn enemy_ai_system(world: &mut World) {
                         log(
                             world,
                             format!(
-                                "{} stepped into LAVA and took 20 damage! (HP: {})",
-                                enemy_name, final_hp
+                                "{} stepped into LAVA and took {} damage! (HP: {})",
+                                enemy_name, lava_dmg, final_hp
                             ),
                         );
 

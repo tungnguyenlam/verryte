@@ -3443,62 +3443,24 @@ mod tests {
             .resource_mut::<crate::components::Weather>()
             .unwrap()
             .current = WeatherType::Sunny;
-        crate::systems::resolve_combat_hit(
-            &mut game.world,
-            warrior,
-            100,
-            "Warrior",
-            "Warrior",
-            Position::new(4, 4),
-        );
-        let hp_after_sunny = game.world.get::<Stats>(warrior).unwrap().hp;
-        let sunny_damage = 1000 - hp_after_sunny;
-        assert!(
-            sunny_damage >= 57,
-            "Sunny should boost Warrior (fire) damage, got {}",
-            sunny_damage
-        );
+        let sunny_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        assert_eq!(sunny_mod, 100, "Sunny should not modify fire damage");
 
-        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
         game.world
             .resource_mut::<crate::components::Weather>()
             .unwrap()
             .current = WeatherType::Rainy;
-        crate::systems::resolve_combat_hit(
-            &mut game.world,
-            warrior,
-            100,
-            "Warrior",
-            "Warrior",
-            Position::new(4, 4),
-        );
-        let hp_after_rainy = game.world.get::<Stats>(warrior).unwrap().hp;
-        let rainy_damage = 1000 - hp_after_rainy;
-        assert!(
-            rainy_damage <= 135,
-            "Rainy should reduce Warrior (fire) damage, got {}",
-            rainy_damage
-        );
+        let rainy_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        assert_eq!(rainy_mod, 80, "Rainy should reduce fire damage by 20%");
 
-        game.world.get_mut::<Stats>(mage).unwrap().hp = 1000;
         game.world
             .resource_mut::<crate::components::Weather>()
             .unwrap()
             .current = WeatherType::LightningStorm;
-        crate::systems::resolve_combat_hit(
-            &mut game.world,
-            mage,
-            100,
-            "Mage",
-            "Mage",
-            Position::new(4, 4),
-        );
-        let hp_after_storm = game.world.get::<Stats>(mage).unwrap().hp;
-        let storm_damage = 1000 - hp_after_storm;
-        assert!(
-            storm_damage >= 62,
-            "LightningStorm should boost Mage (lightning) damage, got {}",
-            storm_damage
+        let storm_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Mage");
+        assert_eq!(
+            storm_mod, 100,
+            "LightningStorm no longer applies a multiplier (uses 25% bonus chance instead)"
         );
     }
 
@@ -3852,5 +3814,225 @@ mod tests {
             game.world.resource::<GameState>().unwrap().ui_state,
             crate::components::UIState::Normal
         );
+    }
+
+    #[test]
+    fn test_weather_rainy_reduces_fire_damage() {
+        let mut game = Game::new();
+
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 10000;
+
+        let sunny_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        assert_eq!(
+            sunny_mod, 100,
+            "Sunny weather should not modify fire damage"
+        );
+
+        {
+            let weather = game
+                .world
+                .resource_mut::<crate::components::Weather>()
+                .unwrap();
+            weather.current = crate::components::WeatherType::Rainy;
+        }
+
+        let rainy_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        assert_eq!(
+            rainy_mod, 80,
+            "Rainy weather should reduce fire damage by 20% (100 -> 80)"
+        );
+
+        let rainy_non_fire = crate::systems::weather_damage_modifier(&game.world, 100, "Mage");
+        assert_eq!(
+            rainy_non_fire, 100,
+            "Rainy weather should not modify non-fire damage"
+        );
+    }
+
+    #[test]
+    fn test_weather_lightning_storm_bonus_damage() {
+        let mut game = Game::new();
+
+        {
+            let weather = game
+                .world
+                .resource_mut::<crate::components::Weather>()
+                .unwrap();
+            weather.current = crate::components::WeatherType::LightningStorm;
+        }
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 10000;
+
+        let mut saw_bonus = false;
+        for _ in 0..50 {
+            game.world.get_mut::<Stats>(boss).unwrap().hp = 10000;
+            let (damage, _) = crate::systems::resolve_combat_hit(
+                &mut game.world,
+                boss,
+                50,
+                "Mage",
+                "Boss",
+                Position::new(4, 4),
+            );
+            if damage > 75 {
+                saw_bonus = true;
+                break;
+            }
+        }
+
+        assert!(
+            saw_bonus,
+            "LightningStorm should produce bonus damage at least once in 50 attempts"
+        );
+    }
+
+    #[test]
+    fn test_weather_snowing_extends_ice_duration() {
+        let mut game = Game::new();
+
+        {
+            let weather = game
+                .world
+                .resource_mut::<crate::components::Weather>()
+                .unwrap();
+            weather.current = crate::components::WeatherType::Snowing;
+        }
+
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.insert(
+            boss,
+            crate::components::ElementalStatus::Ice { duration: 2 },
+        );
+
+        crate::systems::weather_cycle_system(&mut game.world);
+
+        let status = game
+            .world
+            .get::<crate::components::ElementalStatus>(boss)
+            .unwrap();
+        assert!(
+            matches!(
+                status,
+                crate::components::ElementalStatus::Ice { duration: 3 }
+            ),
+            "Snowing should extend Ice duration by 1 (expected 3, got {:?})",
+            status
+        );
+    }
+
+    #[test]
+    fn test_weather_rainy_water_movement_cost() {
+        let mut game = Game::new();
+
+        {
+            let weather = game
+                .world
+                .resource_mut::<crate::components::Weather>()
+                .unwrap();
+            weather.current = crate::components::WeatherType::Rainy;
+        }
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(8, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 2;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(8, 3);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(8, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        let stats = game.world.get::<Stats>(warrior).unwrap();
+        assert_eq!(
+            stats.ap, 1,
+            "Rainy weather should reduce Water movement cost to 1 (had 2 AP, should have 1 left)"
+        );
+    }
+
+    #[test]
+    fn test_weather_snowing_ice_movement_cost() {
+        let mut game = Game::new();
+
+        let map_str = "\
+........\n\
+........\n\
+........\n\
+........\n\
+....-...\n\
+........\n\
+........\n\
+........";
+        let custom_map = TacticalMap::from_ascii(map_str);
+        game.world.insert_resource(custom_map);
+
+        {
+            let weather = game
+                .world
+                .resource_mut::<crate::components::Weather>()
+                .unwrap();
+            weather.current = crate::components::WeatherType::Snowing;
+        }
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+
+        let map = game.world.resource::<TacticalMap>().unwrap();
+        assert_eq!(map.tile(4, 4), Tile::Ice);
+        let cost = map.movement_cost_with_weather(
+            Position::new(4, 4),
+            crate::components::WeatherType::Snowing,
+        );
+        assert_eq!(cost, 0, "Ice movement cost should be 0 during Snowing");
     }
 }
