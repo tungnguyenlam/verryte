@@ -2049,7 +2049,7 @@ fn test_reachability_map() {
         start,
         max_cost,
         |_, &tile| tile != '#',
-        |_, &tile| if tile == 'M' { 3 } else { 1 }
+        |_, &tile| if tile == 'M' { 3 } else { 1 },
     );
 
     // (0,0) cost 0

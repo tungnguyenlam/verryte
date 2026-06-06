@@ -26,6 +26,7 @@ verryte-input = { path = "../../crates/verryte-input", features = ["serde"] }
 verryte-map = { path = "../../crates/verryte-map", features = ["serde"] }
 verryte-terminal = { path = "../../crates/verryte-terminal", features = ["serde"] }
 verryte-tty = { path = "../../crates/verryte-tty" }
+verryte-audio = { path = "../../crates/verryte-audio" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = "0.24"

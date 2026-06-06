@@ -20,6 +20,7 @@ pub enum CharacterClass {
     CursedSentinel,
     PlagueWraith,
     GlacialGolem,
+    EnemyCleric,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -148,6 +149,8 @@ pub enum ElementalStatus {
     Ice { duration: u32 },
     Lightning { duration: u32 },
     Nature { duration: u32 },
+    Poison { duration: u32 },
+    Regen { duration: u32 },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -300,4 +303,42 @@ pub enum HeroTrait {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CharacterTrait {
     pub trait_type: HeroTrait,
+}
+
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum WeatherType {
+    #[default]
+    Sunny,
+    Rainy,
+    Snowing,
+    LightningStorm,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Weather {
+    pub current: WeatherType,
+    pub danger_zones: Vec<Position>,
+}
+
+impl Default for Weather {
+    fn default() -> Self {
+        Self {
+            current: WeatherType::Sunny,
+            danger_zones: Vec::new(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Threat {
+    pub value: i32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AIArchetype {
+    Chaser,
+    Cleric,
+    Coward,
 }

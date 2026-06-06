@@ -25,3 +25,6 @@ Thumbs.db
 # Tool caches
 .cache/
 __pycache__/
+
+# Runtime saves/traces
+saves/

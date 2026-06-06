@@ -36,6 +36,7 @@ pub enum Action {
     Redo,
     NextFloor,
     CraftItem(usize, usize),
+    ChangeWeather(crate::components::WeatherType),
 }
 
 impl Action {
@@ -170,6 +171,15 @@ pub fn default_commands() -> CommandBindings<Action> {
     c
 }
 
+pub fn weather_display_name(w: crate::components::WeatherType) -> &'static str {
+    match w {
+        crate::components::WeatherType::Sunny => "Sunny",
+        crate::components::WeatherType::Rainy => "Rainy",
+        crate::components::WeatherType::LightningStorm => "Lightning Storm",
+        crate::components::WeatherType::Snowing => "Snowing",
+    }
+}
+
 pub fn resolve_command_token(token: &str) -> Option<Action> {
     let inspect = token
         .strip_prefix("inspect:")
@@ -214,6 +224,21 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
     if let Some(idx_str) = token.strip_prefix("use:") {
         if let Ok(idx) = idx_str.parse::<usize>() {
             return Some(Action::UseItem(idx.saturating_sub(1)));
+        }
+    }
+
+    if let Some(weather_str) = token.strip_prefix("weather:") {
+        let w = match weather_str.to_lowercase().as_str() {
+            "sunny" => Some(crate::components::WeatherType::Sunny),
+            "rainy" => Some(crate::components::WeatherType::Rainy),
+            "lightning" | "lightningstorm" | "storm" => {
+                Some(crate::components::WeatherType::LightningStorm)
+            }
+            "snowing" | "snow" => Some(crate::components::WeatherType::Snowing),
+            _ => None,
+        };
+        if let Some(wt) = w {
+            return Some(Action::ChangeWeather(wt));
         }
     }
     None

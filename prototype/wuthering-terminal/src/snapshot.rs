@@ -4,6 +4,7 @@ use crate::action::Action;
 use crate::components::{
     BattleStats, CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState,
     Inventory, Item, Outcome, Position, Rooted, Stats, Stunned, Team, TelegraphZone, TurnPhase,
+    WeatherType,
 };
 use verryte_core::snapshot::{WorldRegistry, WorldSnapshot};
 use verryte_input::ActionSource;
@@ -38,6 +39,8 @@ pub struct Snapshot {
     pub battle_stats: BattleStats,
     #[serde(default = "default_floor_one")]
     pub floor: u32,
+    #[serde(default)]
+    pub weather: WeatherType,
 }
 
 fn default_floor_one() -> u32 {
@@ -72,6 +75,10 @@ pub enum ActionOutcome {
         was_critical: bool,
         was_blocked: bool,
     },
+    /// A critical hit landed.
+    CritHit { damage: i32 },
+    /// Damage was blocked by a shield.
+    Blocked { damage_reduced: i32 },
     /// A heal was applied.
     Healed { amount: i32, target: String },
     /// The action moved an entity between tiles.
@@ -80,6 +87,16 @@ pub enum ActionOutcome {
     ItemUsed { name: String },
     /// The action triggered a boss phase transition.
     BossPhaseChanged { phase: String },
+    /// An echo ability was absorbed from a defeated enemy.
+    Absorbed { echo_name: String },
+    /// An item was crafted via alchemy.
+    Crafted { item_name: String },
+    /// The player moved between dungeon floors.
+    FloorTransition { from: u32, to: u32 },
+    /// An elemental status was applied to a target.
+    StatusApplied { status: String, target: String },
+    /// A combo chain was extended.
+    ComboExtended { combo_count: u32 },
     /// The action triggered a state-only change (selection, cursor, inventory).
     StateUpdated,
     /// The action failed (e.g. out of AP, out of range, invalid target).
@@ -153,9 +170,12 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_resource::<verryte_map::VisibilityMap>("VisibilityMap");
     reg.register_resource::<verryte_core::Events<GameEvent>>("GameEvents");
     reg.register_resource::<crate::components::BattleStats>("BattleStats");
+    reg.register_resource::<crate::components::Weather>("Weather");
 
     reg
 }
+
+pub const CURRENT_SAVE_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FullSaveState {
@@ -163,4 +183,33 @@ pub struct FullSaveState {
     pub version: u32,
     pub timestamp: String,
     pub world: WorldSnapshot,
+    #[serde(default)]
+    pub migrations_applied: Vec<String>,
+}
+
+/// Per-character summary for diagnostics.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CharacterDiag {
+    pub name: String,
+    pub hp: i32,
+    pub max_hp: i32,
+    pub ap: i32,
+    pub max_ap: i32,
+    pub status: String,
+    pub alive: bool,
+}
+
+/// A snapshot of diagnostic information about the game state, useful for
+/// agents, CI verification, and replay debugging.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GameDiagnostics {
+    pub alive_entities: usize,
+    pub dead_entities: usize,
+    pub current_phase: TurnPhase,
+    pub weather: String,
+    pub floor: u32,
+    pub turn: u32,
+    pub characters: Vec<CharacterDiag>,
+    pub combo_count: u32,
+    pub concert_energy: u32,
 }

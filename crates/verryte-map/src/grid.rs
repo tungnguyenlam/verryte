@@ -2886,12 +2886,7 @@ impl<T> TileGrid<T> {
     /// Each subsequent tile's opacity (returned by `get_opacity`, between 0.0 and 1.0)
     /// scales the remaining translucency: `translucency *= (1.0 - opacity)`.
     /// If translucency drops below a threshold (e.g., 0.01) or goes out of bounds, the raycast stops.
-    pub fn raycast_translucency<F>(
-        &self,
-        start: Point,
-        end: Point,
-        mut get_opacity: F,
-    ) -> f32
+    pub fn raycast_translucency<F>(&self, start: Point, end: Point, mut get_opacity: F) -> f32
     where
         F: FnMut(Point, &T) -> f32,
     {

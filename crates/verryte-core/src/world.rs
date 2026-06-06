@@ -1343,7 +1343,10 @@ impl World {
 
     /// Collect every live `(entity, &mut component)` pair for a given component type
     /// that has been added since `last_tick`.
-    pub fn query_added_mut<T: 'static + Send + Sync>(&mut self, last_tick: u64) -> Vec<(Entity, &mut T)> {
+    pub fn query_added_mut<T: 'static + Send + Sync>(
+        &mut self,
+        last_tick: u64,
+    ) -> Vec<(Entity, &mut T)> {
         let mut out = Vec::new();
         let Some(column) = self.columns.get_mut(&TypeId::of::<T>()) else {
             return out;
@@ -1369,7 +1372,10 @@ impl World {
 
     /// Collect every live `(entity, &mut component)` pair for a given component type
     /// that has been changed since `last_tick`.
-    pub fn query_changed_mut<T: 'static + Send + Sync>(&mut self, last_tick: u64) -> Vec<(Entity, &mut T)> {
+    pub fn query_changed_mut<T: 'static + Send + Sync>(
+        &mut self,
+        last_tick: u64,
+    ) -> Vec<(Entity, &mut T)> {
         let mut out = Vec::new();
         let Some(column) = self.columns.get_mut(&TypeId::of::<T>()) else {
             return out;
@@ -3464,45 +3470,45 @@ mod tests {
     fn test_change_detection_queries() {
         let mut world = World::new();
         let t0 = world.read_tick(); // t0 = 1
-        
+
         let a = world.spawn();
         world.increment_tick(); // current tick becomes 2
         world.insert(a, Counter(10));
         let t1 = world.read_tick(); // t1 = 2
-        
+
         // At t0, Counter(10) is added (added_tick is 2, t0 is 1)
         let added = world.query_added::<Counter>(t0);
         assert_eq!(added.len(), 1);
         assert_eq!(added[0].0, a);
-        
+
         // Counter was not added after t1 (added_tick is 2, t1 is 2)
         let added_after_t1 = world.query_added::<Counter>(t1);
         assert!(added_after_t1.is_empty());
-        
+
         // Modify counter
         world.increment_tick(); // current tick becomes 3
         let t2 = world.read_tick(); // t2 = 3
         if let Some(c) = world.get_mut::<Counter>(a) {
             c.0 = 20;
         }
-        
+
         // Counter is changed since t1 (changed_tick is 3, t1 is 2)
         let changed = world.query_changed::<Counter>(t1);
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0].0, a);
-        
+
         // Counter was not changed since t2 (changed_tick is 3, t2 is 3)
         let changed_after_t2 = world.query_changed::<Counter>(t2);
         assert!(changed_after_t2.is_empty());
-        
+
         // Test mutable queries
         let mut added_mut = world.query_added_mut::<Counter>(t0);
         assert_eq!(added_mut.len(), 1);
-        added_mut[0].1.0 = 30;
-        
+        added_mut[0].1 .0 = 30;
+
         let mut changed_mut = world.query_changed_mut::<Counter>(t1);
         assert_eq!(changed_mut.len(), 1);
-        assert_eq!(changed_mut[0].1.0, 30);
+        assert_eq!(changed_mut[0].1 .0, 30);
     }
 
     #[test]

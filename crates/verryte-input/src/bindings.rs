@@ -298,13 +298,19 @@ impl<A: Clone> CommandBindings<A> {
     /// Suggests the closest registered command names (including aliases) to the given input,
     /// using Levenshtein distance. Returns up to 3 suggestions with distance <= 3, sorted by closeness.
     pub fn suggest_command(&self, input: &str) -> Vec<String> {
-        let mut suggestions: Vec<(usize, String)> = self.by_name.keys()
+        let mut suggestions: Vec<(usize, String)> = self
+            .by_name
+            .keys()
             .chain(self.aliases.keys())
             .map(|name| (levenshtein_distance(input, name), name.clone()))
             .filter(|&(dist, _)| dist <= 3)
             .collect();
         suggestions.sort_by_key(|&(dist, _)| dist);
-        suggestions.into_iter().take(3).map(|(_, name)| name).collect()
+        suggestions
+            .into_iter()
+            .take(3)
+            .map(|(_, name)| name)
+            .collect()
     }
 
     /// Parse whitespace-separated command names into actions.
@@ -582,7 +588,10 @@ impl std::error::Error for CommandParseError {}
 
 impl CommandParseError {
     /// If this is an `UnknownCommand` error, attempts to suggest corrections from the bindings.
-    pub fn suggest_corrections<A: Clone>(&self, bindings: &CommandBindings<A>) -> Option<Vec<String>> {
+    pub fn suggest_corrections<A: Clone>(
+        &self,
+        bindings: &CommandBindings<A>,
+    ) -> Option<Vec<String>> {
         match self {
             CommandParseError::UnknownCommand(cmd) => {
                 let suggestions = bindings.suggest_command(cmd);

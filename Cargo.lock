@@ -1618,6 +1618,7 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "verryte-audio",
  "verryte-core",
  "verryte-input",
  "verryte-map",

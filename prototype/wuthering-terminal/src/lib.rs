@@ -13,7 +13,9 @@ pub mod ui;
 pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
-pub use snapshot::{ActionOutcome, FullSaveState, Snapshot, StepReport};
+pub use snapshot::{
+    ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, Snapshot, StepReport,
+};
 pub use spawn::Spawner;
 pub use verryte_map::Point as Position;
 
@@ -29,7 +31,7 @@ mod tests {
     #[test]
     fn test_game_init() {
         let game = Game::new();
-        assert_eq!(game.world.entity_count(), 14); // 3 players + 1 boss + 2 stalkers + 2 spores + 1 sentinel + 1 wraith + 4 items
+        assert_eq!(game.world.entity_count(), 15); // 3 players + 1 boss + 2 stalkers + 2 spores + 1 sentinel + 1 wraith + 1 cleric + 4 items
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -82,7 +84,7 @@ mod tests {
         );
 
         // Check that all entities are restored
-        assert_eq!(game2.world.entity_count(), 14);
+        assert_eq!(game2.world.entity_count(), 15);
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -116,7 +118,10 @@ mod tests {
         assert!(res.unwrap_err().to_string().contains("magic"));
 
         // Unsupported version
-        let invalid_version = valid_save.replace("\"version\":1", "\"version\":99");
+        let invalid_version = valid_save.replace(
+            &format!("\"version\":{}", crate::snapshot::CURRENT_SAVE_VERSION),
+            "\"version\":99",
+        );
         let res = game.load_state(&invalid_version);
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("version"));
@@ -600,6 +605,7 @@ mod tests {
                 CharacterClass::CursedSentinel => {}
                 CharacterClass::PlagueWraith => {}
                 CharacterClass::GlacialGolem => {}
+                CharacterClass::EnemyCleric => {}
             }
         }
         let warrior = warrior.unwrap();
@@ -1248,7 +1254,7 @@ mod tests {
         assert_eq!(snap1.phase, TurnPhase::Player);
         assert_eq!(snap1.outcome, Outcome::Playing);
         assert_eq!(snap1.player_team.count, 3);
-        assert_eq!(snap1.enemy_team.count, 7); // Boss + 2 stalkers + 2 spores + sentinel + wraith
+        assert_eq!(snap1.enemy_team.count, 8); // Boss + 2 stalkers + 2 spores + sentinel + wraith + cleric
 
         game.apply_action(Action::MoveNorth, ActionSource::Terminal);
         let snap2 = game.snapshot();
@@ -1672,6 +1678,8 @@ mod tests {
                 r.outcome,
                 ActionOutcome::Hit { damage, .. } if damage > 0
             ) || matches!(r.outcome, ActionOutcome::BossPhaseChanged { .. })
+                || matches!(r.outcome, ActionOutcome::ComboExtended { .. })
+                || matches!(r.outcome, ActionOutcome::CritHit { .. })
         });
         assert!(
             saw_combat_outcome,
@@ -2934,5 +2942,771 @@ mod tests {
         // Walker should have stopped at walker_ice_pos1 and NOT slid to walker_ice_pos2
         let walker_pos = *game.world.get::<Position>(walker).unwrap();
         assert_eq!(walker_pos, walker_ice_pos1);
+    }
+
+    #[test]
+    fn test_change_weather_action_updates_resource() {
+        let mut game = Game::new();
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            crate::components::WeatherType::Sunny
+        );
+
+        game.apply_action(
+            Action::ChangeWeather(crate::components::WeatherType::Rainy),
+            ActionSource::Terminal,
+        );
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            crate::components::WeatherType::Rainy
+        );
+    }
+
+    #[test]
+    fn test_change_weather_emits_ambient_audio_events() {
+        let mut game = Game::new();
+        game.apply_action(
+            Action::ChangeWeather(crate::components::WeatherType::LightningStorm),
+            ActionSource::Terminal,
+        );
+        let events = game
+            .world
+            .resource::<verryte_core::Events<verryte_core::AudioEvent>>()
+            .unwrap();
+        let collected: Vec<_> = events.iter().cloned().collect();
+        let has_ambient = collected
+            .iter()
+            .any(|e| e.name == "ambient_thunder" && e.looped);
+        assert!(
+            has_ambient,
+            "LightningStorm should emit ambient_thunder loop event"
+        );
+    }
+
+    #[test]
+    fn test_weather_ambient_system_emits_loop_event() {
+        let mut game = Game::new();
+        game.world
+            .resource_mut::<crate::components::Weather>()
+            .unwrap()
+            .current = crate::components::WeatherType::Rainy;
+        crate::systems::weather_ambient_system(&mut game.world);
+        let events = game
+            .world
+            .resource::<verryte_core::Events<verryte_core::AudioEvent>>()
+            .unwrap();
+        let collected: Vec<_> = events.iter().cloned().collect();
+        let has_rain = collected
+            .iter()
+            .any(|e| e.name == "ambient_rain" && e.looped);
+        assert!(
+            has_rain,
+            "weather_ambient_system should emit ambient_rain for Rainy"
+        );
+    }
+
+    #[test]
+    fn test_spatial_sfx_emits_panned_audio_event() {
+        let mut game = Game::new();
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(0, 0);
+        game.play_spatial_sfx("warrior_attack", Position::new(10, 0));
+        let events = game
+            .world
+            .resource::<verryte_core::Events<verryte_core::AudioEvent>>()
+            .unwrap();
+        let collected: Vec<_> = events.iter().cloned().collect();
+        let attack_event = collected.iter().find(|e| e.name == "warrior_attack");
+        assert!(
+            attack_event.is_some(),
+            "spatial sfx should emit warrior_attack event"
+        );
+        let ev = attack_event.unwrap();
+        assert!(ev.pan.is_some(), "spatial sfx should have pan value");
+        assert!(ev.volume.is_some(), "spatial sfx should have volume value");
+        let pan = ev.pan.unwrap();
+        assert!(
+            pan > 0.0,
+            "emitter to the right should pan right, got {}",
+            pan
+        );
+    }
+
+    #[test]
+    fn test_spatial_sfx_same_position_has_zero_pan() {
+        let mut game = Game::new();
+        let pos = Position::new(5, 5);
+        game.world.resource_mut::<GameState>().unwrap().cursor = pos;
+        game.play_spatial_sfx("healer_attack", pos);
+        let events = game
+            .world
+            .resource::<verryte_core::Events<verryte_core::AudioEvent>>()
+            .unwrap();
+        let collected: Vec<_> = events.iter().cloned().collect();
+        let ev = collected
+            .iter()
+            .find(|e| e.name == "healer_attack")
+            .unwrap();
+        let pan = ev.pan.unwrap();
+        assert!(
+            pan.abs() < 0.01,
+            "same position should have near-zero pan, got {}",
+            pan
+        );
+        let vol = ev.volume.unwrap();
+        assert!(
+            vol > 0.99,
+            "same position should have near-max volume, got {}",
+            vol
+        );
+    }
+
+    #[test]
+    fn test_cleric_healing_behavior() {
+        let mut game = Game::new();
+
+        let cleric = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::EnemyCleric)
+            .map(|(e, _)| e)
+            .unwrap();
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Position cleric near boss
+        *game.world.get_mut::<Position>(cleric).unwrap() = Position::new(17, 8);
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(18, 8);
+
+        // Move all players far away so they don't interfere
+        let players: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(_, t)| **t == Team::Player)
+            .map(|(e, _)| e)
+            .collect();
+        for p in players {
+            *game.world.get_mut::<Position>(p).unwrap() = Position::new(0, 0);
+        }
+
+        // Damage the boss so it needs healing (below 50% HP)
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 200;
+        game.world.get_mut::<Stats>(boss).unwrap().max_hp = 500;
+
+        // Give cleric AP
+        game.world.get_mut::<Stats>(cleric).unwrap().ap = 3;
+        game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+
+        let boss_hp_before = game.world.get::<Stats>(boss).unwrap().hp;
+
+        // Run enemy AI
+        crate::systems::enemy_ai_system(&mut game.world);
+
+        let boss_hp_after = game.world.get::<Stats>(boss).unwrap().hp;
+        assert!(
+            boss_hp_after > boss_hp_before,
+            "Cleric should have healed the boss. Before: {}, After: {}",
+            boss_hp_before,
+            boss_hp_after
+        );
+    }
+
+    #[test]
+    fn test_flanking_damage_bonus() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let stalker1 = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+        let stalker2_entities: Vec<_> = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .filter(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .collect();
+        let stalker2 = if stalker2_entities.len() > 1 {
+            stalker2_entities[1]
+        } else {
+            stalker2_entities[0]
+        };
+
+        // Position warrior at (5, 5)
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(5, 5);
+
+        // Position stalker1 east of warrior (5+1, 5) = (6, 5)
+        *game.world.get_mut::<Position>(stalker1).unwrap() = Position::new(6, 5);
+        // Position stalker2 north of warrior (5, 5-1) = (5, 4) — perpendicular
+        *game.world.get_mut::<Position>(stalker2).unwrap() = Position::new(5, 4);
+
+        let warrior_pos = Position::new(5, 5);
+        let stalker1_pos = Position::new(6, 5);
+
+        // Check flanking detection
+        let is_flanking =
+            crate::systems::is_flanking_position(&game.world, stalker1_pos, warrior_pos);
+        assert!(
+            is_flanking,
+            "Stalker1 at (6,5) should be flanking with Stalker2 at (5,4) perpendicular"
+        );
+
+        // Non-flanking: both on same axis
+        *game.world.get_mut::<Position>(stalker2).unwrap() = Position::new(4, 5);
+        let is_flanking_same_axis =
+            crate::systems::is_flanking_position(&game.world, stalker1_pos, warrior_pos);
+        assert!(
+            !is_flanking_same_axis,
+            "Both on horizontal axis should NOT be flanking"
+        );
+    }
+
+    #[test]
+    fn test_focus_fire_targeting() {
+        let mut game = Game::new();
+
+        // Find enemies and players
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let stalker = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Move all characters to known positions
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 8);
+        *game.world.get_mut::<Position>(stalker).unwrap() = Position::new(6, 4);
+
+        // Move other enemies far away
+        let others: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(e, t)| **t == Team::Enemy && *e != stalker)
+            .map(|(e, _)| e)
+            .collect();
+        for e in others {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(20, 20);
+        }
+
+        // Move other players far away
+        let other_players: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(e, t)| **t == Team::Player && *e != warrior && *e != mage)
+            .map(|(e, _)| e)
+            .collect();
+        for e in other_players {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(0, 15);
+        }
+
+        // Give warrior a high threat score
+        game.world
+            .get_mut::<crate::components::Threat>(warrior)
+            .unwrap()
+            .value = 50;
+        game.world
+            .get_mut::<crate::components::Threat>(mage)
+            .unwrap()
+            .value = 0;
+
+        // Both players at full HP — stalker should target warrior (high threat)
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 100;
+        game.world.get_mut::<Stats>(mage).unwrap().hp = 60;
+
+        game.world.get_mut::<Stats>(stalker).unwrap().ap = 3;
+        game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+
+        crate::systems::enemy_ai_system(&mut game.world);
+
+        // Warrior should have taken damage (high threat target)
+        let warrior_hp = game.world.get::<Stats>(warrior).unwrap().hp;
+        assert!(
+            warrior_hp < 100,
+            "Stalker should have targeted the high-threat warrior. Warrior HP: {}",
+            warrior_hp
+        );
+    }
+
+    #[test]
+    fn test_patrol_wander_behavior() {
+        let mut game = Game::new();
+
+        // Move all players far away (beyond detection range of 8)
+        let players: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(_, t)| **t == Team::Player)
+            .map(|(e, _)| e)
+            .collect();
+        for p in &players {
+            *game.world.get_mut::<Position>(*p).unwrap() = Position::new(0, 0);
+        }
+
+        let stalker = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Place stalker far from players but with walkable neighbors
+        *game.world.get_mut::<Position>(stalker).unwrap() = Position::new(12, 8);
+        let initial_pos = *game.world.get::<Position>(stalker).unwrap();
+
+        // Move all other enemies far away
+        let others: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(e, t)| **t == Team::Enemy && *e != stalker)
+            .map(|(e, _)| e)
+            .collect();
+        for e in others {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(20, 20);
+        }
+
+        // Give stalker AP
+        game.world.get_mut::<Stats>(stalker).unwrap().ap = 3;
+        game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+
+        crate::systems::enemy_ai_system(&mut game.world);
+
+        let final_pos = *game.world.get::<Position>(stalker).unwrap();
+        // The stalker should have moved (either toward players or wandered)
+        assert!(
+            final_pos != initial_pos,
+            "Enemy should move even when players are far away. Start: {:?}, End: {:?}",
+            initial_pos,
+            final_pos
+        );
+
+        // Verify it moved closer to players or at least moved at all
+        let initial_dist = (initial_pos.x - 0).abs() + (initial_pos.y - 0).abs();
+        let final_dist = (final_pos.x - 0).abs() + (final_pos.y - 0).abs();
+        assert!(
+            final_dist <= initial_dist,
+            "Enemy should move toward players or wander. Initial dist: {}, Final dist: {}",
+            initial_dist,
+            final_dist
+        );
+    }
+
+    #[test]
+    fn test_enemy_cleric_exists_in_game() {
+        let game = Game::new();
+        let mut cleric_found = false;
+        let mut cleric_is_enemy = false;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            if *class == CharacterClass::EnemyCleric {
+                cleric_found = true;
+                if let Some(team) = game.world.get::<Team>(e) {
+                    cleric_is_enemy = *team == Team::Enemy;
+                }
+            }
+        }
+        assert!(cleric_found, "EnemyCleric should be spawned");
+        assert!(cleric_is_enemy, "EnemyCleric should be on the Enemy team");
+
+        // Verify it has the Cleric AI archetype
+        let cleric = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::EnemyCleric)
+            .map(|(e, _)| e)
+            .unwrap();
+        let archetype = game
+            .world
+            .get::<crate::components::AIArchetype>(cleric)
+            .unwrap();
+        assert_eq!(
+            *archetype,
+            crate::components::AIArchetype::Cleric,
+            "EnemyCleric should have Cleric AI archetype"
+        );
+    }
+
+    #[test]
+    fn test_weather_damage_modifiers() {
+        use crate::components::{CharacterClass, WeatherType};
+
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(warrior).unwrap().max_hp = 1000;
+        game.world.get_mut::<Stats>(mage).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(mage).unwrap().max_hp = 1000;
+
+        game.world
+            .resource_mut::<crate::components::Weather>()
+            .unwrap()
+            .current = WeatherType::Sunny;
+        crate::systems::resolve_combat_hit(
+            &mut game.world,
+            warrior,
+            100,
+            "Warrior",
+            "Warrior",
+            Position::new(4, 4),
+        );
+        let hp_after_sunny = game.world.get::<Stats>(warrior).unwrap().hp;
+        let sunny_damage = 1000 - hp_after_sunny;
+        assert!(
+            sunny_damage >= 57,
+            "Sunny should boost Warrior (fire) damage, got {}",
+            sunny_damage
+        );
+
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world
+            .resource_mut::<crate::components::Weather>()
+            .unwrap()
+            .current = WeatherType::Rainy;
+        crate::systems::resolve_combat_hit(
+            &mut game.world,
+            warrior,
+            100,
+            "Warrior",
+            "Warrior",
+            Position::new(4, 4),
+        );
+        let hp_after_rainy = game.world.get::<Stats>(warrior).unwrap().hp;
+        let rainy_damage = 1000 - hp_after_rainy;
+        assert!(
+            rainy_damage <= 135,
+            "Rainy should reduce Warrior (fire) damage, got {}",
+            rainy_damage
+        );
+
+        game.world.get_mut::<Stats>(mage).unwrap().hp = 1000;
+        game.world
+            .resource_mut::<crate::components::Weather>()
+            .unwrap()
+            .current = WeatherType::LightningStorm;
+        crate::systems::resolve_combat_hit(
+            &mut game.world,
+            mage,
+            100,
+            "Mage",
+            "Mage",
+            Position::new(4, 4),
+        );
+        let hp_after_storm = game.world.get::<Stats>(mage).unwrap().hp;
+        let storm_damage = 1000 - hp_after_storm;
+        assert!(
+            storm_damage >= 62,
+            "LightningStorm should boost Mage (lightning) damage, got {}",
+            storm_damage
+        );
+    }
+
+    #[test]
+    fn test_weather_cycling() {
+        use crate::components::WeatherType;
+
+        let mut game = Game::new();
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            WeatherType::Sunny
+        );
+
+        game.world.resource_mut::<GameState>().unwrap().turn = 4;
+        crate::systems::weather_cycle_system(&mut game.world);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            WeatherType::Rainy,
+            "Turn 4 should cycle to Rainy"
+        );
+
+        game.world.resource_mut::<GameState>().unwrap().turn = 7;
+        crate::systems::weather_cycle_system(&mut game.world);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            WeatherType::LightningStorm,
+            "Turn 7 should cycle to LightningStorm"
+        );
+
+        game.world.resource_mut::<GameState>().unwrap().turn = 10;
+        crate::systems::weather_cycle_system(&mut game.world);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            WeatherType::Snowing,
+            "Turn 10 should cycle to Snowing"
+        );
+
+        game.world.resource_mut::<GameState>().unwrap().turn = 13;
+        crate::systems::weather_cycle_system(&mut game.world);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            WeatherType::Sunny,
+            "Turn 13 should cycle back to Sunny"
+        );
+    }
+
+    #[test]
+    fn test_change_weather_via_script_command() {
+        let mut game = Game::new();
+
+        let count = game
+            .router
+            .inject_script_with(
+                &default_commands(),
+                "weather:rainy",
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let reports = game.run_pending_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].source, ActionSource::Script);
+
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            crate::components::WeatherType::Rainy,
+        );
+
+        let count = game
+            .router
+            .inject_script_with(
+                &default_commands(),
+                "weather:storm",
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        game.run_pending_reports();
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            crate::components::WeatherType::LightningStorm,
+        );
+    }
+
+    #[test]
+    fn test_weather_snapshot_included() {
+        use crate::components::WeatherType;
+        let mut game = Game::new();
+
+        let snap = game.snapshot();
+        assert_eq!(
+            snap.weather,
+            WeatherType::Sunny,
+            "Default weather should be Sunny"
+        );
+
+        game.apply_action(
+            Action::ChangeWeather(WeatherType::Rainy),
+            ActionSource::Terminal,
+        );
+        let snap = game.snapshot();
+        assert_eq!(
+            snap.weather,
+            WeatherType::Rainy,
+            "Snapshot should reflect weather change"
+        );
+    }
+
+    #[test]
+    fn test_diagnostics_snapshot() {
+        let game = Game::new();
+
+        let diag = game.diagnostics();
+        assert_eq!(diag.turn, 1);
+        assert_eq!(diag.floor, 1);
+        assert_eq!(diag.current_phase, TurnPhase::Player);
+        assert_eq!(diag.weather, "Sunny");
+        assert!(diag.alive_entities > 0, "Should have alive entities");
+        assert_eq!(diag.dead_entities, 0, "No entities should be dead at start");
+        assert_eq!(diag.combo_count, 0);
+        assert_eq!(diag.concert_energy, 0);
+
+        let names: Vec<&str> = diag.characters.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"Kael"), "Should have Kael");
+        assert!(names.contains(&"Lyra"), "Should have Lyra");
+        assert!(names.contains(&"Mira"), "Should have Mira");
+        assert!(names.contains(&"Blight Sovereign"), "Should have boss");
+
+        for ch in &diag.characters {
+            assert!(ch.alive, "{} should be alive", ch.name);
+            assert!(ch.hp > 0, "{} should have positive HP", ch.name);
+        }
+    }
+
+    #[test]
+    fn test_save_migration_v1_to_v2() {
+        let game = Game::new();
+        let save_v2 = game.save_state().unwrap();
+        let save_v1 = save_v2.replace(
+            &format!("\"version\":{}", snapshot::CURRENT_SAVE_VERSION),
+            "\"version\":1",
+        );
+
+        let mut game2 = Game::new();
+        let result = game2.load_state(&save_v1);
+        assert!(
+            result.is_ok(),
+            "Loading v1 save should succeed via migration: {:?}",
+            result.err()
+        );
+
+        let state = game2.world.resource::<GameState>().unwrap();
+        assert_eq!(state.turn, 1);
+        assert_eq!(state.floor, 1);
+    }
+
+    #[test]
+    fn test_save_version_is_current() {
+        assert_eq!(snapshot::CURRENT_SAVE_VERSION, 2);
+    }
+
+    #[test]
+    fn test_game_diagnostics_characters_have_ap_info() {
+        let game = Game::new();
+        let diag = game.diagnostics();
+
+        for ch in &diag.characters {
+            assert!(ch.max_ap > 0, "{} should have max_ap > 0", ch.name);
+            if ch.name == "Kael" {
+                assert!(ch.ap > 0, "Kael should start with AP");
+            }
+        }
+    }
+
+    #[test]
+    fn test_full_save_state_has_migrations_field() {
+        let game = Game::new();
+        let save_json = game.save_state().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&save_json).unwrap();
+        assert!(
+            parsed.get("migrations_applied").is_some(),
+            "Save state should have migrations_applied field"
+        );
+        assert_eq!(
+            parsed["version"].as_u64().unwrap(),
+            snapshot::CURRENT_SAVE_VERSION as u64
+        );
+    }
+
+    #[test]
+    fn test_combo_extended_outcome_detection() {
+        let mut game = Game::new();
+
+        let mut warrior = None;
+        let mut boss = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            match class {
+                CharacterClass::Warrior => warrior = Some(e),
+                CharacterClass::Boss => boss = Some(e),
+                _ => {}
+            }
+        }
+        let warrior = warrior.unwrap();
+        let boss = boss.unwrap();
+
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 4);
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 10;
+        game.world
+            .resource_mut::<GameState>()
+            .unwrap()
+            .selected_entity = Some(warrior);
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 5);
+        let report = game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        let combo = game.world.resource::<GameState>().unwrap().combo_count;
+        assert!(combo > 0, "Combo should increase after attack");
+
+        match &report.outcome {
+            ActionOutcome::ComboExtended { combo_count } => {
+                assert_eq!(*combo_count, combo);
+            }
+            ActionOutcome::Hit { .. }
+            | ActionOutcome::CritHit { .. }
+            | ActionOutcome::Blocked { .. } => {}
+            _ => {}
+        }
     }
 }

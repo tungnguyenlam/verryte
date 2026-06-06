@@ -804,7 +804,11 @@ impl VfxSystem {
                         p.y += (p.vy + wave) * dt;
                     }
                 }
-                Trajectory::Homeward { target_x, target_y, speed } => {
+                Trajectory::Homeward {
+                    target_x,
+                    target_y,
+                    speed,
+                } => {
                     let dx = target_x - p.x;
                     let dy = target_y - p.y;
                     let dist = (dx * dx + dy * dy).sqrt();
@@ -1609,18 +1613,27 @@ mod tests {
     #[test]
     fn test_homeward_particles() {
         let particles = emit_homeward(
-            10.0, 10.0, // center
-            20.0, 20.0, // target
-            4,          // count
+            10.0,
+            10.0, // center
+            20.0,
+            20.0, // target
+            4,    // count
             Color::GREEN,
             &['+'],
-            5.0,        // speed
+            5.0, // speed
         );
         assert_eq!(particles.len(), 4);
         for p in &particles {
             assert_eq!(p.fg, Color::GREEN);
             assert_eq!(p.glyph, '+');
-            assert!(matches!(p.trajectory, Trajectory::Homeward { target_x: 20.0, target_y: 20.0, speed: 5.0 }));
+            assert!(matches!(
+                p.trajectory,
+                Trajectory::Homeward {
+                    target_x: 20.0,
+                    target_y: 20.0,
+                    speed: 5.0
+                }
+            ));
         }
 
         // Run update on particles to verify homeward progression
@@ -1633,7 +1646,9 @@ mod tests {
         system.update(0.1); // step dt = 0.1
 
         let updated_p = &system.particles[0];
-        let new_dist = ((20.0 - updated_p.x) * (20.0 - updated_p.x) + (20.0 - updated_p.y) * (20.0 - updated_p.y)).sqrt();
+        let new_dist = ((20.0 - updated_p.x) * (20.0 - updated_p.x)
+            + (20.0 - updated_p.y) * (20.0 - updated_p.y))
+            .sqrt();
         // Distance should be closer!
         assert!(new_dist < initial_dist);
     }

@@ -106,6 +106,7 @@ impl Game {
         schedule.add_named("visibility", crate::systems::visibility_system);
         schedule.add_named("turn_management", crate::systems::turn_management_system);
         schedule.add_named("enemy_ai", crate::systems::enemy_ai_system);
+        schedule.add_named("weather_cycle", crate::systems::weather_cycle_system);
 
         let mut audio_stream = None;
         if let Ok((mut player, stream)) = verryte_audio::AudioPlayer::try_new() {
@@ -120,6 +121,10 @@ impl Game {
             player.register("level_up", vec![0; 100]);
             player.register("boss_phase_transition", vec![0; 100]);
             player.register("dialogue_blip", vec![0; 100]);
+            player.register("ambient_rain", vec![0; 100]);
+            player.register("ambient_thunder", vec![0; 100]);
+            player.register("ambient_birds", vec![0; 100]);
+            player.register("ambient_wind", vec![0; 100]);
 
             player.play_music("music_theme", true);
 
@@ -179,6 +184,11 @@ impl Game {
             Position::new(10, 14),
             Team::Enemy,
             CharacterClass::PlagueWraith,
+        );
+        game.world.spawn_character(
+            Position::new(15, 8),
+            Team::Enemy,
+            CharacterClass::EnemyCleric,
         );
 
         let potion = game
@@ -275,6 +285,7 @@ impl Game {
             CharacterClass::CursedSentinel => "Cursed Sentinel",
             CharacterClass::PlagueWraith => "Plague Wraith",
             CharacterClass::GlacialGolem => "Glacial Golem",
+            CharacterClass::EnemyCleric => "Dark Cleric",
         }
     }
 
@@ -2452,6 +2463,7 @@ impl Game {
                 | Action::StepReplay
                 | Action::TogglePerf
                 | Action::ToggleMinimap
+                | Action::ChangeWeather(_)
         );
 
         let phase_current = self
@@ -2670,34 +2682,46 @@ impl Game {
                 outcome: break_after.outcome,
             };
         }
-        // Check for failed actions via log messages.
-        if let Some(log) = self.world.resource::<MessageLog>() {
+
+        let new_log_messages: Vec<String> = if let Some(log) = self.world.resource::<MessageLog>() {
             if log.len() > before_log_len {
-                if let Some(msg) = log.messages().last() {
-                    let msg_str = msg.to_string();
-                    if msg_str.starts_with("Not enough AP")
-                        || msg_str.starts_with("Target is out of")
-                        || msg_str.starts_with("Cannot move")
-                        || msg_str.starts_with("Select a character")
-                        || msg_str.starts_with("Concert Energy not full")
-                        || msg_str.starts_with("No reachable safe")
-                        || msg_str.starts_with("Target is out of range")
-                    {
-                        return ActionOutcome::Failed { reason: msg_str };
-                    }
-                }
+                log.messages()
+                    .iter()
+                    .skip(before_log_len)
+                    .map(|m| m.to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        for msg in &new_log_messages {
+            if msg.starts_with("Not enough AP")
+                || msg.starts_with("Target is out of")
+                || msg.starts_with("Cannot move")
+                || msg.starts_with("Select a character")
+                || msg.starts_with("Concert Energy not full")
+                || msg.starts_with("No reachable safe")
+                || msg.starts_with("Target is out of range")
+            {
+                return ActionOutcome::Failed {
+                    reason: msg.clone(),
+                };
             }
         }
-        // Boss phase transitions are detected via the boss_phase resource
-        // (the transition check runs at the end of every apply_action).
+
+        if before.floor != break_after.floor {
+            return ActionOutcome::FloorTransition {
+                from: before.floor,
+                to: break_after.floor,
+            };
+        }
+
         if matches!(self.boss_phase(), crate::components::BossPhase::Phase2)
             && !matches!(action, Action::EndTurn)
         {
-            // Heuristic: a phase transition only happens during combat resolution,
-            // and we just took a Player phase action that caused the boss HP to
-            // cross the threshold. We confirm by checking the boss state BEFORE
-            // this action — but since the snapshot doesn't carry it, we use the
-            // fact that Phase2 is set and the action was a combat-related one.
             let is_combat_action = matches!(
                 action,
                 Action::Confirm
@@ -2718,12 +2742,44 @@ impl Game {
         if before.turn != break_after.turn {
             return ActionOutcome::TurnAdvanced;
         }
-        // Look at events for combat signals.
+
+        for msg in &new_log_messages {
+            if msg.contains("Absorbed") && msg.contains("Echo") {
+                let echo_name = msg
+                    .split("Absorbed ")
+                    .nth(1)
+                    .and_then(|s| s.split(" Echo").next())
+                    .unwrap_or("Unknown")
+                    .to_string();
+                return ActionOutcome::Absorbed { echo_name };
+            }
+            if msg.contains("crafted") || msg.contains("Crafted") {
+                let item_name = msg
+                    .split("crafted ")
+                    .nth(1)
+                    .or_else(|| msg.split("Crafted ").nth(1))
+                    .and_then(|s| s.split('!').next())
+                    .unwrap_or("Unknown")
+                    .to_string();
+                return ActionOutcome::Crafted { item_name };
+            }
+        }
+
         if let Some(log) = self.world.resource::<Events<GameEvent>>() {
             for event in log.iter() {
                 if let GameEvent::Attacked { damage, target, .. } = event {
                     let _ = target;
                     if *damage > 0 {
+                        let was_crit = new_log_messages.iter().any(|m| m.contains("CRITICAL HIT"));
+                        let was_blocked = new_log_messages.iter().any(|m| m.contains("BLOCKED"));
+                        if was_crit {
+                            return ActionOutcome::CritHit { damage: *damage };
+                        }
+                        if was_blocked {
+                            return ActionOutcome::Blocked {
+                                damage_reduced: *damage,
+                            };
+                        }
                         return ActionOutcome::Hit {
                             damage: *damage,
                             target: String::new(),
@@ -2755,9 +2811,19 @@ impl Game {
                         to: *to,
                     };
                 }
+                if let GameEvent::ElementalApplied { entity, status } = event {
+                    let target_name = self
+                        .world
+                        .get::<CharacterClass>(*entity)
+                        .map(|c| Game::get_class_name(*c).to_string())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    return ActionOutcome::StatusApplied {
+                        status: format!("{:?}", status),
+                        target: target_name,
+                    };
+                }
             }
         }
-        // Cursor-only move actions are state updates.
         if matches!(
             action,
             Action::MoveNorth
@@ -4009,6 +4075,13 @@ impl Game {
                     self.log("Select a character first!");
                 }
             }
+            Action::ChangeWeather(weather_type) => {
+                if let Some(w) = self.world.resource_mut::<crate::components::Weather>() {
+                    w.current = weather_type;
+                }
+                self.update_weather_ambient(weather_type);
+                self.log(format!("Weather changed to {:?}.", weather_type));
+            }
             Action::CraftItem(idx1, idx2) => {
                 let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
                 if let Some(entity) = sel_entity {
@@ -4642,6 +4715,7 @@ impl Game {
                 CharacterClass::CursedSentinel => "kael",
                 CharacterClass::PlagueWraith => "lyra",
                 CharacterClass::GlacialGolem => "blight-sovereign",
+                CharacterClass::EnemyCleric => "mira",
             };
 
             if let Some(asset) = registry.get(key) {
@@ -4821,6 +4895,95 @@ impl Game {
         self.boss_transitioned
     }
 
+    pub fn update_weather_ambient(&mut self, weather: crate::components::WeatherType) {
+        use crate::components::WeatherType;
+
+        // Emit ambient audio events
+        if let Some(events) = self
+            .world
+            .resource_mut::<Events<verryte_core::AudioEvent>>()
+        {
+            let (ambient_name, volume) = match weather {
+                WeatherType::Rainy => ("ambient_rain", 0.4),
+                WeatherType::LightningStorm => ("ambient_thunder", 0.5),
+                WeatherType::Sunny => ("ambient_birds", 0.3),
+                WeatherType::Snowing => ("ambient_wind", 0.35),
+            };
+            events.send(verryte_core::AudioEvent::loop_music(ambient_name).with_volume(volume));
+        }
+
+        // VFX effects
+        match weather {
+            WeatherType::Rainy => {
+                let (tw, th) = self.get_tile_dimensions();
+                let cols = 24u16;
+                let rows = 16u16;
+                let screen_w = cols * tw;
+                let screen_h = rows * th;
+                let mut rain = Vec::new();
+                for _ in 0..30 {
+                    let rx = (screen_w as f32) * 0.5;
+                    let ry = (screen_h as f32) * 0.5;
+                    rain.extend(verryte_terminal::vfx::emit_burst(
+                        rx,
+                        ry,
+                        1,
+                        Color(100, 140, 220),
+                        &['│', '┃', '¦'],
+                    ));
+                }
+                self.vfx_mut().particles.extend(rain);
+            }
+            WeatherType::LightningStorm => {
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(255, 255, 200),
+                        0.15,
+                    ));
+                self.vfx_mut()
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.2));
+            }
+            WeatherType::Sunny => {
+                let (tw, th) = self.get_tile_dimensions();
+                let cols = 24u16;
+                let rows = 16u16;
+                let screen_w = cols * tw;
+                let screen_h = rows * th;
+                let cx = screen_w as f32 * 0.5;
+                let cy = screen_h as f32 * 0.5;
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        cx,
+                        cy,
+                        12,
+                        Color(255, 230, 100),
+                        &['·', '°', '∘'],
+                    ));
+            }
+            WeatherType::Snowing => {
+                let (tw, th) = self.get_tile_dimensions();
+                let cols = 24u16;
+                let rows = 16u16;
+                let screen_w = cols * tw;
+                let screen_h = rows * th;
+                let cx = screen_w as f32 * 0.5;
+                let cy = screen_h as f32 * 0.5;
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        cx,
+                        cy,
+                        20,
+                        Color(220, 230, 255),
+                        &['*', '·', '❄'],
+                    ));
+            }
+        }
+    }
+
     pub fn snapshot(&self) -> crate::snapshot::Snapshot {
         let state = self.world.resource::<GameState>().unwrap();
 
@@ -4896,6 +5059,11 @@ impl Game {
             combo_count: state.combo_count,
             battle_stats,
             floor: state.floor,
+            weather: self
+                .world
+                .resource::<crate::components::Weather>()
+                .map(|w| w.current)
+                .unwrap_or(crate::components::WeatherType::Sunny),
         }
     }
 
@@ -4907,6 +5075,55 @@ impl Game {
             .collect()
     }
 
+    pub fn diagnostics(&self) -> crate::snapshot::GameDiagnostics {
+        let state = self.world.resource::<GameState>().unwrap();
+        let mut alive = 0usize;
+        let mut dead = 0usize;
+        let mut characters = Vec::new();
+
+        for (e, _team, stats, class) in self.world.query3::<Team, Stats, CharacterClass>() {
+            let name = Self::get_class_name(*class).to_string();
+            let status = self
+                .world
+                .get::<crate::components::ElementalStatus>(e)
+                .map(|s| format!("{:?}", s))
+                .unwrap_or_else(|| "None".to_string());
+            let is_alive = stats.hp > 0;
+            if is_alive {
+                alive += 1;
+            } else {
+                dead += 1;
+            }
+            characters.push(crate::snapshot::CharacterDiag {
+                name,
+                hp: stats.hp,
+                max_hp: stats.max_hp,
+                ap: stats.ap,
+                max_ap: stats.max_ap,
+                status,
+                alive: is_alive,
+            });
+        }
+
+        let weather = self
+            .world
+            .resource::<crate::components::Weather>()
+            .map(|w| format!("{:?}", w.current))
+            .unwrap_or_else(|| "Sunny".to_string());
+
+        crate::snapshot::GameDiagnostics {
+            alive_entities: alive,
+            dead_entities: dead,
+            current_phase: state.phase,
+            weather,
+            floor: state.floor,
+            turn: state.turn,
+            characters,
+            combo_count: state.combo_count,
+            concert_energy: state.concert_energy,
+        }
+    }
+
     pub fn save_state(&self) -> Result<String, serde_json::Error> {
         let registry = crate::snapshot::create_registry();
         let snapshot = registry.snapshot(&self.world);
@@ -4916,16 +5133,17 @@ impl Game {
             .unwrap_or_default();
         let state = crate::snapshot::FullSaveState {
             magic: "VERRYTE_SAVE".to_string(),
-            version: 1,
+            version: crate::snapshot::CURRENT_SAVE_VERSION,
             timestamp,
             world: snapshot,
+            migrations_applied: Vec::new(),
         };
 
         serde_json::to_string(&state)
     }
 
     pub fn load_state(&mut self, state_str: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let state: crate::snapshot::FullSaveState = serde_json::from_str(state_str)?;
+        let mut state: crate::snapshot::FullSaveState = serde_json::from_str(state_str)?;
 
         if state.magic != "VERRYTE_SAVE" {
             return Err(Box::new(std::io::Error::new(
@@ -4933,11 +5151,20 @@ impl Game {
                 "Invalid magic signature in save state",
             )));
         }
-        if state.version != 1 {
+        if state.version > crate::snapshot::CURRENT_SAVE_VERSION {
             return Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("Unsupported save state version: {}", state.version),
+                format!(
+                    "Unsupported save state version: {} (max supported: {})",
+                    state.version,
+                    crate::snapshot::CURRENT_SAVE_VERSION
+                ),
             )));
+        }
+
+        // Apply migrations for older save versions.
+        if state.version < crate::snapshot::CURRENT_SAVE_VERSION {
+            state = Self::migrate_save_state(state)?;
         }
 
         let registry = crate::snapshot::create_registry();
@@ -4991,6 +5218,24 @@ impl Game {
         }
 
         Ok(())
+    }
+
+    /// Apply version-by-version migrations to bring an old save up to date.
+    fn migrate_save_state(
+        mut state: crate::snapshot::FullSaveState,
+    ) -> Result<crate::snapshot::FullSaveState, Box<dyn std::error::Error>> {
+        // Migration v1 -> v2: add migrations_applied field (already handled
+        // by serde default) and stamp the migration.
+        if state.version == 1 {
+            state
+                .migrations_applied
+                .push("v1_to_v2: added migrations_applied tracking".to_string());
+            state.version = 2;
+        }
+        // Future migrations would go here:
+        // if state.version == 2 { ... state.version = 3; }
+
+        Ok(state)
     }
 
     pub fn handle_mouse_click(

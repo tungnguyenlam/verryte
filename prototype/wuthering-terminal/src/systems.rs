@@ -1,6 +1,7 @@
 use crate::components::{
-    BossPhase, CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState,
-    Outcome, Position, Rooted, ShieldType, Stats, Team, TelegraphZone, TurnPhase,
+    AIArchetype, BossPhase, CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent,
+    GameState, Outcome, Position, Rooted, ShieldType, Stats, Team, TelegraphZone, Threat,
+    TurnPhase, Weather, WeatherType,
 };
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
@@ -74,9 +75,235 @@ pub fn enemy_ai_system(world: &mut World) {
             }
             all_done = false;
 
-            let mut nearest_player: Option<(Entity, Position, Stats, CharacterClass)> = None;
-            let mut best_score = i32::MAX;
+            let archetype = world
+                .get::<AIArchetype>(enemy_entity)
+                .copied()
+                .unwrap_or(AIArchetype::Chaser);
 
+            if archetype == AIArchetype::Cleric {
+                let mut needy_ally: Option<(Entity, Position, Stats, CharacterClass)> = None;
+                let mut lowest_hp_pct = 100.0;
+                for (ae, ap, team) in world.query2::<Position, Team>() {
+                    if *team == Team::Enemy {
+                        if let (Some(stats), Some(class)) =
+                            (world.get::<Stats>(ae), world.get::<CharacterClass>(ae))
+                        {
+                            let hp_pct = (stats.hp as f32) / (stats.max_hp as f32);
+                            if hp_pct < 0.5 {
+                                if hp_pct < lowest_hp_pct {
+                                    lowest_hp_pct = hp_pct;
+                                    needy_ally = Some((ae, *ap, stats.clone(), *class));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some((ally_entity, ally_pos, _ally_stats, ally_class)) = needy_ally {
+                    let dist = (enemy_pos.x - ally_pos.x).abs() + (enemy_pos.y - ally_pos.y).abs();
+                    if dist <= 3 {
+                        if enemy_stats.ap >= 1 {
+                            if let Some(stats) = world.get_mut::<Stats>(ally_entity) {
+                                stats.hp = (stats.hp + 25).min(stats.max_hp);
+                            }
+                            if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
+                                stats.ap -= 1;
+                            }
+                            let cleric_name = Game::get_class_name(enemy_class);
+                            let ally_name = Game::get_class_name(ally_class);
+                            log(
+                                world,
+                                format!("{} healed ally {} for 25 HP!", cleric_name, ally_name),
+                            );
+
+                            let (cx, cy) = get_tile_center_pixels(world, ally_pos);
+                            if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                                vfx.particles
+                                    .extend(verryte_terminal::vfx::emit_heal(cx, cy, 15));
+                                vfx.floating_texts
+                                    .push(verryte_terminal::vfx::FloatingText::new(
+                                        cx,
+                                        cy - 2.0,
+                                        "+25",
+                                        Color(50, 255, 50),
+                                        true,
+                                    ));
+                            }
+                            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                                events.send(GameEvent::Healed {
+                                    healer: enemy_entity,
+                                    target: ally_entity,
+                                    amount: 25,
+                                });
+                            }
+                        } else {
+                            break;
+                        }
+                    } else {
+                        let (target_tile, move_cost) = {
+                            let map = world
+                                .resource::<TacticalMap>()
+                                .expect("TacticalMap must be registered");
+                            let d_map = verryte_map::DijkstraMap::compute(
+                                map.width,
+                                map.height,
+                                &[ally_pos],
+                                |pt| {
+                                    if pt.x < 0
+                                        || pt.x >= map.width as i16
+                                        || pt.y < 0
+                                        || pt.y >= map.height as i16
+                                    {
+                                        return false;
+                                    }
+                                    map.is_walkable(pt)
+                                        && !is_occupied_except(world, pt, enemy_entity)
+                                },
+                                false,
+                            );
+
+                            let mut best_move = None;
+                            let mut min_d = d_map.get(enemy_pos).unwrap_or(u32::MAX);
+
+                            for neighbor in enemy_pos.neighbors4() {
+                                if let Some(dist) = d_map.get(neighbor) {
+                                    if dist < min_d {
+                                        min_d = dist;
+                                        best_move = Some(neighbor);
+                                    }
+                                }
+                            }
+
+                            if let Some(target_tile) = best_move {
+                                let move_cost = map.movement_cost(target_tile);
+                                (Some(target_tile), move_cost)
+                            } else {
+                                (None, 0)
+                            }
+                        };
+
+                        if let Some(target_tile) = target_tile {
+                            if enemy_stats.ap >= move_cost {
+                                if let Some(pos) = world.get_mut::<Position>(enemy_entity) {
+                                    *pos = target_tile;
+                                }
+                                if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
+                                    stats.ap -= move_cost;
+                                }
+                                let enemy_name = Game::get_class_name(enemy_class);
+                                let ally_name = Game::get_class_name(ally_class);
+                                log(
+                                    world,
+                                    format!(
+                                        "{} (Cleric) moved closer to ally {} at ({}, {}).",
+                                        enemy_name, ally_name, target_tile.x, target_tile.y
+                                    ),
+                                );
+                                if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                                    events.send(GameEvent::Moved {
+                                        entity: enemy_entity,
+                                        from: enemy_pos,
+                                        to: target_tile,
+                                    });
+                                }
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    continue;
+                } else {
+                    // No ally needs healing — fall through to common attack targeting
+                }
+            }
+
+            let is_coward_flee = {
+                let hp_pct = (enemy_stats.hp as f32) / (enemy_stats.max_hp as f32);
+                archetype == AIArchetype::Coward && hp_pct < 0.3
+            };
+
+            if is_coward_flee {
+                let (target_tile, move_cost) = {
+                    let map = world
+                        .resource::<TacticalMap>()
+                        .expect("TacticalMap must be registered");
+                    let mut nearest_player: Option<Position> = None;
+                    let mut min_dist = i16::MAX;
+                    for (_, p, team) in world.query2::<Position, Team>() {
+                        if *team == Team::Player {
+                            let dist = (enemy_pos.x - p.x).abs() + (enemy_pos.y - p.y).abs();
+                            if dist < min_dist {
+                                min_dist = dist;
+                                nearest_player = Some(*p);
+                            }
+                        }
+                    }
+                    if let Some(player_pos) = nearest_player {
+                        let d_map = verryte_map::DijkstraMap::compute(
+                            map.width,
+                            map.height,
+                            &[player_pos],
+                            |pt| {
+                                if pt.x < 0
+                                    || pt.x >= map.width as i16
+                                    || pt.y < 0
+                                    || pt.y >= map.height as i16
+                                {
+                                    return false;
+                                }
+                                map.is_walkable(pt) && !is_occupied_except(world, pt, enemy_entity)
+                            },
+                            false,
+                        );
+                        let path = d_map.flee_path(enemy_pos, 1, false);
+                        if path.len() > 1 {
+                            let target_tile = path[1];
+                            let move_cost = map.movement_cost(target_tile);
+                            (Some(target_tile), move_cost)
+                        } else {
+                            (None, 0)
+                        }
+                    } else {
+                        (None, 0)
+                    }
+                };
+
+                if let Some(target_tile) = target_tile {
+                    if enemy_stats.ap >= move_cost {
+                        if let Some(pos) = world.get_mut::<Position>(enemy_entity) {
+                            *pos = target_tile;
+                        }
+                        if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
+                            stats.ap -= move_cost;
+                        }
+                        let enemy_name = Game::get_class_name(enemy_class);
+                        log(
+                            world,
+                            format!(
+                                "{} (Coward) fled to ({}, {}).",
+                                enemy_name, target_tile.x, target_tile.y
+                            ),
+                        );
+                        if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                            events.send(GameEvent::Moved {
+                                entity: enemy_entity,
+                                from: enemy_pos,
+                                to: target_tile,
+                            });
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+                continue;
+            }
+
+            let mut chosen_player: Option<(Entity, Position, Stats, CharacterClass)> = None;
+            let mut best_score = i32::MAX;
             for (pe, p, team) in world.query2::<Position, Team>() {
                 if *team == Team::Player {
                     let dist = (enemy_pos.x - p.x).abs() + (enemy_pos.y - p.y).abs();
@@ -88,21 +315,26 @@ pub fn enemy_ai_system(world: &mut World) {
                         } else {
                             0
                         };
+                        let threat_val = world.get::<Threat>(pe).map(|t| t.value).unwrap_or(0);
                         let healer_bonus = if *class == CharacterClass::Healer {
                             -30
                         } else {
                             0
                         };
-                        let score = hp_pct + dist as i32 + healer_bonus;
+                        let mut score = hp_pct + dist as i32 + healer_bonus;
+                        score -= threat_val * 2;
+                        if hp_pct < 30 {
+                            score -= 100;
+                        }
                         if score < best_score {
                             best_score = score;
-                            nearest_player = Some((pe, *p, stats.clone(), *class));
+                            chosen_player = Some((pe, *p, stats.clone(), *class));
                         }
                     }
                 }
             }
 
-            let Some((player_entity, player_pos, player_stats, player_class)) = nearest_player
+            let Some((player_entity, player_pos, player_stats, player_class)) = chosen_player
             else {
                 world
                     .resource_mut::<GameState>()
@@ -119,6 +351,7 @@ pub fn enemy_ai_system(world: &mut World) {
                 CharacterClass::CorruptedSpore => 1,
                 CharacterClass::CursedSentinel => 3,
                 CharacterClass::Boss => 2,
+                CharacterClass::EnemyCleric => 2,
                 _ => 2,
             };
             let actual_dist =
@@ -437,9 +670,24 @@ pub fn enemy_ai_system(world: &mut World) {
                     }
                 }
                 if ap_ok {
-                    let base_damage = std::cmp::max(1, enemy_stats.atk - player_stats.def);
+                    let base_damage_raw = std::cmp::max(1, enemy_stats.atk - player_stats.def);
+                    let flanking = is_flanking_position(world, enemy_pos, player_pos);
+                    let base_damage = if flanking {
+                        (base_damage_raw as f32 * 1.15) as i32
+                    } else {
+                        base_damage_raw
+                    };
                     let enemy_name = Game::get_class_name(enemy_class);
                     let player_name = Game::get_class_name(player_class);
+                    if flanking {
+                        log(
+                            world,
+                            format!(
+                                "{} attacks {} from a flanking position! (+15% damage)",
+                                enemy_name, player_name
+                            ),
+                        );
+                    }
 
                     let (damage, defeated) = resolve_combat_hit(
                         world,
@@ -568,7 +816,11 @@ pub fn enemy_ai_system(world: &mut World) {
                     break;
                 }
 
-                let is_low_hp = (enemy_stats.hp as f32 / enemy_stats.max_hp as f32) < 0.3;
+                let is_low_hp = if archetype == AIArchetype::Chaser {
+                    false
+                } else {
+                    (enemy_stats.hp as f32 / enemy_stats.max_hp as f32) < 0.3
+                };
                 let (target_tile, move_cost, dest_tile) = {
                     let map = world
                         .resource::<TacticalMap>()
@@ -615,11 +867,11 @@ pub fn enemy_ai_system(world: &mut World) {
                             (None, 0, Tile::Grass)
                         }
                     } else {
-                        // Generate Dijkstra map towards all players using weighted movement costs
+                        // Generate Dijkstra map towards target player using weighted movement costs
                         let d_map = verryte_map::DijkstraMap::compute_weighted(
                             map.width,
                             map.height,
-                            &player_positions,
+                            &[player_pos],
                             |pt| {
                                 if pt.x < 0
                                     || pt.x >= map.width as i16
@@ -634,14 +886,25 @@ pub fn enemy_ai_system(world: &mut World) {
                             false, // 4-way movement
                         );
 
-                        // Find neighbor with lowest distance
+                        // Find neighbor with lowest distance, preferring flanking positions
                         let mut best_move = None;
-                        let mut min_d = d_map.get(enemy_pos).unwrap_or(u32::MAX);
+                        let mut min_d = u32::MAX;
 
                         for neighbor in enemy_pos.neighbors4() {
                             if let Some(dist) = d_map.get(neighbor) {
-                                if dist < min_d {
-                                    min_d = dist;
+                                let flanking_adj = is_flanking_position_from(
+                                    world,
+                                    neighbor,
+                                    player_pos,
+                                    enemy_entity,
+                                );
+                                let effective = if flanking_adj {
+                                    dist.saturating_sub(1)
+                                } else {
+                                    dist
+                                };
+                                if effective < min_d {
+                                    min_d = effective;
                                     best_move = Some(neighbor);
                                 }
                             }
@@ -652,7 +915,30 @@ pub fn enemy_ai_system(world: &mut World) {
                             let dest_tile = map.tile(target_tile.x, target_tile.y);
                             (Some(target_tile), move_cost, dest_tile)
                         } else {
-                            (None, 0, Tile::Grass)
+                            // Patrol/wander: pick a random walkable neighbor
+                            let walkable: Vec<(Position, i32, Tile)> = enemy_pos
+                                .neighbors4()
+                                .into_iter()
+                                .filter(|n| {
+                                    n.x >= 0
+                                        && n.x < map.width as i16
+                                        && n.y >= 0
+                                        && n.y < map.height as i16
+                                        && map.is_walkable(*n)
+                                        && !is_occupied_except(world, *n, enemy_entity)
+                                })
+                                .map(|n| (n, map.movement_cost(n), map.tile(n.x, n.y)))
+                                .collect();
+                            if !walkable.is_empty() {
+                                let rng_val = {
+                                    let rng = world.resource_mut::<Rng>().expect("Rng registered");
+                                    rng.next_u32(walkable.len() as u32) as usize
+                                };
+                                let (wander_pos, wander_cost, wander_tile) = walkable[rng_val];
+                                (Some(wander_pos), wander_cost, wander_tile)
+                            } else {
+                                (None, 0, Tile::Grass)
+                            }
                         }
                     }
                 };
@@ -836,6 +1122,8 @@ pub fn turn_management_system(world: &mut World) {
                 events.send(GameEvent::TurnEnded);
             }
 
+            process_team_status_effects(world, Team::Enemy);
+
             // Replenish Enemy AP
             let mut enemies = Vec::new();
             for (e, team) in world.query::<Team>() {
@@ -921,31 +1209,7 @@ pub fn turn_management_system(world: &mut World) {
                 ),
             );
 
-            // Decrement elemental statuses
-            let mut status_entities = Vec::new();
-            for (e, _status) in world.query::<ElementalStatus>() {
-                status_entities.push(e);
-            }
-            for e in status_entities {
-                if let Some(status) = world.get_mut::<ElementalStatus>(e) {
-                    *status = match *status {
-                        ElementalStatus::Ice { duration } if duration > 1 => ElementalStatus::Ice {
-                            duration: duration - 1,
-                        },
-                        ElementalStatus::Lightning { duration } if duration > 1 => {
-                            ElementalStatus::Lightning {
-                                duration: duration - 1,
-                            }
-                        }
-                        ElementalStatus::Nature { duration } if duration > 1 => {
-                            ElementalStatus::Nature {
-                                duration: duration - 1,
-                            }
-                        }
-                        _ => ElementalStatus::None,
-                    };
-                }
-            }
+            process_team_status_effects(world, Team::Player);
 
             // Replenish Player AP
             let mut players = Vec::new();
@@ -1213,7 +1477,12 @@ pub fn award_xp(world: &mut World, amount: u32) {
                 stats.def += 1;
                 level_ups.push((class, stats.level));
 
-                if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+                let char_pos = world.get::<Position>(e).copied();
+                if let Some(pos) = char_pos {
+                    play_spatial_sfx(world, "level_up", pos);
+                } else if let Some(events) =
+                    world.resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
                     events.send(verryte_core::AudioEvent::play("level_up"));
                 }
             }
@@ -1245,6 +1514,55 @@ pub fn get_tile_center_pixels(world: &World, pos: Position) -> (f32, f32) {
     (cx, cy)
 }
 
+pub fn play_spatial_sfx(world: &mut World, name: &str, emitter_pos: Position) {
+    let listener = world
+        .resource::<GameState>()
+        .map(|s| s.cursor)
+        .unwrap_or(Position::new(12, 8));
+    let dx = (emitter_pos.x - listener.x) as f32;
+    let dy = (emitter_pos.y - listener.y) as f32;
+    let dist = (dx * dx + dy * dy).sqrt();
+    let max_range = 15.0_f32;
+    let volume = (1.0 - (dist / max_range)).clamp(0.0, 1.0);
+    let pan = if max_range > 0.0 {
+        (dx / max_range).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+        events.send(
+            verryte_core::AudioEvent::play(name)
+                .with_volume(volume)
+                .with_pan(pan),
+        );
+    }
+}
+
+pub fn weather_damage_modifier(world: &World, base_damage: i32, attacker_name: &str) -> i32 {
+    let weather = match world.resource::<Weather>() {
+        Some(w) => w.current,
+        None => return base_damage,
+    };
+    let element = if attacker_name.contains("Mage") || attacker_name.contains("Lyra") {
+        "lightning"
+    } else if attacker_name.contains("Healer") || attacker_name.contains("Mira") {
+        "nature"
+    } else if attacker_name.contains("Warrior") || attacker_name.contains("Kael") {
+        "fire"
+    } else {
+        "physical"
+    };
+    let modifier: f32 = match (weather, element) {
+        (WeatherType::Sunny, "fire") => 1.15,
+        (WeatherType::Sunny, "nature") => 0.9,
+        (WeatherType::Rainy, "nature") => 1.20,
+        (WeatherType::Rainy, "fire") => 0.90,
+        (WeatherType::LightningStorm, "lightning") => 1.25,
+        _ => 1.0,
+    };
+    (base_damage as f32 * modifier) as i32
+}
+
 pub fn resolve_combat_hit(
     world: &mut World,
     target: Entity,
@@ -1253,6 +1571,21 @@ pub fn resolve_combat_hit(
     target_name: &str,
     pos: Position,
 ) -> (i32, bool) {
+    let sfx_name = if attacker_name.contains("Warrior") || attacker_name.contains("Kael") {
+        "warrior_attack"
+    } else if attacker_name.contains("Mage") || attacker_name.contains("Lyra") {
+        "mage_attack"
+    } else if attacker_name.contains("Healer") || attacker_name.contains("Mira") {
+        "healer_attack"
+    } else if attacker_name.contains("Boss") || attacker_name.contains("Blight") {
+        "boss_attack"
+    } else {
+        "enemy_attack"
+    };
+    play_spatial_sfx(world, sfx_name, pos);
+
+    let base_damage = weather_damage_modifier(world, base_damage, attacker_name);
+
     let (is_crit, is_block, damage) = {
         let rng = world.resource_mut::<Rng>().expect("Rng must be registered");
         let roll = rng.next_u32(100);
@@ -1604,6 +1937,524 @@ pub fn is_occupied_except(world: &World, pos: Position, except: Entity) -> bool 
     for (e, p) in world.query::<Position>() {
         if e != except && *p == pos && world.get::<Team>(e).is_some() {
             return true;
+        }
+    }
+    false
+}
+
+pub fn apply_spread_status(world: &mut World, target: Entity, new_status: ElementalStatus) {
+    if !world.is_alive(target) {
+        return;
+    }
+    let old_status = world
+        .get::<ElementalStatus>(target)
+        .copied()
+        .unwrap_or(ElementalStatus::None);
+    if old_status == new_status {
+        let old_dur = match old_status {
+            ElementalStatus::Ice { duration } => duration,
+            ElementalStatus::Lightning { duration } => duration,
+            ElementalStatus::Nature { duration } => duration,
+            ElementalStatus::Poison { duration } => duration,
+            ElementalStatus::Regen { duration } => duration,
+            _ => 0,
+        };
+        let new_dur = match new_status {
+            ElementalStatus::Ice { duration } => duration,
+            ElementalStatus::Lightning { duration } => duration,
+            ElementalStatus::Nature { duration } => duration,
+            ElementalStatus::Poison { duration } => duration,
+            ElementalStatus::Regen { duration } => duration,
+            _ => 0,
+        };
+        if new_dur > old_dur {
+            world.insert(target, new_status);
+        }
+        return;
+    }
+
+    let target_class = world
+        .get::<CharacterClass>(target)
+        .copied()
+        .unwrap_or(CharacterClass::Warrior);
+    let target_name = crate::game::Game::get_class_name(target_class);
+    let target_pos = world
+        .get::<Position>(target)
+        .copied()
+        .unwrap_or(Position::new(0, 0));
+
+    match (old_status, new_status) {
+        // Shatter: Ice + Lightning
+        (ElementalStatus::Ice { .. }, ElementalStatus::Lightning { .. })
+        | (ElementalStatus::Lightning { .. }, ElementalStatus::Ice { .. }) => {
+            log(
+                world,
+                format!(
+                    "[fg:64C8FF][b]Elemental Reaction: SHATTER[/] on {} via spread![/fg]",
+                    target_name
+                ),
+            );
+            let bonus_damage = 30;
+            let mut defeated = false;
+            if let Some(stats) = world.get_mut::<Stats>(target) {
+                stats.hp -= bonus_damage;
+                if stats.hp <= 0 {
+                    defeated = true;
+                }
+            }
+            let (tx, ty) = get_tile_center_pixels(world, target_pos);
+            if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                vfx.floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        tx,
+                        ty - 1.0,
+                        &format!("SHATTER! -{}", bonus_damage),
+                        Color(100, 200, 255),
+                        true,
+                    ));
+                vfx.particles
+                    .extend(verryte_terminal::vfx::emit_shatter(tx, ty, 20));
+            }
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::ReactionTriggered {
+                    entity: target,
+                    reaction: "Shatter".to_owned(),
+                    damage: bonus_damage,
+                    healing: 0,
+                });
+            }
+            world.insert(target, ElementalStatus::None);
+            if defeated {
+                handle_defeat(world, target, target_name, target_class, target_pos);
+            }
+        }
+        // Overgrowth: Lightning + Nature
+        (ElementalStatus::Lightning { .. }, ElementalStatus::Nature { .. })
+        | (ElementalStatus::Nature { .. }, ElementalStatus::Lightning { .. }) => {
+            log(
+                world,
+                format!(
+                    "[fg:32DC64][b]Elemental Reaction: OVERGROWTH[/] on {} via spread![/fg]",
+                    target_name
+                ),
+            );
+            let bonus_damage = 10;
+            let mut defeated = false;
+            if let Some(stats) = world.get_mut::<Stats>(target) {
+                stats.hp -= bonus_damage;
+                if stats.hp <= 0 {
+                    defeated = true;
+                }
+            }
+            world.insert(target, Rooted { duration: 1 });
+            let (tx, ty) = get_tile_center_pixels(world, target_pos);
+            if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                vfx.floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        tx,
+                        ty - 1.0,
+                        &format!("OVERGROWTH! -{} [ROOTED]", bonus_damage),
+                        Color(50, 220, 100),
+                        true,
+                    ));
+                vfx.particles
+                    .extend(verryte_terminal::vfx::emit_bloom(tx, ty, 10));
+            }
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::ReactionTriggered {
+                    entity: target,
+                    reaction: "Overgrowth".to_owned(),
+                    damage: bonus_damage,
+                    healing: 0,
+                });
+            }
+            world.insert(target, ElementalStatus::None);
+            if defeated {
+                handle_defeat(world, target, target_name, target_class, target_pos);
+            }
+        }
+        // Bloom: Nature + Ice
+        (ElementalStatus::Nature { .. }, ElementalStatus::Ice { .. })
+        | (ElementalStatus::Ice { .. }, ElementalStatus::Nature { .. }) => {
+            log(
+                world,
+                format!(
+                    "[fg:FFD700][b]Elemental Reaction: BLOOM[/] on {} via spread![/fg]",
+                    target_name
+                ),
+            );
+            let healing_amount = 20;
+            let mut allies = Vec::new();
+            let target_team = world.get::<Team>(target).copied().unwrap_or(Team::Player);
+            for (e, p, team) in world.query2::<Position, Team>() {
+                if *team == target_team {
+                    let dist = (p.x - target_pos.x).abs() + (p.y - target_pos.y).abs();
+                    if dist <= 1 {
+                        allies.push(e);
+                    }
+                }
+            }
+            for ally in allies {
+                let a_class = world
+                    .get::<CharacterClass>(ally)
+                    .copied()
+                    .unwrap_or(CharacterClass::Warrior);
+                let a_pos = world
+                    .get::<Position>(ally)
+                    .copied()
+                    .unwrap_or(Position::new(0, 0));
+                let mut final_hp = 0;
+                if let Some(stats) = world.get_mut::<Stats>(ally) {
+                    stats.hp = std::cmp::min(stats.max_hp, stats.hp + healing_amount);
+                    final_hp = stats.hp;
+                }
+                log(
+                    world,
+                    format!(
+                        "[fg:32FF32]Bloom healed {} for [b]{} HP![/] (HP: {})[/fg]",
+                        crate::game::Game::get_class_name(a_class),
+                        healing_amount,
+                        final_hp
+                    ),
+                );
+                let (ax, ay) = get_tile_center_pixels(world, a_pos);
+                if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                    vfx.floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            ax,
+                            ay - 2.0,
+                            &format!("+{} (Bloom)", healing_amount),
+                            Color(50, 255, 50),
+                            true,
+                        ));
+                    vfx.particles
+                        .extend(verryte_terminal::vfx::emit_bloom(ax, ay, 8));
+                }
+            }
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::ReactionTriggered {
+                    entity: target,
+                    reaction: "Bloom".to_owned(),
+                    damage: 0,
+                    healing: healing_amount,
+                });
+            }
+            world.insert(target, ElementalStatus::None);
+        }
+        _ => {
+            world.insert(target, new_status);
+            let badge = match new_status {
+                ElementalStatus::Ice { .. } => "Ice",
+                ElementalStatus::Lightning { .. } => "Lightning",
+                ElementalStatus::Nature { .. } => "Nature",
+                ElementalStatus::Poison { .. } => "Poison",
+                ElementalStatus::Regen { .. } => "Regen",
+                _ => "None",
+            };
+            let color_hex = match badge {
+                "Ice" => "64C8FF",
+                "Lightning" => "FFFF64",
+                "Nature" => "32DC64",
+                "Poison" => "A020F0",
+                "Regen" => "32CD32",
+                _ => "FFFFFF",
+            };
+            log(
+                world,
+                format!(
+                    "Applied [fg:{}][b]{}[/] element to {} via spread.",
+                    color_hex, badge, target_name
+                ),
+            );
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::ElementalApplied {
+                    entity: target,
+                    status: new_status,
+                });
+            }
+        }
+    }
+}
+
+pub fn process_team_status_effects(world: &mut World, team: Team) {
+    let mut targets = Vec::new();
+    for (e, pos, t, class) in world.query3::<Position, Team, CharacterClass>() {
+        if *t == team {
+            if let Some(status) = world.get::<ElementalStatus>(e).copied() {
+                if status != ElementalStatus::None {
+                    targets.push((e, status, *pos, *class));
+                }
+            }
+        }
+    }
+
+    for (entity, original_status, pos, class) in targets {
+        if !world.is_alive(entity) {
+            continue;
+        }
+
+        let mut current_hp = world.get::<Stats>(entity).map(|s| s.hp).unwrap_or(0);
+        if current_hp <= 0 {
+            continue;
+        }
+
+        let target_name = crate::game::Game::get_class_name(class);
+        let mut defeated = false;
+        let mut next_status = ElementalStatus::None;
+
+        match original_status {
+            ElementalStatus::Poison { duration } => {
+                if let Some(stats) = world.get_mut::<Stats>(entity) {
+                    stats.hp = (stats.hp - 10).max(0);
+                    current_hp = stats.hp;
+                    if stats.hp <= 0 {
+                        defeated = true;
+                    }
+                }
+                log(
+                    world,
+                    format!(
+                        "{} suffered [fg:A020F0][b]10 Poison damage![/] (HP: {})",
+                        target_name, current_hp
+                    ),
+                );
+                let (tx, ty) = get_tile_center_pixels(world, pos);
+                if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                    vfx.floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            tx,
+                            ty - 1.0,
+                            "-10 (Poison)",
+                            Color(160, 32, 240),
+                            true,
+                        ));
+                    vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                        tx,
+                        ty,
+                        8,
+                        Color(160, 32, 240),
+                        &['*'],
+                    ));
+                }
+                next_status = if duration > 1 && !defeated {
+                    ElementalStatus::Poison {
+                        duration: duration - 1,
+                    }
+                } else {
+                    ElementalStatus::None
+                };
+            }
+            ElementalStatus::Regen { duration } => {
+                if let Some(stats) = world.get_mut::<Stats>(entity) {
+                    stats.hp = (stats.hp + 10).min(stats.max_hp);
+                    current_hp = stats.hp;
+                }
+                log(
+                    world,
+                    format!(
+                        "{} healed for [fg:32CD32][b]10 HP[/] via Regen. (HP: {})",
+                        target_name, current_hp
+                    ),
+                );
+                let (tx, ty) = get_tile_center_pixels(world, pos);
+                if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                    vfx.floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            tx,
+                            ty - 1.0,
+                            "+10 (Regen)",
+                            Color(50, 205, 50),
+                            true,
+                        ));
+                    vfx.particles
+                        .extend(verryte_terminal::vfx::emit_bloom(tx, ty, 8));
+                }
+                next_status = if duration > 1 {
+                    ElementalStatus::Regen {
+                        duration: duration - 1,
+                    }
+                } else {
+                    ElementalStatus::None
+                };
+            }
+            ElementalStatus::Ice { duration } => {
+                next_status = if duration > 1 {
+                    ElementalStatus::Ice {
+                        duration: duration - 1,
+                    }
+                } else {
+                    ElementalStatus::None
+                };
+            }
+            ElementalStatus::Lightning { duration } => {
+                next_status = if duration > 1 {
+                    ElementalStatus::Lightning {
+                        duration: duration - 1,
+                    }
+                } else {
+                    ElementalStatus::None
+                };
+            }
+            ElementalStatus::Nature { duration } => {
+                next_status = if duration > 1 {
+                    ElementalStatus::Nature {
+                        duration: duration - 1,
+                    }
+                } else {
+                    ElementalStatus::None
+                };
+            }
+            ElementalStatus::None => {}
+        }
+
+        if !defeated {
+            if let Some(status) = world.get_mut::<ElementalStatus>(entity) {
+                *status = next_status;
+            }
+        } else {
+            handle_defeat(world, entity, target_name, class, pos);
+            continue;
+        }
+
+        let spread_status_opt = match original_status {
+            ElementalStatus::Poison { duration } => Some(ElementalStatus::Poison {
+                duration: duration.saturating_sub(1).max(1),
+            }),
+            ElementalStatus::Ice { duration } => Some(ElementalStatus::Ice {
+                duration: duration.saturating_sub(1).max(1),
+            }),
+            ElementalStatus::Lightning { duration } => Some(ElementalStatus::Lightning {
+                duration: duration.saturating_sub(1).max(1),
+            }),
+            ElementalStatus::Nature { duration } => Some(ElementalStatus::Nature {
+                duration: duration.saturating_sub(1).max(1),
+            }),
+            _ => None,
+        };
+
+        if let Some(spread_status) = spread_status_opt {
+            let mut adj_entities = Vec::new();
+            for (other_e, other_pos) in world.query::<Position>() {
+                if other_e != entity {
+                    let dist = (pos.x - other_pos.x).abs() + (pos.y - other_pos.y).abs();
+                    if dist == 1 {
+                        if world.get::<Team>(other_e).is_some() {
+                            adj_entities.push(other_e);
+                        }
+                    }
+                }
+            }
+
+            for adj_e in adj_entities {
+                apply_spread_status(world, adj_e, spread_status);
+            }
+        }
+    }
+}
+
+pub fn weather_ambient_system(world: &mut World) {
+    use crate::components::{Weather, WeatherType};
+
+    let current = world
+        .resource::<Weather>()
+        .map(|w| w.current)
+        .unwrap_or(WeatherType::Sunny);
+
+    let ambient_name = match current {
+        WeatherType::Rainy => "ambient_rain",
+        WeatherType::LightningStorm => "ambient_thunder",
+        WeatherType::Sunny => "ambient_birds",
+        WeatherType::Snowing => "ambient_wind",
+    };
+    let volume: f32 = match current {
+        WeatherType::Rainy => 0.4,
+        WeatherType::LightningStorm => 0.5,
+        WeatherType::Sunny => 0.3,
+        WeatherType::Snowing => 0.35,
+    };
+
+    if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+        events.send(verryte_core::AudioEvent::loop_music(ambient_name).with_volume(volume));
+    }
+}
+
+pub const WEATHER_CYCLE_TURNS: u32 = 3;
+
+pub fn weather_cycle_system(world: &mut World) {
+    let turn = world.resource::<GameState>().map(|s| s.turn).unwrap_or(1);
+    if turn == 1 || turn % WEATHER_CYCLE_TURNS != 1 {
+        return;
+    }
+    let current = world
+        .resource::<Weather>()
+        .map(|w| w.current)
+        .unwrap_or(WeatherType::Sunny);
+    let next = match current {
+        WeatherType::Sunny => WeatherType::Rainy,
+        WeatherType::Rainy => WeatherType::LightningStorm,
+        WeatherType::LightningStorm => WeatherType::Snowing,
+        WeatherType::Snowing => WeatherType::Sunny,
+    };
+    if let Some(weather) = world.resource_mut::<Weather>() {
+        weather.current = next;
+        weather.danger_zones.clear();
+    }
+    log(
+        world,
+        format!("[fg:87CEEB][b]Weather changed to {:?}![/][/fg]", next),
+    );
+}
+
+pub fn is_flanking_position(world: &World, attacker_pos: Position, target_pos: Position) -> bool {
+    let dist = (attacker_pos.x - target_pos.x).abs() + (attacker_pos.y - target_pos.y).abs();
+    if dist != 1 {
+        return false;
+    }
+    let dx = attacker_pos.x - target_pos.x;
+    let dy = attacker_pos.y - target_pos.y;
+    for (_other_e, other_pos, team) in world.query2::<Position, Team>() {
+        if *team == Team::Enemy {
+            let other_dist =
+                (other_pos.x - target_pos.x).abs() + (other_pos.y - target_pos.y).abs();
+            if other_dist == 1 {
+                let odx = other_pos.x - target_pos.x;
+                let ody = other_pos.y - target_pos.y;
+                if (dx != 0 && dy == 0 && odx == 0 && ody != 0)
+                    || (dx == 0 && dy != 0 && odx != 0 && ody == 0)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn is_flanking_position_from(
+    world: &World,
+    candidate: Position,
+    target_pos: Position,
+    self_entity: Entity,
+) -> bool {
+    let dist = (candidate.x - target_pos.x).abs() + (candidate.y - target_pos.y).abs();
+    if dist != 1 {
+        return false;
+    }
+    let dx = candidate.x - target_pos.x;
+    let dy = candidate.y - target_pos.y;
+    for (other_e, other_pos, team) in world.query2::<Position, Team>() {
+        if *team == Team::Enemy && other_e != self_entity {
+            let other_dist =
+                (other_pos.x - target_pos.x).abs() + (other_pos.y - target_pos.y).abs();
+            if other_dist == 1 {
+                let odx = other_pos.x - target_pos.x;
+                let ody = other_pos.y - target_pos.y;
+                if (dx != 0 && dy == 0 && odx == 0 && ody != 0)
+                    || (dx == 0 && dy != 0 && odx != 0 && ody == 0)
+                {
+                    return true;
+                }
+            }
         }
     }
     false

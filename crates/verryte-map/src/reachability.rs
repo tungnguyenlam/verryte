@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::{Point, TileGrid};
+use std::collections::HashMap;
 
 /// Calculates the exact set of tiles a unit can move to, given an action point limit
 /// and variable movement costs.

@@ -110,6 +110,17 @@ impl Spawner for World {
                 level: 4,
                 xp: 0,
             },
+            CharacterClass::EnemyCleric => Stats {
+                hp: 55,
+                max_hp: 55,
+                atk: 12,
+                def: 6,
+                spd: 5,
+                ap: 3,
+                max_ap: 3,
+                level: 2,
+                xp: 0,
+            },
         };
 
         let trait_opt = match class {
@@ -139,6 +150,19 @@ impl Spawner for World {
 
         if let Some(t) = trait_opt {
             builder = builder.with(t);
+        }
+
+        if team == Team::Player {
+            builder = builder.with(crate::components::Threat { value: 0 });
+        } else {
+            let archetype = match class {
+                CharacterClass::CorruptedSpore | CharacterClass::ShadowStalker => {
+                    crate::components::AIArchetype::Coward
+                }
+                CharacterClass::EnemyCleric => crate::components::AIArchetype::Cleric,
+                _ => crate::components::AIArchetype::Chaser,
+            };
+            builder = builder.with(archetype);
         }
 
         builder.build()
