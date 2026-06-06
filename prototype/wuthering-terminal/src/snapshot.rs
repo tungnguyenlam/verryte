@@ -2,9 +2,9 @@
 
 use crate::action::Action;
 use crate::components::{
-    BattleStats, CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent, GameState,
-    Inventory, Item, Outcome, Position, Rooted, Stats, Stunned, Team, TelegraphZone, TurnPhase,
-    WeatherType,
+    BattleStats, CharacterClass, DamagePreview, EchoItem, ElementalShield, ElementalStatus,
+    GameEvent, GameState, Inventory, Item, Outcome, Position, Rooted, Stats, Stunned, Team,
+    TelegraphZone, TurnPhase, WeatherType,
 };
 use verryte_core::snapshot::{WorldRegistry, WorldSnapshot};
 use verryte_input::ActionSource;
@@ -41,6 +41,14 @@ pub struct Snapshot {
     pub floor: u32,
     #[serde(default)]
     pub weather: WeatherType,
+    #[serde(default)]
+    pub turn_order: Vec<String>,
+    #[serde(default)]
+    pub enemy_intents: Vec<String>,
+    #[serde(default)]
+    pub damage_preview: Option<DamagePreview>,
+    #[serde(default)]
+    pub aoe_preview: Vec<Position>,
 }
 
 fn default_floor_one() -> u32 {

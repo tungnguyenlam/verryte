@@ -1,10 +1,15 @@
 //! Wuthering Terminal — tactical RPG prototype.
 
 pub mod action;
+pub mod ai;
+pub mod battle_preview;
 pub mod components;
+pub mod equipment;
 pub mod game;
 pub mod generated_assets;
+pub mod hazards;
 pub mod map;
+pub mod skill_tree;
 pub mod snapshot;
 pub mod spawn;
 pub mod systems;
@@ -23,7 +28,7 @@ pub use verryte_map::Point as Position;
 mod tests {
     use super::*;
     use crate::components::{
-        BattleStats, CharacterClass, GameState, Inventory, Stats, Team, TurnPhase,
+        BattleStats, CharacterClass, ElementalStatus, GameState, Inventory, Stats, Team, TurnPhase,
     };
     use crate::map::{TacticalMap, Tile};
     use verryte_input::ActionSource;
@@ -1389,6 +1394,7 @@ mod tests {
                     Tile::Water => has_water = true,
                     Tile::Lava => has_lava = true,
                     Tile::Ice | Tile::Stairs | Tile::Mud => {}
+                    _ => {}
                 }
             }
         }
@@ -4034,5 +4040,1898 @@ mod tests {
             crate::components::WeatherType::Snowing,
         );
         assert_eq!(cost, 0, "Ice movement cost should be 0 during Snowing");
+    }
+
+    #[test]
+    fn test_battle_stats_turn_tracking() {
+        let mut game = Game::new();
+
+        // Move boss next to warrior for melee attack
+        let mut boss = None;
+        let mut warrior = None;
+        for (e, class) in game.world.query::<CharacterClass>() {
+            match class {
+                CharacterClass::Boss => boss = Some(e),
+                CharacterClass::Warrior => warrior = Some(e),
+                _ => {}
+            }
+        }
+        let boss = boss.unwrap();
+        let warrior = warrior.unwrap();
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+
+        // Select warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Attack boss at (4,5)
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        let bstats = game.world.resource::<BattleStats>().unwrap();
+        assert!(
+            bstats.total_damage_dealt > 0,
+            "BattleStats should track player damage dealt"
+        );
+
+        // End turn and advance to next player phase to increment turns
+        game.apply_action(Action::EndTurn, ActionSource::Terminal);
+        game.update(0.1);
+        game.update(0.1);
+        game.update(0.1);
+
+        let bstats = game.world.resource::<BattleStats>().unwrap();
+        assert!(
+            bstats.total_turns > 0,
+            "BattleStats should track turns (got {})",
+            bstats.total_turns
+        );
+    }
+
+    #[test]
+    fn test_save_load_current_version() {
+        let game = Game::new();
+        let save = game.save_state().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&save).unwrap();
+        assert_eq!(
+            parsed["version"].as_u64().unwrap(),
+            snapshot::CURRENT_SAVE_VERSION as u64
+        );
+        assert_eq!(parsed["magic"].as_str().unwrap(), "VERRYTE_SAVE");
+
+        let mut game2 = Game::new();
+        let result = game2.load_state(&save);
+        assert!(
+            result.is_ok(),
+            "Loading current version save should succeed"
+        );
+    }
+
+    #[test]
+    fn test_migration_future_version_rejected() {
+        let game = Game::new();
+        let save = game.save_state().unwrap();
+        let future_save = save.replace(
+            &format!("\"version\":{}", snapshot::CURRENT_SAVE_VERSION),
+            "\"version\":3",
+        );
+
+        let mut game2 = Game::new();
+        let result = game2.load_state(&future_save);
+        assert!(result.is_err(), "Loading future version save should fail");
+        assert!(result.unwrap_err().to_string().contains("version"));
+    }
+
+    #[test]
+    fn test_migration_version_zero_rejected() {
+        let game = Game::new();
+        let save = game.save_state().unwrap();
+        let v0_save = save.replace(
+            &format!("\"version\":{}", snapshot::CURRENT_SAVE_VERSION),
+            "\"version\":0",
+        );
+
+        let mut game2 = Game::new();
+        let result = game2.load_state(&v0_save);
+        assert!(
+            result.is_ok(),
+            "Version 0 passes through migration (no handler for v0)"
+        );
+    }
+
+    #[test]
+    fn test_migration_v1_to_v2_applied() {
+        let game = Game::new();
+        let save = game.save_state().unwrap();
+        let save_v1 = save.replace(
+            &format!("\"version\":{}", snapshot::CURRENT_SAVE_VERSION),
+            "\"version\":1",
+        );
+
+        let mut game2 = Game::new();
+        let result = game2.load_state(&save_v1);
+        assert!(
+            result.is_ok(),
+            "v1 migration should succeed: {:?}",
+            result.err()
+        );
+
+        let state = game2.world.resource::<GameState>().unwrap();
+        assert_eq!(state.turn, 1);
+        assert_eq!(state.outcome, Outcome::Playing);
+
+        let resave = game2.save_state().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&resave).unwrap();
+        assert_eq!(
+            parsed["version"].as_u64().unwrap(),
+            snapshot::CURRENT_SAVE_VERSION as u64,
+            "Re-saved migrated state should have current version"
+        );
+    }
+
+    #[test]
+    fn test_save_load_comprehensive_field_preservation() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+            state.concert_energy = 42;
+            state.combo_count = 5;
+            state.floor = 1;
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        {
+            let state = game.world.resource::<GameState>().unwrap();
+            assert!(state.selected_entity.is_some());
+        }
+
+        {
+            let weather = game
+                .world
+                .resource_mut::<crate::components::Weather>()
+                .unwrap();
+            weather.current = crate::components::WeatherType::Rainy;
+        }
+
+        game.apply_action(
+            Action::ChangeWeather(crate::components::WeatherType::Rainy),
+            ActionSource::Terminal,
+        );
+
+        let saved_cursor = game.world.resource::<GameState>().unwrap().cursor;
+        let saved_concert = game.world.resource::<GameState>().unwrap().concert_energy;
+        let saved_combo = game.world.resource::<GameState>().unwrap().combo_count;
+        let saved_selected = game.world.resource::<GameState>().unwrap().selected_entity;
+        let saved_floor = game.world.resource::<GameState>().unwrap().floor;
+        let saved_weather = game
+            .world
+            .resource::<crate::components::Weather>()
+            .unwrap()
+            .current;
+        let saved_turn = game.world.resource::<GameState>().unwrap().turn;
+        let saved_phase = game.world.resource::<GameState>().unwrap().phase;
+        let saved_boss_phase = game.world.resource::<GameState>().unwrap().boss_phase;
+
+        let saved_warrior_stats = game.world.get::<Stats>(warrior).unwrap().clone();
+        let saved_warrior_pos = *game.world.get::<Position>(warrior).unwrap();
+
+        let serialized = game.save_state().unwrap();
+
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let state2 = game2.world.resource::<GameState>().unwrap();
+        assert_eq!(state2.cursor, saved_cursor);
+        assert_eq!(state2.concert_energy, saved_concert);
+        assert_eq!(state2.combo_count, saved_combo);
+        assert_eq!(state2.selected_entity, saved_selected);
+        assert_eq!(state2.floor, saved_floor);
+        assert_eq!(state2.turn, saved_turn);
+        assert_eq!(state2.phase, saved_phase);
+        assert_eq!(state2.boss_phase, saved_boss_phase);
+
+        let weather2 = game2
+            .world
+            .resource::<crate::components::Weather>()
+            .unwrap();
+        assert_eq!(weather2.current, saved_weather);
+
+        let mut warrior2 = None;
+        for (e, class) in game2.world.query::<CharacterClass>() {
+            if *class == CharacterClass::Warrior {
+                warrior2 = Some(e);
+            }
+        }
+        let warrior2 = warrior2.unwrap();
+        let stats2 = game2.world.get::<Stats>(warrior2).unwrap();
+        assert_eq!(stats2.hp, saved_warrior_stats.hp);
+        assert_eq!(stats2.max_hp, saved_warrior_stats.max_hp);
+        assert_eq!(stats2.atk, saved_warrior_stats.atk);
+        assert_eq!(stats2.def, saved_warrior_stats.def);
+        assert_eq!(stats2.ap, saved_warrior_stats.ap);
+        assert_eq!(stats2.max_ap, saved_warrior_stats.max_ap);
+        assert_eq!(
+            *game2.world.get::<Position>(warrior2).unwrap(),
+            saved_warrior_pos
+        );
+    }
+
+    #[test]
+    fn test_save_load_after_combat_state() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 80;
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 1;
+
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 4);
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 5);
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        let boss_hp_after = game.world.get::<Stats>(boss).unwrap().hp;
+        let warrior_ap_after = game.world.get::<Stats>(warrior).unwrap().ap;
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let mut boss2 = None;
+        let mut warrior2 = None;
+        for (e, class) in game2.world.query::<CharacterClass>() {
+            match class {
+                CharacterClass::Boss => boss2 = Some(e),
+                CharacterClass::Warrior => warrior2 = Some(e),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            game2.world.get::<Stats>(boss2.unwrap()).unwrap().hp,
+            boss_hp_after
+        );
+        assert_eq!(
+            game2.world.get::<Stats>(warrior2.unwrap()).unwrap().ap,
+            warrior_ap_after
+        );
+    }
+
+    #[test]
+    fn test_save_load_boss_phase2() {
+        let mut game = Game::new();
+
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.get_mut::<Stats>(boss).unwrap().hp = 100;
+        game.apply_action(Action::MoveNorth, ActionSource::Terminal);
+
+        let state = game.world.resource::<GameState>().unwrap();
+        assert!(matches!(
+            state.boss_phase,
+            crate::components::BossPhase::Phase2
+        ));
+
+        let boss_stats = game.world.get::<Stats>(boss).unwrap().clone();
+        let shield = game
+            .world
+            .get::<crate::components::ElementalShield>(boss)
+            .cloned();
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let boss2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        assert!(matches!(
+            game2.world.resource::<GameState>().unwrap().boss_phase,
+            crate::components::BossPhase::Phase2
+        ));
+        let boss2_stats = game2.world.get::<Stats>(boss2).unwrap();
+        assert_eq!(boss2_stats.hp, boss_stats.hp);
+        assert_eq!(boss2_stats.max_hp, boss_stats.max_hp);
+        assert_eq!(boss2_stats.atk, boss_stats.atk);
+        assert_eq!(boss2_stats.def, boss_stats.def);
+        assert_eq!(boss2_stats.max_ap, boss_stats.max_ap);
+
+        if let Some(ref s) = shield {
+            let shield2 = game2.world.get::<crate::components::ElementalShield>(boss2);
+            assert!(shield2.is_some(), "Boss shield should be preserved");
+            let shield2 = shield2.unwrap();
+            assert_eq!(shield2.amount, s.amount);
+            assert_eq!(shield2.max_amount, s.max_amount);
+            assert_eq!(shield2.shield_type, s.shield_type);
+        }
+    }
+
+    #[test]
+    fn test_save_load_equipped_echoes() {
+        let mut game = Game::new();
+
+        {
+            let echoes = game
+                .world
+                .resource_mut::<crate::components::EquippedEchoes>()
+                .unwrap();
+            echoes
+                .abilities
+                .push(crate::components::EchoAbility::Frostbite);
+            echoes
+                .abilities
+                .push(crate::components::EchoAbility::Lifesteal);
+        }
+
+        let saved_echoes = game
+            .world
+            .resource::<crate::components::EquippedEchoes>()
+            .unwrap()
+            .abilities
+            .clone();
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let loaded_echoes = game2
+            .world
+            .resource::<crate::components::EquippedEchoes>()
+            .unwrap();
+        assert_eq!(loaded_echoes.abilities, saved_echoes);
+        assert!(loaded_echoes
+            .abilities
+            .contains(&crate::components::EchoAbility::Frostbite));
+        assert!(loaded_echoes
+            .abilities
+            .contains(&crate::components::EchoAbility::Lifesteal));
+    }
+
+    #[test]
+    fn test_save_load_inventory_items() {
+        let game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let inv_before = game
+            .world
+            .get::<crate::components::Inventory>(warrior)
+            .unwrap()
+            .items
+            .clone();
+        assert!(!inv_before.is_empty(), "Warrior should have starting items");
+
+        let mut item_names = Vec::new();
+        for &item_ent in &inv_before {
+            if let Some(item) = game.world.get::<crate::components::Item>(item_ent) {
+                item_names.push((item.name.clone(), item.effect.clone()));
+            }
+        }
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let warrior2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let inv_after = game2
+            .world
+            .get::<crate::components::Inventory>(warrior2)
+            .unwrap()
+            .items
+            .clone();
+        assert_eq!(
+            inv_after.len(),
+            inv_before.len(),
+            "Inventory size should match"
+        );
+
+        let mut loaded_names = Vec::new();
+        for &item_ent in &inv_after {
+            if let Some(item) = game2.world.get::<crate::components::Item>(item_ent) {
+                loaded_names.push((item.name.clone(), item.effect.clone()));
+            }
+        }
+        for (name, effect) in &item_names {
+            assert!(
+                loaded_names.iter().any(|(n, e)| n == name && e == effect),
+                "Item '{}' with effect {:?} should be preserved after load",
+                name,
+                effect
+            );
+        }
+    }
+
+    #[test]
+    fn test_save_load_elemental_status() {
+        let mut game = Game::new();
+
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.insert(
+            boss,
+            crate::components::ElementalStatus::Ice { duration: 3 },
+        );
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let boss2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let status = game2
+            .world
+            .get::<crate::components::ElementalStatus>(boss2)
+            .unwrap();
+        assert!(
+            matches!(
+                status,
+                crate::components::ElementalStatus::Ice { duration: 3 }
+            ),
+            "ElementalStatus::Ice with duration 3 should be preserved, got {:?}",
+            status
+        );
+    }
+
+    #[test]
+    fn test_save_load_elemental_shield() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.insert(
+            warrior,
+            crate::components::ElementalShield {
+                shield_type: crate::components::ShieldType::Lightning,
+                amount: 25,
+                max_amount: 40,
+            },
+        );
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let warrior2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let shield = game2
+            .world
+            .get::<crate::components::ElementalShield>(warrior2)
+            .unwrap();
+        assert_eq!(shield.shield_type, crate::components::ShieldType::Lightning);
+        assert_eq!(shield.amount, 25);
+        assert_eq!(shield.max_amount, 40);
+    }
+
+    #[test]
+    fn test_corruption_truncated_json() {
+        let mut game = Game::new();
+        let save = game.save_state().unwrap();
+
+        let truncated = &save[..save.len() / 2];
+        let result = game.load_state(truncated);
+        assert!(result.is_err(), "Truncated JSON should fail to load");
+    }
+
+    #[test]
+    fn test_corruption_empty_string() {
+        let mut game = Game::new();
+        let result = game.load_state("");
+        assert!(result.is_err(), "Empty string should fail to load");
+    }
+
+    #[test]
+    fn test_corruption_wrong_structure() {
+        let mut game = Game::new();
+
+        let result = game.load_state(r#"{"not":"a save"}"#);
+        assert!(result.is_err(), "Wrong JSON structure should fail to load");
+
+        let result2 = game.load_state(r#"{"magic":"VERRYTE_SAVE"}"#);
+        assert!(
+            result2.is_err(),
+            "Missing version and world should fail to load"
+        );
+
+        let result3 = game.load_state(r#"{"magic":"VERRYTE_SAVE","version":2}"#);
+        assert!(result3.is_err(), "Missing world field should fail to load");
+    }
+
+    #[test]
+    fn test_corruption_unknown_fields_forward_compat() {
+        let game = Game::new();
+        let save = game.save_state().unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&save).unwrap();
+        let mut modified = parsed.clone();
+        modified["unknown_future_field"] = serde_json::json!("test_value");
+        modified["another_unknown"] = serde_json::json!(42);
+        let modified_save = serde_json::to_string(&modified).unwrap();
+
+        let mut game2 = Game::new();
+        let result = game2.load_state(&modified_save);
+        assert!(
+            result.is_ok(),
+            "Save with extra unknown fields should succeed (forward compat): {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_round_trip_save_load_save_identical() {
+        let mut game = Game::new();
+        game.world.resource_mut::<verryte_core::Rng>().unwrap();
+        let save1 = game.save_state().unwrap();
+
+        let mut game2 = Game::new();
+        game2.load_state(&save1).unwrap();
+        let save2 = game2.save_state().unwrap();
+
+        let p1: serde_json::Value = serde_json::from_str(&save1).unwrap();
+        let p2: serde_json::Value = serde_json::from_str(&save2).unwrap();
+
+        assert_eq!(p1["magic"], p2["magic"]);
+        assert_eq!(p1["version"], p2["version"]);
+        assert_eq!(p1["migrations_applied"], p2["migrations_applied"]);
+        assert_eq!(
+            serde_json::to_string(&p1["world"]).unwrap(),
+            serde_json::to_string(&p2["world"]).unwrap(),
+            "World snapshot should be identical across save-load-save cycle"
+        );
+    }
+
+    #[test]
+    fn test_multiple_save_load_cycles() {
+        let mut game = Game::new();
+
+        for i in 0..5 {
+            let serialized = game.save_state().unwrap();
+            let mut game_new = Game::new();
+            game_new.load_state(&serialized).unwrap();
+
+            let save_after = game_new.save_state().unwrap();
+            game = Game::new();
+            game.load_state(&save_after).unwrap();
+
+            let state = game.world.resource::<GameState>().unwrap();
+            assert_eq!(state.turn, 1, "Turn should remain 1 after cycle {}", i);
+            assert_eq!(
+                state.outcome,
+                Outcome::Playing,
+                "Outcome should remain Playing after cycle {}",
+                i
+            );
+        }
+
+        let final_count = game.world.entity_count();
+        assert_eq!(
+            final_count, 15,
+            "Entity count should remain 15 after multiple save/load cycles"
+        );
+    }
+
+    #[test]
+    fn test_save_load_entity_count() {
+        let game = Game::new();
+        let count_before = game.world.entity_count();
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        assert_eq!(
+            game2.world.entity_count(),
+            count_before,
+            "Entity count should match after load"
+        );
+    }
+
+    #[test]
+    fn test_save_immediately_after_start() {
+        let game = Game::new();
+        let serialized = game.save_state().unwrap();
+
+        let mut game2 = Game::new();
+        let result = game2.load_state(&serialized);
+        assert!(
+            result.is_ok(),
+            "Saving immediately after start should be loadable"
+        );
+
+        let state = game2.world.resource::<GameState>().unwrap();
+        assert_eq!(state.turn, 1);
+        assert_eq!(state.outcome, Outcome::Playing);
+        assert_eq!(state.floor, 1);
+        assert_eq!(state.concert_energy, 0);
+        assert_eq!(state.combo_count, 0);
+        assert!(state.selected_entity.is_none());
+    }
+
+    #[test]
+    fn test_save_after_victory() {
+        let mut game = Game::new();
+
+        game.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        assert_eq!(
+            game2.world.resource::<GameState>().unwrap().outcome,
+            Outcome::Victory,
+            "Victory outcome should be preserved after save/load"
+        );
+    }
+
+    #[test]
+    fn test_save_during_enemy_phase() {
+        let mut game = Game::new();
+        game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+        game.world.resource_mut::<GameState>().unwrap().turn = 3;
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let state = game2.world.resource::<GameState>().unwrap();
+        assert_eq!(
+            state.phase,
+            TurnPhase::Enemy,
+            "Enemy phase should be preserved"
+        );
+        assert_eq!(state.turn, 3, "Turn count should be preserved");
+    }
+
+    #[test]
+    fn test_save_with_auto_battle_enabled() {
+        let mut game = Game::new();
+        game.world.resource_mut::<GameState>().unwrap().auto_battle = true;
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        assert!(
+            game2.world.resource::<GameState>().unwrap().auto_battle,
+            "auto_battle flag should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_save_with_battle_stats() {
+        let mut game = Game::new();
+
+        {
+            let bstats = game.world.resource_mut::<BattleStats>().unwrap();
+            bstats.total_damage_dealt = 150;
+            bstats.total_damage_taken = 75;
+            bstats.total_healing_done = 30;
+            bstats.total_turns = 5;
+            bstats.total_kills = 2;
+            bstats.max_combo_reached = 4;
+            bstats.total_swaps = 1;
+        }
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let bstats2 = game2.world.resource::<BattleStats>().unwrap();
+        assert_eq!(bstats2.total_damage_dealt, 150);
+        assert_eq!(bstats2.total_damage_taken, 75);
+        assert_eq!(bstats2.total_healing_done, 30);
+        assert_eq!(bstats2.total_turns, 5);
+        assert_eq!(bstats2.total_kills, 2);
+        assert_eq!(bstats2.max_combo_reached, 4);
+        assert_eq!(bstats2.total_swaps, 1);
+    }
+
+    #[test]
+    fn test_save_load_rooted_and_stunned() {
+        let mut game = Game::new();
+
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world
+            .insert(boss, crate::components::Rooted { duration: 2 });
+        game.world
+            .insert(boss, crate::components::Stunned { duration: 1 });
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let boss2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let rooted = game2.world.get::<crate::components::Rooted>(boss2);
+        assert!(rooted.is_some(), "Rooted component should be preserved");
+        assert_eq!(rooted.unwrap().duration, 2);
+
+        let stunned = game2.world.get::<crate::components::Stunned>(boss2);
+        assert!(stunned.is_some(), "Stunned component should be preserved");
+        assert_eq!(stunned.unwrap().duration, 1);
+    }
+
+    #[test]
+    fn test_save_load_all_team_members() {
+        let game = Game::new();
+
+        let mut players_before = Vec::new();
+        let mut enemies_before = Vec::new();
+        for (_e, p, team, class) in game.world.query3::<Position, Team, CharacterClass>() {
+            if *team == Team::Player {
+                players_before.push((*class, *p));
+            } else {
+                enemies_before.push((*class, *p));
+            }
+        }
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let mut players_after = Vec::new();
+        let mut enemies_after = Vec::new();
+        for (_e, p, team, class) in game2.world.query3::<Position, Team, CharacterClass>() {
+            if *team == Team::Player {
+                players_after.push((*class, *p));
+            } else {
+                enemies_after.push((*class, *p));
+            }
+        }
+
+        players_before.sort_by_key(|(c, _)| format!("{:?}", c));
+        players_after.sort_by_key(|(c, _)| format!("{:?}", c));
+        enemies_before.sort_by_key(|(c, _)| format!("{:?}", c));
+        enemies_after.sort_by_key(|(c, _)| format!("{:?}", c));
+
+        assert_eq!(
+            players_before, players_after,
+            "Player team classes and positions should match"
+        );
+        assert_eq!(
+            enemies_before, enemies_after,
+            "Enemy team classes and positions should match"
+        );
+    }
+
+    #[test]
+    fn test_save_with_multiple_elemental_statuses_different_entities() {
+        let mut game = Game::new();
+
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.insert(
+            boss,
+            crate::components::ElementalStatus::Lightning { duration: 2 },
+        );
+        game.world.insert(
+            warrior,
+            crate::components::ElementalStatus::Regen { duration: 3 },
+        );
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let boss2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        let warrior2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        assert!(matches!(
+            game2
+                .world
+                .get::<crate::components::ElementalStatus>(boss2)
+                .unwrap(),
+            crate::components::ElementalStatus::Lightning { duration: 2 }
+        ));
+        assert!(matches!(
+            game2
+                .world
+                .get::<crate::components::ElementalStatus>(warrior2)
+                .unwrap(),
+            crate::components::ElementalStatus::Regen { duration: 3 }
+        ));
+    }
+
+    #[test]
+    fn test_save_preserves_telegraph_zone() {
+        let mut game = Game::new();
+
+        {
+            let telegraph = game
+                .world
+                .resource_mut::<crate::components::TelegraphZone>()
+                .unwrap();
+            telegraph.tiles = vec![Position::new(4, 4), Position::new(4, 5)];
+            telegraph.damage = 80;
+        }
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let telegraph2 = game2
+            .world
+            .resource::<crate::components::TelegraphZone>()
+            .unwrap();
+        assert_eq!(telegraph2.tiles.len(), 2);
+        assert!(telegraph2.tiles.contains(&Position::new(4, 4)));
+        assert!(telegraph2.tiles.contains(&Position::new(4, 5)));
+        assert_eq!(telegraph2.damage, 80);
+    }
+
+    #[test]
+    fn test_save_full_state_serialization_structure() {
+        let game = Game::new();
+        let save = game.save_state().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&save).unwrap();
+
+        assert!(parsed.get("magic").is_some(), "Should have magic field");
+        assert!(parsed.get("version").is_some(), "Should have version field");
+        assert!(
+            parsed.get("timestamp").is_some(),
+            "Should have timestamp field"
+        );
+        assert!(parsed.get("world").is_some(), "Should have world field");
+        assert!(
+            parsed.get("migrations_applied").is_some(),
+            "Should have migrations_applied field"
+        );
+
+        assert!(
+            parsed["world"].get("entities").is_some(),
+            "World should have entities"
+        );
+        assert!(
+            parsed["world"].get("resources").is_some(),
+            "World should have resources"
+        );
+    }
+
+    #[test]
+    fn test_load_preserves_all_player_characters() {
+        let game = Game::new();
+
+        let mut player_classes: Vec<CharacterClass> = Vec::new();
+        for (_, team, class) in game.world.query2::<Team, CharacterClass>() {
+            if *team == Team::Player {
+                player_classes.push(*class);
+            }
+        }
+        player_classes.sort_by_key(|c| format!("{:?}", c));
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let mut player_classes2: Vec<CharacterClass> = Vec::new();
+        for (_, team, class) in game2.world.query2::<Team, CharacterClass>() {
+            if *team == Team::Player {
+                player_classes2.push(*class);
+            }
+        }
+        player_classes2.sort_by_key(|c| format!("{:?}", c));
+
+        assert_eq!(
+            player_classes, player_classes2,
+            "All player character classes should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_save_load_preserves_inventory_item_effects() {
+        let game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let inv = game
+            .world
+            .get::<crate::components::Inventory>(warrior)
+            .unwrap();
+        let mut effects_before = Vec::new();
+        for &ent in &inv.items {
+            if let Some(item) = game.world.get::<crate::components::Item>(ent) {
+                effects_before.push((item.name.clone(), item.consumed));
+            }
+        }
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let warrior2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let inv2 = game2
+            .world
+            .get::<crate::components::Inventory>(warrior2)
+            .unwrap();
+        let mut effects_after = Vec::new();
+        for &ent in &inv2.items {
+            if let Some(item) = game2.world.get::<crate::components::Item>(ent) {
+                effects_after.push((item.name.clone(), item.consumed));
+            }
+        }
+
+        assert_eq!(
+            effects_before, effects_after,
+            "Item names and consumed state should match"
+        );
+    }
+
+    #[test]
+    fn test_hazard_initialization_from_map() {
+        let map_str = "\
+........\n\
+.T^+!...\n\
+........\n\
+.p%.*...\n\
+........";
+        let map = TacticalMap::from_ascii(map_str);
+        let hazards = crate::hazards::HazardSystem::initialize_hazards(&map);
+
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(1, 1),
+            crate::components::HazardType::PressurePlate
+        ));
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(2, 1),
+            crate::components::HazardType::FireTile
+        ));
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(3, 1),
+            crate::components::HazardType::HealingSpring
+        ));
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(4, 1),
+            crate::components::HazardType::SpikeTrap
+        ));
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(1, 3),
+            crate::components::HazardType::PoisonCloud
+        ));
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(2, 3),
+            crate::components::HazardType::CrackedFloor
+        ));
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(4, 3),
+            crate::components::HazardType::ThornBush
+        ));
+    }
+
+    #[test]
+    fn test_spike_trap_triggers_damage() {
+        let map_str = "\
+........\n\
+..!.....\n\
+........";
+        let map = TacticalMap::from_ascii(map_str);
+        let hazards = crate::hazards::HazardSystem::initialize_hazards(&map);
+        let stats = Stats {
+            hp: 100,
+            max_hp: 100,
+            atk: 10,
+            def: 5,
+            spd: 3,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+
+        let result =
+            crate::hazards::HazardSystem::trigger_hazard(&hazards, Position::new(2, 1), &stats);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.damage, 15);
+        assert_eq!(r.healing, 0);
+        assert_eq!(r.hazard_type, crate::components::HazardType::SpikeTrap);
+    }
+
+    #[test]
+    fn test_poison_cloud_applies_poison_status() {
+        let map_str = "\
+........\n\
+..p.....\n\
+........";
+        let map = TacticalMap::from_ascii(map_str);
+        let hazards = crate::hazards::HazardSystem::initialize_hazards(&map);
+        let stats = Stats {
+            hp: 100,
+            max_hp: 100,
+            atk: 10,
+            def: 5,
+            spd: 3,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+
+        let result =
+            crate::hazards::HazardSystem::trigger_hazard(&hazards, Position::new(2, 1), &stats);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.damage, 5);
+        assert!(matches!(
+            r.status_effect,
+            Some(ElementalStatus::Poison { duration: 3 })
+        ));
+    }
+
+    #[test]
+    fn test_healing_spring_heals() {
+        let map_str = "\
+........\n\
+..+.....\n\
+........";
+        let map = TacticalMap::from_ascii(map_str);
+        let hazards = crate::hazards::HazardSystem::initialize_hazards(&map);
+        let stats = Stats {
+            hp: 50,
+            max_hp: 100,
+            atk: 10,
+            def: 5,
+            spd: 3,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+
+        let result =
+            crate::hazards::HazardSystem::trigger_hazard(&hazards, Position::new(2, 1), &stats);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.healing, 25);
+        assert_eq!(r.damage, 0);
+        assert_eq!(r.hazard_type, crate::components::HazardType::HealingSpring);
+    }
+
+    #[test]
+    fn test_cracked_floor_becomes_wall() {
+        let map_str = "\
+........\n\
+..%.....\n\
+........";
+        let mut map = TacticalMap::from_ascii(map_str);
+        assert_eq!(map.tile(2, 1), Tile::CrackedFloor);
+
+        let changed =
+            crate::hazards::HazardSystem::process_cracked_floor(&mut map, Position::new(2, 1));
+        assert!(changed);
+        assert_eq!(map.tile(2, 1), Tile::Wall);
+        assert!(!map.is_walkable(Position::new(2, 1)));
+    }
+
+    #[test]
+    fn test_thorn_bush_deals_damage_and_costs_extra_ap() {
+        let map_str = "\
+........\n\
+..*.....\n\
+........";
+        let map = TacticalMap::from_ascii(map_str);
+
+        assert_eq!(map.movement_cost(Position::new(2, 1)), 2);
+        assert!(map.is_walkable(Position::new(2, 1)));
+
+        let hazards = crate::hazards::HazardSystem::initialize_hazards(&map);
+        let stats = Stats {
+            hp: 100,
+            max_hp: 100,
+            atk: 10,
+            def: 5,
+            spd: 3,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+
+        let result =
+            crate::hazards::HazardSystem::trigger_hazard(&hazards, Position::new(2, 1), &stats);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.damage, 10);
+        assert_eq!(r.hazard_type, crate::components::HazardType::ThornBush);
+    }
+
+    #[test]
+    fn test_hazard_cleanup_after_exhaustion() {
+        let mut hazards = crate::components::ActiveHazards {
+            hazards: vec![
+                (
+                    Position::new(1, 1),
+                    crate::components::HazardEffect {
+                        hazard_type: crate::components::HazardType::SpikeTrap,
+                        damage: 15,
+                        healing: 0,
+                        status: None,
+                        duration: 0,
+                        trigger_count: 0,
+                    },
+                ),
+                (
+                    Position::new(2, 2),
+                    crate::components::HazardEffect {
+                        hazard_type: crate::components::HazardType::PoisonCloud,
+                        damage: 5,
+                        healing: 0,
+                        status: Some(ElementalStatus::Poison { duration: 3 }),
+                        duration: 0,
+                        trigger_count: -1,
+                    },
+                ),
+                (
+                    Position::new(3, 3),
+                    crate::components::HazardEffect {
+                        hazard_type: crate::components::HazardType::HealingSpring,
+                        damage: 0,
+                        healing: 25,
+                        status: None,
+                        duration: 0,
+                        trigger_count: 1,
+                    },
+                ),
+            ],
+        };
+
+        crate::hazards::HazardSystem::cleanup_hazards(&mut hazards);
+        assert_eq!(hazards.hazards.len(), 2);
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(2, 2),
+            crate::components::HazardType::PoisonCloud
+        ));
+        assert!(crate::hazards::HazardSystem::has_hazard(
+            &hazards,
+            Position::new(3, 3),
+            crate::components::HazardType::HealingSpring
+        ));
+    }
+
+    #[test]
+    fn test_populate_hazards_generates_for_dungeon_floors() {
+        let mut map = TacticalMap::new(20, 20);
+        let hazards = crate::hazards::HazardSystem::populate_hazards(&mut map, 1, 42);
+        assert!(
+            !hazards.hazards.is_empty(),
+            "Floor 1 should have hazards populated"
+        );
+
+        let mut has_trap = false;
+        for y in 0..map.height {
+            for x in 0..map.width {
+                let tile = map.tile(x as i16, y as i16);
+                if matches!(
+                    tile,
+                    Tile::SpikeTrap
+                        | Tile::PoisonCloud
+                        | Tile::HealingSpring
+                        | Tile::CrackedFloor
+                        | Tile::PressurePlate
+                        | Tile::ThornBush
+                ) {
+                    has_trap = true;
+                }
+            }
+        }
+        assert!(has_trap, "Map should contain at least one hazard tile");
+
+        let mut map2 = TacticalMap::new(20, 20);
+        let hazards2 = crate::hazards::HazardSystem::populate_hazards(&mut map2, 3, 42);
+        assert!(
+            hazards2.hazards.len() > hazards.hazards.len(),
+            "Higher floor should have more hazards: floor1={}, floor3={}",
+            hazards.hazards.len(),
+            hazards2.hazards.len()
+        );
+    }
+
+    #[test]
+    fn test_is_walkable_with_all_new_tile_types() {
+        let map_str = "\
+.!p+%T*#";
+        let map = TacticalMap::from_ascii(map_str);
+
+        assert!(map.is_walkable(Position::new(0, 0)), "Grass walkable");
+        assert!(map.is_walkable(Position::new(1, 0)), "SpikeTrap walkable");
+        assert!(map.is_walkable(Position::new(2, 0)), "PoisonCloud walkable");
+        assert!(
+            map.is_walkable(Position::new(3, 0)),
+            "HealingSpring walkable"
+        );
+        assert!(
+            map.is_walkable(Position::new(4, 0)),
+            "CrackedFloor walkable"
+        );
+        assert!(
+            map.is_walkable(Position::new(5, 0)),
+            "PressurePlate walkable"
+        );
+        assert!(map.is_walkable(Position::new(6, 0)), "ThornBush walkable");
+        assert!(!map.is_walkable(Position::new(7, 0)), "Wall not walkable");
+    }
+
+    #[test]
+    fn test_movement_cost_with_all_new_tile_types() {
+        let map_str = "\
+.!p+%T*#";
+        let map = TacticalMap::from_ascii(map_str);
+
+        assert_eq!(map.movement_cost(Position::new(0, 0)), 1, "Grass cost 1");
+        assert_eq!(
+            map.movement_cost(Position::new(1, 0)),
+            1,
+            "SpikeTrap cost 1"
+        );
+        assert_eq!(
+            map.movement_cost(Position::new(2, 0)),
+            1,
+            "PoisonCloud cost 1"
+        );
+        assert_eq!(
+            map.movement_cost(Position::new(3, 0)),
+            1,
+            "HealingSpring cost 1"
+        );
+        assert_eq!(
+            map.movement_cost(Position::new(4, 0)),
+            1,
+            "CrackedFloor cost 1"
+        );
+        assert_eq!(
+            map.movement_cost(Position::new(5, 0)),
+            1,
+            "PressurePlate cost 1"
+        );
+        assert_eq!(
+            map.movement_cost(Position::new(6, 0)),
+            2,
+            "ThornBush cost 2"
+        );
+        assert_eq!(map.movement_cost(Position::new(7, 0)), 999, "Wall cost 999");
+    }
+
+    #[test]
+    fn test_destructible_component() {
+        let d = crate::components::Destructible {
+            hp: 0,
+            max_hp: 10,
+            destroyed: false,
+            replacement_tile: Tile::Wall,
+        };
+        assert!(!d.destroyed);
+
+        let mut destructibles = vec![(Position::new(5, 5), d)];
+        let mut map = TacticalMap::new(10, 10);
+        map.tiles.set(Position::new(5, 5), Tile::CrackedFloor);
+
+        crate::hazards::HazardSystem::update_destructibles(&mut destructibles, &mut map);
+        assert!(destructibles[0].1.destroyed);
+        assert_eq!(map.tile(5, 5), Tile::Wall);
+    }
+
+    #[test]
+    fn test_decrement_trigger_reduces_count() {
+        let mut hazards = crate::components::ActiveHazards {
+            hazards: vec![(
+                Position::new(1, 1),
+                crate::components::HazardEffect {
+                    hazard_type: crate::components::HazardType::SpikeTrap,
+                    damage: 15,
+                    healing: 0,
+                    status: None,
+                    duration: 0,
+                    trigger_count: 3,
+                },
+            )],
+        };
+
+        crate::hazards::HazardSystem::decrement_trigger(&mut hazards, Position::new(1, 1));
+        assert_eq!(hazards.hazards[0].1.trigger_count, 2);
+
+        crate::hazards::HazardSystem::decrement_trigger(&mut hazards, Position::new(1, 1));
+        crate::hazards::HazardSystem::decrement_trigger(&mut hazards, Position::new(1, 1));
+        assert_eq!(hazards.hazards[0].1.trigger_count, 0);
+
+        crate::hazards::HazardSystem::cleanup_hazards(&mut hazards);
+        assert!(hazards.hazards.is_empty());
+    }
+
+    #[test]
+    fn test_player_characters_have_equipment() {
+        let game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let equipped = game
+            .world
+            .get::<crate::components::EquippedItems>(warrior)
+            .unwrap();
+        assert!(equipped.weapon.is_some(), "Warrior should have a weapon");
+        assert!(equipped.armor.is_some(), "Warrior should have armor");
+        assert_eq!(equipped.weapon.as_ref().unwrap().name, "Iron Sword");
+        assert_eq!(equipped.armor.as_ref().unwrap().name, "Chain Mail");
+    }
+
+    #[test]
+    fn test_mage_has_starter_equipment() {
+        let game = Game::new();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let equipped = game
+            .world
+            .get::<crate::components::EquippedItems>(mage)
+            .unwrap();
+        assert!(equipped.weapon.is_some());
+        assert!(equipped.armor.is_some());
+        assert_eq!(equipped.weapon.as_ref().unwrap().name, "Staff of Storms");
+        assert_eq!(equipped.armor.as_ref().unwrap().name, "Robe of Warding");
+        assert_eq!(equipped.total_atk_bonus(), 10);
+        assert_eq!(equipped.total_def_bonus(), 3);
+        assert_eq!(equipped.total_spd_bonus(), 2);
+    }
+
+    #[test]
+    fn test_healer_has_starter_equipment() {
+        let game = Game::new();
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let equipped = game
+            .world
+            .get::<crate::components::EquippedItems>(healer)
+            .unwrap();
+        assert!(equipped.weapon.is_some());
+        assert!(equipped.armor.is_some());
+        assert_eq!(equipped.weapon.as_ref().unwrap().name, "Healing Wand");
+        assert_eq!(equipped.armor.as_ref().unwrap().name, "Holy Vestments");
+        assert_eq!(equipped.total_hp_bonus(), 20);
+        assert_eq!(equipped.total_def_bonus(), 4);
+    }
+
+    #[test]
+    fn test_enemy_characters_have_no_equipment() {
+        let game = Game::new();
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        assert!(game
+            .world
+            .get::<crate::components::EquippedItems>(boss)
+            .is_none());
+    }
+
+    #[test]
+    fn test_equip_unequip_through_world() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let flame = crate::equipment::flame_blade();
+        let replaced = game
+            .world
+            .get_mut::<crate::components::EquippedItems>(warrior)
+            .unwrap()
+            .equip(flame);
+        assert_eq!(replaced.unwrap().name, "Iron Sword");
+
+        let equipped = game
+            .world
+            .get::<crate::components::EquippedItems>(warrior)
+            .unwrap();
+        assert_eq!(equipped.weapon.as_ref().unwrap().name, "Flame Blade");
+        assert_eq!(equipped.total_atk_bonus(), 8);
+    }
+
+    #[test]
+    fn test_equipment_serialization_roundtrip() {
+        let mut eq = crate::components::EquippedItems::default();
+        eq.equip(crate::equipment::iron_sword());
+        eq.equip(crate::equipment::chain_mail());
+        eq.equip(crate::equipment::vampiric_ring());
+
+        let json = serde_json::to_string(&eq).unwrap();
+        let restored: crate::components::EquippedItems = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.weapon.as_ref().unwrap().name, "Iron Sword");
+        assert_eq!(restored.armor.as_ref().unwrap().name, "Chain Mail");
+        assert_eq!(restored.accessory.as_ref().unwrap().name, "Vampiric Ring");
+        assert_eq!(restored.total_atk_bonus(), 5);
+        assert_eq!(restored.total_def_bonus(), 5);
+    }
+
+    #[test]
+    fn test_skill_tree_creation_for_each_class() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let warrior_tree = SkillTree::for_class(CharacterClass::Warrior);
+        let mage_tree = SkillTree::for_class(CharacterClass::Mage);
+        let healer_tree = SkillTree::for_class(CharacterClass::Healer);
+
+        assert_eq!(warrior_tree.upgrades.len(), 12);
+        assert_eq!(mage_tree.upgrades.len(), 12);
+        assert_eq!(healer_tree.upgrades.len(), 12);
+
+        assert_eq!(warrior_tree.skill_points, 0);
+        assert_eq!(mage_tree.skill_points, 0);
+        assert_eq!(healer_tree.skill_points, 0);
+
+        assert!(warrior_tree.upgrades.iter().all(|u| !u.unlocked));
+        assert!(mage_tree.upgrades.iter().all(|u| !u.unlocked));
+        assert!(healer_tree.upgrades.iter().all(|u| !u.unlocked));
+    }
+
+    #[test]
+    fn test_skill_tree_empty_for_non_player_classes() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let boss_tree = SkillTree::for_class(CharacterClass::Boss);
+        let stalker_tree = SkillTree::for_class(CharacterClass::ShadowStalker);
+
+        assert!(boss_tree.upgrades.is_empty());
+        assert!(stalker_tree.upgrades.is_empty());
+    }
+
+    #[test]
+    fn test_skill_tree_prerequisite_enforcement() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Warrior);
+        tree.skill_points = 10;
+
+        // Cannot unlock tier 2 without tier 1
+        assert!(!tree.can_unlock("warrior_s1_cleave"));
+        assert!(!tree.unlock("warrior_s1_cleave"));
+
+        // Can unlock tier 1
+        assert!(tree.can_unlock("warrior_s1_power"));
+        assert!(tree.unlock("warrior_s1_power"));
+
+        // Now tier 2 is available
+        assert!(tree.can_unlock("warrior_s1_cleave"));
+        assert!(tree.unlock("warrior_s1_cleave"));
+
+        // Now tier 3 is available
+        assert!(tree.can_unlock("warrior_s1_executioner"));
+        assert!(tree.unlock("warrior_s1_executioner"));
+    }
+
+    #[test]
+    fn test_skill_tree_point_spending() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Mage);
+        tree.skill_points = 5;
+
+        assert_eq!(tree.skill_points, 5);
+        assert!(tree.unlock("mage_s1_power"));
+        assert_eq!(tree.skill_points, 4); // cost 1
+
+        assert!(tree.unlock("mage_s1_chain"));
+        assert_eq!(tree.skill_points, 2); // cost 2
+
+        // Not enough points for tier 3 (cost 3)
+        assert!(!tree.can_unlock("mage_s1_overload"));
+        assert!(!tree.unlock("mage_s1_overload"));
+        assert_eq!(tree.skill_points, 2); // unchanged
+    }
+
+    #[test]
+    fn test_skill_tree_damage_bonus_aggregation() {
+        use crate::components::{CharacterClass, SkillSlot, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Warrior);
+        tree.skill_points = 10;
+
+        assert_eq!(tree.total_damage_bonus(SkillSlot::Skill1), 0);
+
+        tree.unlock("warrior_s1_power");
+        assert_eq!(tree.total_damage_bonus(SkillSlot::Skill1), 5);
+
+        tree.unlock("warrior_s1_cleave"); // AoE, not damage
+        assert_eq!(tree.total_damage_bonus(SkillSlot::Skill1), 5);
+
+        tree.unlock("warrior_s1_executioner");
+        assert_eq!(tree.total_damage_bonus(SkillSlot::Skill1), 20); // 5 + 15
+
+        // Skill2 shouldn't be affected
+        assert_eq!(tree.total_damage_bonus(SkillSlot::Skill2), 0);
+    }
+
+    #[test]
+    fn test_skill_tree_range_and_aoe_bonus() {
+        use crate::components::{CharacterClass, SkillSlot, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Warrior);
+        tree.skill_points = 10;
+
+        assert_eq!(tree.total_range_bonus(SkillSlot::Skill3), 0);
+        assert_eq!(tree.total_aoe_bonus(SkillSlot::Skill1), 0);
+
+        tree.unlock("warrior_s3_range");
+        assert_eq!(tree.total_range_bonus(SkillSlot::Skill3), 1);
+
+        tree.unlock("warrior_s1_power");
+        tree.unlock("warrior_s1_cleave");
+        assert_eq!(tree.total_aoe_bonus(SkillSlot::Skill1), 1);
+    }
+
+    #[test]
+    fn test_skill_tree_heal_bonus() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Healer);
+        tree.skill_points = 10;
+
+        assert_eq!(tree.total_heal_bonus(), 0);
+
+        tree.unlock("healer_s1_greater_heal");
+        assert_eq!(tree.total_heal_bonus(), 15);
+
+        tree.unlock("healer_s1_mass_heal");
+        assert_eq!(tree.total_heal_bonus(), 25); // 15 + 10
+    }
+
+    #[test]
+    fn test_skill_tree_passive_stats() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Warrior);
+        tree.skill_points = 10;
+
+        assert_eq!(tree.total_passive_stats(), (0, 0, 0, 0));
+
+        tree.unlock("warrior_passive_iron_will");
+        assert_eq!(tree.total_passive_stats(), (0, 5, 0, 0));
+
+        tree.unlock("warrior_passive_unbreakable");
+        assert_eq!(tree.total_passive_stats(), (0, 5, 20, 0));
+
+        tree.unlock("warrior_passive_berserker");
+        assert_eq!(tree.total_passive_stats(), (10, 5, 20, 2));
+    }
+
+    #[test]
+    fn test_skill_tree_available_upgrades_tier_filter() {
+        use crate::components::{CharacterClass, SkillSlot, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Mage);
+        tree.skill_points = 10;
+
+        // Initially, only tier 1 upgrades for each slot should be available
+        let s1_available = tree.available_upgrades(SkillSlot::Skill1);
+        assert_eq!(s1_available.len(), 1);
+        assert_eq!(s1_available[0].tier, 1);
+        assert_eq!(s1_available[0].upgrade_id, "mage_s1_power");
+
+        // Unlock tier 1
+        tree.unlock("mage_s1_power");
+
+        // Now tier 2 should be available
+        let s1_available = tree.available_upgrades(SkillSlot::Skill1);
+        assert_eq!(s1_available.len(), 1);
+        assert_eq!(s1_available[0].tier, 2);
+        assert_eq!(s1_available[0].upgrade_id, "mage_s1_chain");
+    }
+
+    #[test]
+    fn test_skill_tree_unlock_same_twice_fails() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Warrior);
+        tree.skill_points = 10;
+
+        assert!(tree.unlock("warrior_s1_power"));
+        assert!(!tree.unlock("warrior_s1_power"));
+        // Cost was deducted only once
+        assert_eq!(tree.skill_points, 9);
+        assert_eq!(tree.unlocked_count(), 1);
+    }
+
+    #[test]
+    fn test_skill_tree_all_classes_have_complete_tiers() {
+        use crate::components::{CharacterClass, SkillSlot, SkillTree};
+
+        for class in [
+            CharacterClass::Warrior,
+            CharacterClass::Mage,
+            CharacterClass::Healer,
+        ] {
+            let tree = SkillTree::for_class(class);
+            for slot in [
+                SkillSlot::Skill1,
+                SkillSlot::Skill2,
+                SkillSlot::Skill3,
+                SkillSlot::Passive,
+            ] {
+                let slot_upgrades: Vec<_> = tree
+                    .upgrades
+                    .iter()
+                    .filter(|u| u.skill_slot == slot)
+                    .collect();
+                assert_eq!(
+                    slot_upgrades.len(),
+                    3,
+                    "{:?} {:?} should have 3 tiers",
+                    class,
+                    slot
+                );
+                assert!(
+                    slot_upgrades.iter().any(|u| u.tier == 1),
+                    "{:?} {:?} missing tier 1",
+                    class,
+                    slot
+                );
+                assert!(
+                    slot_upgrades.iter().any(|u| u.tier == 2),
+                    "{:?} {:?} missing tier 2",
+                    class,
+                    slot
+                );
+                assert!(
+                    slot_upgrades.iter().any(|u| u.tier == 3),
+                    "{:?} {:?} missing tier 3",
+                    class,
+                    slot
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_skill_tree_unlocked_count() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Healer);
+        tree.skill_points = 10;
+
+        assert_eq!(tree.unlocked_count(), 0);
+
+        tree.unlock("healer_s1_greater_heal");
+        assert_eq!(tree.unlocked_count(), 1);
+
+        tree.unlock("healer_passive_gentle_touch");
+        assert_eq!(tree.unlocked_count(), 2);
+    }
+
+    #[test]
+    fn test_skill_tree_serialization_roundtrip() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Warrior);
+        tree.skill_points = 5;
+        tree.unlock("warrior_s1_power");
+        tree.unlock("warrior_passive_iron_will");
+
+        let json = serde_json::to_string(&tree).unwrap();
+        let restored: SkillTree = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.skill_points, 3);
+        assert_eq!(restored.unlocked_count(), 2);
+        assert!(
+            restored
+                .upgrades
+                .iter()
+                .find(|u| u.upgrade_id == "warrior_s1_power")
+                .unwrap()
+                .unlocked
+        );
+        assert!(
+            restored
+                .upgrades
+                .iter()
+                .find(|u| u.upgrade_id == "warrior_passive_iron_will")
+                .unwrap()
+                .unlocked
+        );
+    }
+
+    #[test]
+    fn test_skill_tree_mage_passive_stats() {
+        use crate::components::{CharacterClass, SkillTree};
+
+        let mut tree = SkillTree::for_class(CharacterClass::Mage);
+        tree.skill_points = 10;
+
+        tree.unlock("mage_passive_mana_flow");
+        // Mana Flow has Passive { atk:0, def:0, hp:0, spd:0 } (+1 AP is handled elsewhere)
+        assert_eq!(tree.total_passive_stats(), (0, 0, 0, 0));
+
+        tree.unlock("mage_passive_arcane_mastery");
+        assert_eq!(tree.total_passive_stats(), (15, 0, 0, 0));
+
+        tree.unlock("mage_passive_elemental_affinity");
+        assert_eq!(tree.total_passive_stats(), (25, 0, 0, 3));
+    }
+
+    #[test]
+    fn test_action_upgrade_skill_resolves_command() {
+        use crate::action::resolve_command_token;
+        use crate::components::SkillSlot;
+
+        let action = resolve_command_token("upgrade:s1_1").unwrap();
+        assert_eq!(action, Action::UpgradeSkill(SkillSlot::Skill1, 1));
+
+        let action = resolve_command_token("upgrade:s2_3").unwrap();
+        assert_eq!(action, Action::UpgradeSkill(SkillSlot::Skill2, 3));
+
+        let action = resolve_command_token("upgrade:passive_2").unwrap();
+        assert_eq!(action, Action::UpgradeSkill(SkillSlot::Passive, 2));
+
+        assert!(resolve_command_token("upgrade:invalid").is_none());
+        assert!(resolve_command_token("upgrade:s4_1").is_none());
+    }
+
+    #[test]
+    fn test_action_toggle_skill_tree_resolves_command() {
+        use crate::action::resolve_command_token;
+
+        let action = resolve_command_token("skill_tree").unwrap();
+        assert_eq!(action, Action::ToggleSkillTree);
+
+        let action = resolve_command_token("upgrades").unwrap();
+        assert_eq!(action, Action::ToggleSkillTree);
     }
 }

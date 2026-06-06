@@ -792,15 +792,12 @@ impl Game {
                     Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice | Tile::Stairs | Tile::Mud
                 ) && !occupied.contains(&pt)
             },
-            |_from, to, tile| {
-                let pt = to;
-                match (tile, weather) {
-                    (Tile::Water, crate::components::WeatherType::Rainy) => 1,
-                    (Tile::Ice, crate::components::WeatherType::Snowing) => 0,
-                    (Tile::Water | Tile::Lava, _) => 2,
-                    (Tile::Mud, _) => 3,
-                    _ => 1,
-                }
+            |_from, _to, tile| match (tile, weather) {
+                (Tile::Water, crate::components::WeatherType::Rainy) => 1,
+                (Tile::Ice, crate::components::WeatherType::Snowing) => 0,
+                (Tile::Water | Tile::Lava, _) => 2,
+                (Tile::Mud, _) => 3,
+                _ => 1,
             },
         )
     }
@@ -4606,6 +4603,12 @@ impl Game {
                     Tile::Ice => Color(100, 180, 200),
                     Tile::Stairs => Color(160, 120, 40),
                     Tile::Mud => Color(80, 50, 30),
+                    Tile::SpikeTrap => Color(180, 30, 30),
+                    Tile::PoisonCloud => Color(80, 30, 120),
+                    Tile::HealingSpring => Color(30, 160, 80),
+                    Tile::CrackedFloor => Color(90, 70, 50),
+                    Tile::PressurePlate => Color(140, 140, 60),
+                    Tile::ThornBush => Color(50, 100, 20),
                 };
 
                 if matches!(vis, verryte_map::Visibility::Explored) {
@@ -4814,6 +4817,16 @@ impl Game {
                 }
             }
         }
+
+        // 3b. Weather Danger Zones
+        crate::ui::render_weather_danger_zones(
+            &mut screen,
+            &self.world,
+            &viewport,
+            tile_w,
+            tile_h,
+            clock.elapsed_ticks(),
+        );
 
         // 4. Cursor
         let pulse = ((clock.elapsed_ticks() as f32 * 0.1).sin() * 0.5 + 0.5) * 0.6 + 0.2; // 0.2 to 0.8
@@ -5206,6 +5219,71 @@ impl Game {
                 .resource::<crate::components::Weather>()
                 .map(|w| w.current)
                 .unwrap_or(crate::components::WeatherType::Sunny),
+            turn_order: crate::battle_preview::BattlePreview::calculate_turn_order(
+                &self.world,
+                state.selected_entity,
+            )
+            .entries
+            .iter()
+            .map(|e| {
+                format!(
+                    "{}[{}]{}",
+                    e.name,
+                    e.spd,
+                    if e.is_current { "*" } else { "" }
+                )
+            })
+            .collect(),
+            enemy_intents: {
+                let default_map = crate::map::TacticalMap::new(24, 16);
+                let default_telegraph = crate::components::TelegraphZone::default();
+                let map_ref = self
+                    .world
+                    .resource::<crate::map::TacticalMap>()
+                    .unwrap_or(&default_map);
+                let telegraph_ref = self
+                    .world
+                    .resource::<crate::components::TelegraphZone>()
+                    .unwrap_or(&default_telegraph);
+                crate::battle_preview::BattlePreview::predict_enemy_intents(
+                    &self.world,
+                    map_ref,
+                    telegraph_ref,
+                )
+                .intents
+                .iter()
+                .map(|i| i.description.clone())
+                .collect()
+            },
+            damage_preview: state.selected_entity.and_then(|sel| {
+                let cursor = state.cursor;
+                self.get_entity_at(cursor)
+                    .and_then(|(target, team, _stats, _class)| {
+                        if team == Team::Enemy {
+                            if let (Some(atk_stats), Some(tgt_stats)) = (
+                                self.world.get::<Stats>(sel),
+                                self.world.get::<Stats>(target),
+                            ) {
+                                let mut preview =
+                                    crate::battle_preview::BattlePreview::calculate_damage_preview(
+                                        atk_stats.atk,
+                                        atk_stats.level,
+                                        tgt_stats.def,
+                                        tgt_stats.level,
+                                        1.0,
+                                        20,
+                                    );
+                                preview.can_kill = preview.max_damage >= tgt_stats.hp;
+                                Some(preview)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+            }),
+            aoe_preview: Vec::new(),
         }
     }
 

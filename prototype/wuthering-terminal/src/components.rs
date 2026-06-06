@@ -293,6 +293,41 @@ pub struct RedoStack {
     pub states: Vec<String>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HazardType {
+    SpikeTrap,
+    PoisonCloud,
+    HealingSpring,
+    CrackedFloor,
+    PressurePlate,
+    ThornBush,
+    FireTile,
+    IceTile,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HazardEffect {
+    pub hazard_type: HazardType,
+    pub damage: i32,
+    pub healing: i32,
+    pub status: Option<ElementalStatus>,
+    pub duration: u32,
+    pub trigger_count: i32,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct ActiveHazards {
+    pub hazards: Vec<(Position, HazardEffect)>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Destructible {
+    pub hp: i32,
+    pub max_hp: i32,
+    pub destroyed: bool,
+    pub replacement_tile: crate::map::Tile,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HeroTrait {
     SwiftFoot,      // Kael: starts turn with 3 AP instead of 2
@@ -342,4 +377,241 @@ pub enum AIArchetype {
     Chaser,
     Cleric,
     Coward,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct AIBehavior {
+    pub archetype: AIArchetype,
+    pub aggression: i32,
+    pub caution: i32,
+    pub coordination: i32,
+    pub last_action: Option<AIAction>,
+    pub target_priority: Option<verryte_core::Entity>,
+}
+
+impl AIBehavior {
+    pub fn new(archetype: AIArchetype) -> Self {
+        let (aggression, caution, coordination) = match archetype {
+            AIArchetype::Chaser => (80, 20, 40),
+            AIArchetype::Cleric => (40, 60, 80),
+            AIArchetype::Coward => (20, 90, 30),
+        };
+        Self {
+            archetype,
+            aggression,
+            caution,
+            coordination,
+            last_action: None,
+            target_priority: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum AIAction {
+    Attack(verryte_core::Entity),
+    MoveTo(Position),
+    Retreat,
+    Defend,
+    HealAlly(verryte_core::Entity),
+    UseCover,
+    FlankAttack(verryte_core::Entity, Position),
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TacticalAssessment {
+    pub threat_map: Vec<(Position, i32)>,
+    pub cover_positions: Vec<Position>,
+    pub flank_positions: Vec<Position>,
+    pub safe_positions: Vec<Position>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EquipmentSlot {
+    Weapon,
+    Armor,
+    Accessory,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Equipment {
+    pub name: String,
+    pub slot: EquipmentSlot,
+    pub atk_bonus: i32,
+    pub def_bonus: i32,
+    pub hp_bonus: i32,
+    pub spd_bonus: i32,
+    pub special: Option<EquipmentSpecial>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum EquipmentSpecial {
+    LifestealPercent(u32),
+    CritBoost(u32),
+    ElementalDamage(Element, i32),
+    HpRegen(i32),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Element {
+    Ice,
+    Lightning,
+    Nature,
+    Physical,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct EquippedItems {
+    pub weapon: Option<Equipment>,
+    pub armor: Option<Equipment>,
+    pub accessory: Option<Equipment>,
+}
+
+impl EquippedItems {
+    pub fn total_atk_bonus(&self) -> i32 {
+        self.weapon.as_ref().map_or(0, |e| e.atk_bonus)
+            + self.armor.as_ref().map_or(0, |e| e.atk_bonus)
+            + self.accessory.as_ref().map_or(0, |e| e.atk_bonus)
+    }
+
+    pub fn total_def_bonus(&self) -> i32 {
+        self.weapon.as_ref().map_or(0, |e| e.def_bonus)
+            + self.armor.as_ref().map_or(0, |e| e.def_bonus)
+            + self.accessory.as_ref().map_or(0, |e| e.def_bonus)
+    }
+
+    pub fn total_hp_bonus(&self) -> i32 {
+        self.weapon.as_ref().map_or(0, |e| e.hp_bonus)
+            + self.armor.as_ref().map_or(0, |e| e.hp_bonus)
+            + self.accessory.as_ref().map_or(0, |e| e.hp_bonus)
+    }
+
+    pub fn total_spd_bonus(&self) -> i32 {
+        self.weapon.as_ref().map_or(0, |e| e.spd_bonus)
+            + self.armor.as_ref().map_or(0, |e| e.spd_bonus)
+            + self.accessory.as_ref().map_or(0, |e| e.spd_bonus)
+    }
+
+    pub fn equip(&mut self, item: Equipment) -> Option<Equipment> {
+        match item.slot {
+            EquipmentSlot::Weapon => self.weapon.replace(item),
+            EquipmentSlot::Armor => self.armor.replace(item),
+            EquipmentSlot::Accessory => self.accessory.replace(item),
+        }
+    }
+
+    pub fn unequip(&mut self, slot: EquipmentSlot) -> Option<Equipment> {
+        match slot {
+            EquipmentSlot::Weapon => self.weapon.take(),
+            EquipmentSlot::Armor => self.armor.take(),
+            EquipmentSlot::Accessory => self.accessory.take(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DamagePreview {
+    pub min_damage: i32,
+    pub max_damage: i32,
+    pub expected_damage: i32,
+    pub hit_chance: u32,
+    pub crit_chance: u32,
+    pub element: Option<String>,
+    pub can_kill: bool,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct AoEPreview {
+    pub center: Option<Position>,
+    pub affected_tiles: Vec<Position>,
+    pub affected_enemies: Vec<verryte_core::Entity>,
+    pub affected_allies: Vec<verryte_core::Entity>,
+    pub total_potential_damage: i32,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TurnOrderEntry {
+    pub entity: verryte_core::Entity,
+    pub name: String,
+    pub team: Team,
+    pub spd: i32,
+    pub is_current: bool,
+    pub hp_ratio: f32,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TurnOrderDisplay {
+    pub entries: Vec<TurnOrderEntry>,
+    pub current_index: usize,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EnemyIntent {
+    pub entity: verryte_core::Entity,
+    pub intent_type: IntentType,
+    pub target: Option<Position>,
+    pub predicted_damage: i32,
+    pub description: String,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum IntentType {
+    Attack,
+    Defend,
+    Heal,
+    Move,
+    AoEAttack,
+    Buff,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct EnemyIntentions {
+    pub intents: Vec<EnemyIntent>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum SkillSlot {
+    Skill1,
+    Skill2,
+    Skill3,
+    Passive,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum UpgradeEffect {
+    DamageBoost(i32),
+    CooldownReduction(u32),
+    RangeBoost(i32),
+    AoEBonus(i32),
+    StatusChance(u32),
+    HealBoost(i32),
+    Lifesteal(u32),
+    ExtraHit(u32),
+    PierceResist(i32),
+    Passive {
+        atk: i32,
+        def: i32,
+        hp: i32,
+        spd: i32,
+    },
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SkillUpgrade {
+    pub skill_slot: SkillSlot,
+    pub upgrade_id: String,
+    pub name: String,
+    pub description: String,
+    pub tier: u32,
+    pub cost: u32,
+    pub unlocked: bool,
+    pub effect: UpgradeEffect,
+    pub prerequisites: Vec<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SkillTree {
+    pub skill_points: u32,
+    pub upgrades: Vec<SkillUpgrade>,
 }
