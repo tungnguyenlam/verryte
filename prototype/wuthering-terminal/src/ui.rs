@@ -292,6 +292,12 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         Tile::Ice => "Ice",
         Tile::Stairs => "Stairs",
         Tile::Mud => "Mud",
+        Tile::SpikeTrap => "Spike Trap",
+        Tile::PoisonCloud => "Poison Cloud",
+        Tile::HealingSpring => "Healing Spring",
+        Tile::CrackedFloor => "Cracked Floor",
+        Tile::PressurePlate => "Pressure Plate",
+        Tile::ThornBush => "Thorn Bush",
     };
 
     let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
@@ -533,6 +539,7 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
                         crate::components::ItemEffect::CleanseAndHeal(v) => {
                             format!("(Cleanse, +{} HP)", v)
                         }
+                        crate::components::ItemEffect::UpgradeKit => "(Upgrade Kit)".to_string(),
                     };
                     grid.write_str(panel_rect.x + 25, y, &effect_str, Color::GREY, panel_bg);
                 }
@@ -876,6 +883,12 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
                 Tile::Ice => ('-', Color(150, 220, 255)),
                 Tile::Stairs => ('>', Color(255, 215, 0)),
                 Tile::Mud => ('=', Color(100, 70, 40)),
+                Tile::SpikeTrap => ('^', Color(200, 50, 50)),
+                Tile::PoisonCloud => ('~', Color(100, 200, 50)),
+                Tile::HealingSpring => ('+', Color(50, 200, 50)),
+                Tile::CrackedFloor => ('%', Color(120, 100, 80)),
+                Tile::PressurePlate => ('_', Color(180, 180, 50)),
+                Tile::ThornBush => ('*', Color(80, 120, 40)),
             };
             grid.put(
                 inner_x + tx,
@@ -916,4 +929,14 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
                 .with_attrs(verryte_terminal::CellAttrs::NONE.bold()),
         );
     }
+}
+
+pub fn render_weather_danger_zones(
+    _grid: &mut Grid,
+    _world: &World,
+    _viewport: &verryte_terminal::TileViewport,
+    _tile_w: u16,
+    _tile_h: u16,
+    _ticks: u64,
+) {
 }
