@@ -38,6 +38,13 @@ pub enum Action {
     CraftItem(usize, usize),
     ChangeWeather(crate::components::WeatherType),
     ToggleHelp,
+    UpgradeSkill(crate::components::SkillSlot, u8),
+    ToggleSkillTree,
+    RerollModifiers,
+    ComboSkill(crate::components::ComboSkill),
+    ViewPrestige,
+    Rest,
+    ToggleBestiary,
 }
 
 impl Action {
@@ -122,6 +129,26 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('h'), Action::ToggleHelp);
     b.bind(Key::Char('H'), Action::ToggleHelp);
 
+    // Skill Tree
+    b.bind(Key::Char('t'), Action::ToggleSkillTree);
+    b.bind(Key::Char('T'), Action::ToggleSkillTree);
+
+    // Reroll Modifiers
+    b.bind(Key::Char('x'), Action::RerollModifiers);
+    b.bind(Key::Char('X'), Action::RerollModifiers);
+
+    // Prestige
+    b.bind(Key::Char('v'), Action::ViewPrestige);
+    b.bind(Key::Char('V'), Action::ViewPrestige);
+
+    // Rest
+    b.bind(Key::Char('z'), Action::Rest);
+    b.bind(Key::Char('Z'), Action::Rest);
+
+    // Bestiary
+    b.bind(Key::Char('j'), Action::ToggleBestiary);
+    b.bind(Key::Char('J'), Action::ToggleBestiary);
+
     b
 }
 
@@ -152,6 +179,13 @@ pub fn default_commands() -> CommandBindings<Action> {
 
     c.bind_name("next_floor", Action::NextFloor);
     c.bind_name("help", Action::ToggleHelp);
+    c.bind_name("skill_tree", Action::ToggleSkillTree);
+    c.bind_name("upgrades", Action::ToggleSkillTree);
+    c.bind_name("prestige", Action::ViewPrestige);
+    c.bind_name("reroll", Action::RerollModifiers);
+    c.bind_name("rest", Action::Rest);
+    c.bind_name("bestiary", Action::ToggleBestiary);
+    c.bind_name("lore", Action::ToggleBestiary);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('s', Action::MoveSouth);
@@ -176,6 +210,9 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('y', Action::Redo);
     c.bind_glyph('?', Action::ToggleHelp);
     c.bind_glyph('h', Action::ToggleHelp);
+    c.bind_glyph('t', Action::ToggleSkillTree);
+    c.bind_glyph('v', Action::ViewPrestige);
+    c.bind_glyph('j', Action::ToggleBestiary);
 
     c
 }
@@ -223,6 +260,43 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
         return Some(Action::NextFloor);
     }
 
+    if token == "skill_tree" || token == "upgrades" {
+        return Some(Action::ToggleSkillTree);
+    }
+
+    if token == "reroll" {
+        return Some(Action::RerollModifiers);
+    }
+
+    if token == "prestige" || token == "view_prestige" {
+        return Some(Action::ViewPrestige);
+    }
+
+    if token == "rest" {
+        return Some(Action::Rest);
+    }
+
+    if token == "bestiary" || token == "lore" {
+        return Some(Action::ToggleBestiary);
+    }
+
+    if let Some(upgrade_str) = token.strip_prefix("upgrade:") {
+        if let Some((slot_str, tier_str)) = upgrade_str.split_once('_') {
+            if let Ok(tier) = tier_str.parse::<u8>() {
+                let slot = match slot_str {
+                    "s1" => Some(crate::components::SkillSlot::Skill1),
+                    "s2" => Some(crate::components::SkillSlot::Skill2),
+                    "s3" => Some(crate::components::SkillSlot::Skill3),
+                    "passive" => Some(crate::components::SkillSlot::Passive),
+                    _ => None,
+                };
+                if let Some(slot) = slot {
+                    return Some(Action::UpgradeSkill(slot, tier));
+                }
+            }
+        }
+    }
+
     if let Some(craft_str) = token.strip_prefix("craft:") {
         if let Some((idx1_str, idx2_str)) = craft_str.split_once(',') {
             if let (Ok(idx1), Ok(idx2)) = (idx1_str.parse::<usize>(), idx2_str.parse::<usize>()) {
@@ -237,6 +311,19 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
     if let Some(idx_str) = token.strip_prefix("use:") {
         if let Ok(idx) = idx_str.parse::<usize>() {
             return Some(Action::UseItem(idx.saturating_sub(1)));
+        }
+    }
+
+    if let Some(combo_str) = token.strip_prefix("combo:") {
+        let combo = match combo_str.to_lowercase().as_str() {
+            "bladestorm" => Some(crate::components::ComboSkill::BladeStorm),
+            "holysmite" => Some(crate::components::ComboSkill::HolySmite),
+            "arcanesanctuary" => Some(crate::components::ComboSkill::ArcaneSanctuary),
+            "trinitystrike" => Some(crate::components::ComboSkill::TrinityStrike),
+            _ => None,
+        };
+        if let Some(skill) = combo {
+            return Some(Action::ComboSkill(skill));
         }
     }
 

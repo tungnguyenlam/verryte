@@ -1,7 +1,8 @@
 use crate::components::{
-    AIArchetype, BossPhase, CharacterClass, EchoItem, ElementalShield, ElementalStatus, GameEvent,
-    GameState, Outcome, Position, Rooted, ShieldType, Stats, Team, TelegraphZone, Threat,
-    TurnPhase, Weather, WeatherType,
+    AIArchetype, BossPhase, CharacterClass, EchoItem, ElementalShield, ElementalStatus, Fatigue,
+    FloorModifier, GameEvent, GameState, Morale, Outcome, Position, PrestigeClass,
+    PrestigeProgress, Rooted, ShieldType, Stats, Team, TelegraphZone, Threat, TurnPhase, Weather,
+    WeatherType,
 };
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
@@ -22,6 +23,11 @@ pub fn visibility_system(world: &mut World) {
         .expect("TacticalMap resource must be registered")
         .tiles
         .clone();
+
+    let darkness_reduction = floor_modifier_visibility_reduction(world);
+    let base_radius = 8i32;
+    let radius = (base_radius - darkness_reduction).max(2) as u16;
+
     let visibility = world
         .resource_mut::<verryte_map::VisibilityMap>()
         .expect("VisibilityMap resource must be registered");
@@ -29,7 +35,7 @@ pub fn visibility_system(world: &mut World) {
     visibility.clear_visible();
 
     for pos in player_positions {
-        visibility.compute_fov_incremental(pos, 8, |p| {
+        visibility.compute_fov_incremental(pos, radius, |p| {
             map_tiles
                 .get(p)
                 .map(|t| matches!(t, Tile::Wall))
@@ -1144,6 +1150,7 @@ pub fn turn_management_system(world: &mut World) {
                 events.send(GameEvent::TurnEnded);
             }
 
+            apply_weather_hazard_damage(world);
             process_team_status_effects(world, Team::Enemy);
 
             // Replenish Enemy AP
@@ -1219,6 +1226,9 @@ pub fn turn_management_system(world: &mut World) {
                 state.turn += 1;
                 state.combo_count = 0;
             }
+            if let Some(bstats) = world.resource_mut::<crate::components::BattleStats>() {
+                bstats.total_turns += 1;
+            }
             let turn_num = world
                 .resource::<GameState>()
                 .expect("GameState must be registered")
@@ -1232,6 +1242,8 @@ pub fn turn_management_system(world: &mut World) {
             );
 
             process_team_status_effects(world, Team::Player);
+
+            apply_weather_hazard_damage(world);
 
             // Replenish Player AP
             let mut players = Vec::new();
@@ -1893,6 +1905,14 @@ pub fn handle_defeat(
     if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
         events.send(GameEvent::Defeated { entity });
     }
+
+    let defeated_team = world.get::<Team>(entity).copied();
+    if defeated_team == Some(Team::Player) {
+        apply_ally_defeated_morale(world, entity);
+    } else if defeated_team == Some(Team::Enemy) {
+        apply_enemy_defeated_morale(world);
+    }
+
     world.despawn(entity);
 
     // Award XP if it was an enemy
@@ -2440,6 +2460,121 @@ pub fn weather_cycle_system(world: &mut World) {
     );
 }
 
+pub fn morale_fatigue_system(world: &mut World) {
+    let mut morale_drops_hp25: Vec<Entity> = Vec::new();
+    for (e, stats, _team) in world.query2::<Stats, Team>() {
+        if stats.max_hp > 0 && stats.hp > 0 {
+            let hp_pct = stats.hp as f32 / stats.max_hp as f32;
+            if hp_pct < 0.25 {
+                morale_drops_hp25.push(e);
+            }
+        }
+    }
+    for e in morale_drops_hp25 {
+        if let Some(morale) = world.get_mut::<Morale>(e) {
+            morale.value = (morale.value - 10).max(0);
+        }
+    }
+
+    let mut high_fatigue_entities: Vec<Entity> = Vec::new();
+    for (e, fatigue, _team) in world.query2::<Fatigue, Team>() {
+        if fatigue.value > 50 {
+            high_fatigue_entities.push(e);
+        }
+    }
+    for e in high_fatigue_entities {
+        if let Some(morale) = world.get_mut::<Morale>(e) {
+            morale.value = (morale.value - 2).max(0);
+        }
+    }
+
+    let mut very_high_fatigue: Vec<Entity> = Vec::new();
+    for (e, fatigue, _team) in world.query2::<Fatigue, Team>() {
+        if fatigue.value > 75 {
+            very_high_fatigue.push(e);
+        }
+    }
+    for e in very_high_fatigue {
+        if let Some(morale) = world.get_mut::<Morale>(e) {
+            morale.value = (morale.value - 3).max(0);
+        }
+    }
+
+    let morale_entities: Vec<Entity> = world.query::<Morale>().iter().map(|(e, _)| *e).collect();
+    for e in morale_entities {
+        if let Some(morale) = world.get_mut::<Morale>(e) {
+            morale.value = morale.value.clamp(0, morale.max);
+        }
+    }
+}
+
+pub fn apply_ally_defeated_morale(world: &mut World, _defeated: Entity) {
+    let living_allies: Vec<Entity> = world
+        .query2::<Team, Stats>()
+        .iter()
+        .filter(|(_, team, stats)| **team == Team::Player && stats.hp > 0)
+        .map(|(e, _, _)| *e)
+        .collect();
+    for ally in living_allies {
+        if let Some(morale) = world.get_mut::<Morale>(ally) {
+            morale.value = (morale.value - 15).max(0);
+        }
+    }
+}
+
+pub fn apply_enemy_defeated_morale(world: &mut World) {
+    let living_players: Vec<Entity> = world
+        .query2::<Team, Stats>()
+        .iter()
+        .filter(|(_, team, stats)| **team == Team::Player && stats.hp > 0)
+        .map(|(e, _, _)| *e)
+        .collect();
+    for player in living_players {
+        if let Some(morale) = world.get_mut::<Morale>(player) {
+            morale.value = (morale.value + 10).min(morale.max);
+        }
+    }
+}
+
+pub fn apply_boss_phase_morale(world: &mut World) {
+    let living_players: Vec<Entity> = world
+        .query2::<Team, Stats>()
+        .iter()
+        .filter(|(_, team, stats)| **team == Team::Player && stats.hp > 0)
+        .map(|(e, _, _)| *e)
+        .collect();
+    for player in living_players {
+        if let Some(morale) = world.get_mut::<Morale>(player) {
+            morale.value = (morale.value - 20).max(0);
+        }
+    }
+}
+
+pub fn apply_heal_morale(world: &mut World, target: Entity) {
+    if let Some(morale) = world.get_mut::<Morale>(target) {
+        morale.value = (morale.value + 5).min(morale.max);
+    }
+}
+
+pub fn increment_fatigue_on_action(
+    world: &mut World,
+    entity: Entity,
+    is_skill: bool,
+    is_wait: bool,
+) {
+    if let Some(fatigue) = world.get_mut::<Fatigue>(entity) {
+        let increase = if is_wait {
+            1
+        } else if is_skill {
+            5
+        } else {
+            3
+        };
+        fatigue.value = (fatigue.value + increase).min(fatigue.max);
+        fatigue.actions_taken += 1;
+    }
+}
+
 fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
     match weather {
         WeatherType::LightningStorm => {
@@ -2459,7 +2594,7 @@ fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
 
             let count = {
                 let rng = world.resource_mut::<Rng>().expect("Rng must be registered");
-                1 + rng.next_u32(2) as usize
+                2 + rng.next_u32(3) as usize
             };
 
             let mut zones = Vec::new();
@@ -2520,16 +2655,109 @@ fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
                 }
             }
         }
-        WeatherType::Snowing => {
-            let mut targets = Vec::new();
-            for (e, class) in world.query::<CharacterClass>() {
-                if let Some(status) = world.get::<ElementalStatus>(e) {
-                    if matches!(status, ElementalStatus::Ice { .. }) {
-                        targets.push((e, *class));
+        WeatherType::Rainy => {
+            if let Some(w) = world.resource_mut::<Weather>() {
+                w.danger_zones.clear();
+            }
+
+            let mut puddle_zones = Vec::new();
+            let map = world
+                .resource::<TacticalMap>()
+                .expect("TacticalMap must be registered");
+            let map_w = map.width as i16;
+            let map_h = map.height as i16;
+
+            for ty in 0..map_h {
+                for tx in 0..map_w {
+                    let tile = map.tile(tx, ty);
+                    if tile != Tile::Grass {
+                        continue;
+                    }
+                    let pos = Position::new(tx, ty);
+                    let mut adjacent_to_water = false;
+                    for (dx, dy) in &[(0i16, -1i16), (0, 1), (-1, 0), (1, 0)] {
+                        let nx = tx + dx;
+                        let ny = ty + dy;
+                        if nx >= 0 && nx < map_w && ny >= 0 && ny < map_h {
+                            if map.tile(nx, ny) == Tile::Water {
+                                adjacent_to_water = true;
+                                break;
+                            }
+                        }
+                    }
+                    if adjacent_to_water {
+                        puddle_zones.push(pos);
                     }
                 }
             }
-            for (entity, class) in targets {
+
+            if let Some(w) = world.resource_mut::<Weather>() {
+                w.danger_zones = puddle_zones;
+            }
+        }
+        WeatherType::Snowing => {
+            if let Some(w) = world.resource_mut::<Weather>() {
+                w.danger_zones.clear();
+            }
+
+            let mut expanded = Vec::new();
+            let map_snapshot: Vec<(i16, i16, Tile)> = {
+                let map = world
+                    .resource::<TacticalMap>()
+                    .expect("TacticalMap must be registered");
+                let map_w = map.width as i16;
+                let map_h = map.height as i16;
+                let mut tiles = Vec::new();
+                for ty in 0..map_h {
+                    for tx in 0..map_w {
+                        tiles.push((tx, ty, map.tile(tx, ty)));
+                    }
+                }
+                tiles
+            };
+
+            for (tx, ty, tile) in &map_snapshot {
+                if *tile != Tile::Grass {
+                    continue;
+                }
+                let mut adjacent_to_ice = false;
+                for (dx, dy) in &[(0i16, -1i16), (0, 1), (-1, 0), (1, 0)] {
+                    let nx = tx + dx;
+                    let ny = ty + dy;
+                    if let Some((_, _, t)) =
+                        map_snapshot.iter().find(|(x, y, _)| *x == nx && *y == ny)
+                    {
+                        if *t == Tile::Ice {
+                            adjacent_to_ice = true;
+                            break;
+                        }
+                    }
+                }
+                if adjacent_to_ice {
+                    let pos = Position::new(*tx, *ty);
+                    expanded.push(pos);
+                }
+            }
+
+            if let Some(map) = world.resource_mut::<TacticalMap>() {
+                for pos in &expanded {
+                    map.tiles.set(*pos, Tile::Ice);
+                }
+            }
+
+            if let Some(w) = world.resource_mut::<Weather>() {
+                w.danger_zones = expanded;
+            }
+
+            let mut ice_targets = Vec::new();
+            for (e, class) in world.query::<CharacterClass>() {
+                if let Some(status) = world.get::<ElementalStatus>(e) {
+                    if matches!(status, ElementalStatus::Ice { .. }) {
+                        ice_targets.push((e, *class));
+                    }
+                }
+            }
+            for (entity, class) in ice_targets {
                 let mut log_msg = None;
                 if let Some(status) = world.get_mut::<ElementalStatus>(entity) {
                     if let ElementalStatus::Ice { ref mut duration } = *status {
@@ -2548,6 +2776,68 @@ fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
             }
         }
         _ => {}
+    }
+}
+
+pub fn apply_weather_hazard_damage(world: &mut World) {
+    let (weather, zones) = {
+        let w = world
+            .resource::<Weather>()
+            .expect("Weather must be registered");
+        (w.current, w.danger_zones.clone())
+    };
+
+    if weather != WeatherType::LightningStorm || zones.is_empty() {
+        return;
+    }
+
+    for zone in &zones {
+        let mut victims = Vec::new();
+        for (e, p, _team) in world.query2::<Position, Team>() {
+            if *p == *zone {
+                victims.push(e);
+            }
+        }
+        for victim in victims {
+            let victim_class = world
+                .get::<CharacterClass>(victim)
+                .copied()
+                .unwrap_or(CharacterClass::Warrior);
+            let victim_name = Game::get_class_name(victim_class);
+            let mut final_hp = 0;
+            let mut defeated = false;
+            if let Some(stats) = world.get_mut::<Stats>(victim) {
+                stats.hp -= 15;
+                final_hp = stats.hp;
+                if stats.hp <= 0 {
+                    defeated = true;
+                }
+            }
+            log(
+                world,
+                format!(
+                    "[fg:FFFF64]Weather hazard: lightning struck {} at ({}, {}) for 15 damage! (HP: {})[/fg]",
+                    victim_name, zone.x, zone.y, final_hp
+                ),
+            );
+            let (cx, cy) = get_tile_center_pixels(world, *zone);
+            if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                vfx.particles
+                    .extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
+                vfx.floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        cx,
+                        cy - 2.0,
+                        "-15",
+                        Color(255, 255, 100),
+                        true,
+                    ));
+            }
+            if defeated {
+                let name_str = victim_name.to_string();
+                handle_defeat(world, victim, &name_str, victim_class, *zone);
+            }
+        }
     }
 }
 
@@ -2604,4 +2894,440 @@ fn is_flanking_position_from(
         }
     }
     false
+}
+
+pub fn floor_modifier_system(world: &mut World) {
+    let modifiers = world
+        .resource::<crate::components::ActiveFloorModifiers>()
+        .cloned()
+        .unwrap_or_default();
+    if modifiers.modifiers.is_empty() {
+        return;
+    }
+
+    let phase = world
+        .resource::<GameState>()
+        .map(|s| s.phase)
+        .unwrap_or(TurnPhase::Player);
+
+    for (_i, modifier) in modifiers.modifiers.iter().enumerate() {
+        match modifier {
+            FloorModifier::ElementalStorm => {
+                if phase == TurnPhase::Player {
+                    let damage = {
+                        let rng = world.resource_mut::<Rng>().expect("Rng registered");
+                        5 + rng.next_u32(6) as i32
+                    };
+                    let mut targets = Vec::new();
+                    for (e, _pos, _team) in world.query2::<Position, Team>() {
+                        targets.push(e);
+                    }
+                    for entity in targets {
+                        if !world.is_alive(entity) {
+                            continue;
+                        }
+                        let entity_class = world
+                            .get::<CharacterClass>(entity)
+                            .copied()
+                            .unwrap_or(CharacterClass::Warrior);
+                        let entity_name = Game::get_class_name(entity_class);
+                        let mut final_hp = 0;
+                        let mut defeated = false;
+                        if let Some(stats) = world.get_mut::<Stats>(entity) {
+                            stats.hp -= damage;
+                            final_hp = stats.hp;
+                            if stats.hp <= 0 {
+                                defeated = true;
+                            }
+                        }
+                        log(
+                            world,
+                            format!(
+                                "[fg:FF6464]Elemental Storm deals {} damage to {}! (HP: {})[/fg]",
+                                damage, entity_name, final_hp
+                            ),
+                        );
+                        if defeated {
+                            let name_str = entity_name.to_string();
+                            let entity_pos = world
+                                .get::<Position>(entity)
+                                .copied()
+                                .unwrap_or(Position::new(0, 0));
+                            handle_defeat(world, entity, &name_str, entity_class, entity_pos);
+                        }
+                    }
+                }
+            }
+            FloorModifier::Reversal => {
+                // Reversal is applied per-turn via healing/damage checks (handled in game.rs)
+            }
+            _ => {}
+        }
+    }
+
+    let mut expired_names = Vec::new();
+    if let Some(modifiers) = world.resource_mut::<crate::components::ActiveFloorModifiers>() {
+        for i in 0..modifiers.turns_remaining.len() {
+            if modifiers.turns_remaining[i] > 0 {
+                modifiers.turns_remaining[i] -= 1;
+            }
+        }
+        let mut to_remove = Vec::new();
+        for i in (0..modifiers.modifiers.len()).rev() {
+            if modifiers.turns_remaining[i] == 0 {
+                expired_names.push(modifiers.modifiers[i].display_name().to_string());
+                to_remove.push(i);
+            }
+        }
+        for i in to_remove {
+            modifiers.modifiers.remove(i);
+            modifiers.turns_remaining.remove(i);
+        }
+    }
+    for name in &expired_names {
+        log(
+            world,
+            format!("[fg:808080]Floor modifier '{}' has expired.[/fg]", name),
+        );
+    }
+}
+
+pub fn select_floor_modifiers(world: &mut World) {
+    let all = FloorModifier::all();
+    let count = {
+        let rng = world.resource_mut::<Rng>().expect("Rng registered");
+        1 + rng.next_u32(2) as usize
+    };
+
+    let mut chosen = Vec::new();
+    let mut chosen_durations = Vec::new();
+
+    {
+        let rng = world.resource_mut::<Rng>().expect("Rng registered");
+        for _ in 0..count {
+            let idx = rng.next_u32(all.len() as u32) as usize;
+            let modifier = all[idx].clone();
+            if !chosen.contains(&modifier) {
+                let duration = 3 + rng.next_u32(6);
+                chosen.push(modifier);
+                chosen_durations.push(duration);
+            }
+        }
+    }
+
+    if chosen.is_empty() {
+        let rng = world.resource_mut::<Rng>().expect("Rng registered");
+        let idx = rng.next_u32(all.len() as u32) as usize;
+        let duration = 3 + rng.next_u32(6);
+        chosen.push(all[idx].clone());
+        chosen_durations.push(duration);
+    }
+
+    let names: Vec<String> = chosen
+        .iter()
+        .map(|m| m.display_name().to_string())
+        .collect();
+    let desc: Vec<String> = chosen
+        .iter()
+        .zip(chosen_durations.iter())
+        .map(|(m, d)| format!("{} ({} turns)", m.display_name(), d))
+        .collect();
+
+    if let Some(modifiers) = world.resource_mut::<crate::components::ActiveFloorModifiers>() {
+        modifiers.modifiers = chosen;
+        modifiers.turns_remaining = chosen_durations;
+    }
+
+    log(
+        world,
+        format!(
+            "[fg:FF00FF][b]Floor Modifiers Active:[/] {}[/fg]",
+            desc.join(", ")
+        ),
+    );
+
+    for modifier_name in &names {
+        match modifier_name.as_str() {
+            "Darkness" => {
+                log(
+                    world,
+                    "[fg:404040]Darkness reduces visibility radius by 2.[/fg]",
+                );
+            }
+            "Gravity Well" => {
+                log(
+                    world,
+                    "[fg:8B4513]Gravity Well increases all movement costs by 1.[/fg]",
+                );
+            }
+            "Elemental Storm" => {
+                log(
+                    world,
+                    "[fg:FF4500]Elemental Storm deals 5-10 random damage each turn to all entities.[/fg]",
+                );
+            }
+            "Healing Surge" => {
+                log(
+                    world,
+                    "[fg:00FF7F]Healing Surge doubles all healing amounts.[/fg]",
+                );
+            }
+            "Frenzy" => {
+                log(
+                    world,
+                    "[fg:FF0000]Frenzy grants +2 ATK and -1 DEF to all entities.[/fg]",
+                );
+                apply_frenzy_buffs(world);
+            }
+            "Fog of War" => {
+                log(
+                    world,
+                    "[fg:696969]Fog of War hides enemies outside direct LOS.[/fg]",
+                );
+            }
+            "Reversal" => {
+                log(
+                    world,
+                    "[fg:9932CC]Reversal: healing damages and damage heals for the duration.[/fg]",
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+fn apply_frenzy_buffs(world: &mut World) {
+    let mut entities = Vec::new();
+    for (e, _team) in world.query::<Team>() {
+        entities.push(e);
+    }
+    for entity in entities {
+        if let Some(stats) = world.get_mut::<Stats>(entity) {
+            stats.atk += 2;
+            stats.def = (stats.def - 1).max(0);
+        }
+    }
+}
+
+pub fn select_floor_modifiers_with_override(
+    world: &mut World,
+    chosen: Vec<FloorModifier>,
+    chosen_durations: Vec<u32>,
+) {
+    let names: Vec<String> = chosen
+        .iter()
+        .map(|m| m.display_name().to_string())
+        .collect();
+    let desc: Vec<String> = chosen
+        .iter()
+        .zip(chosen_durations.iter())
+        .map(|(m, d)| format!("{} ({} turns)", m.display_name(), d))
+        .collect();
+
+    if let Some(modifiers) = world.resource_mut::<crate::components::ActiveFloorModifiers>() {
+        modifiers.modifiers = chosen;
+        modifiers.turns_remaining = chosen_durations;
+    }
+
+    log(
+        world,
+        format!(
+            "[fg:FF00FF][b]Floor Modifiers Active:[/] {}[/fg]",
+            desc.join(", ")
+        ),
+    );
+
+    for modifier_name in &names {
+        match modifier_name.as_str() {
+            "Frenzy" => {
+                apply_frenzy_buffs(world);
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn has_floor_modifier(world: &World, modifier: &FloorModifier) -> bool {
+    world
+        .resource::<crate::components::ActiveFloorModifiers>()
+        .is_some_and(|m| m.modifiers.contains(modifier))
+}
+
+pub fn floor_modifier_gravity_cost(world: &World) -> i32 {
+    if has_floor_modifier(world, &FloorModifier::GravityWell) {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn floor_modifier_visibility_reduction(world: &World) -> i32 {
+    if has_floor_modifier(world, &FloorModifier::Darkness) {
+        2
+    } else {
+        0
+    }
+}
+
+pub fn floor_modifier_healing_multiplier(world: &World) -> f32 {
+    if has_floor_modifier(world, &FloorModifier::HealingSurge) {
+        2.0
+    } else {
+        1.0
+    }
+}
+
+pub fn combo_detection_system(world: &mut World) {
+    use crate::components::{AvailableCombos, CharacterClass, ComboSkill, Team};
+
+    let mut players: Vec<(Entity, Position, CharacterClass)> = Vec::new();
+    for (e, pos, team, class) in world.query3::<Position, Team, CharacterClass>() {
+        if *team == Team::Player {
+            players.push((e, *pos, *class));
+        }
+    }
+
+    let warrior = players
+        .iter()
+        .find(|(_, _, c)| *c == CharacterClass::Warrior);
+    let mage = players.iter().find(|(_, _, c)| *c == CharacterClass::Mage);
+    let healer = players
+        .iter()
+        .find(|(_, _, c)| *c == CharacterClass::Healer);
+
+    let adjacent = |a: &Position, b: &Position| (a.x - b.x).abs() + (a.y - b.y).abs() == 1;
+
+    let mut combos: Vec<(ComboSkill, Vec<Entity>)> = Vec::new();
+
+    let all_three = warrior.is_some() && mage.is_some() && healer.is_some();
+    if all_three {
+        let w = warrior.unwrap();
+        let m = mage.unwrap();
+        let h = healer.unwrap();
+        if adjacent(&w.1, &m.1) && adjacent(&m.1, &h.1) && adjacent(&w.1, &h.1) {
+            combos.push((ComboSkill::TrinityStrike, vec![w.0, m.0, h.0]));
+        }
+    }
+
+    if combos.is_empty() {
+        if let (Some(w), Some(m)) = (warrior, mage) {
+            if adjacent(&w.1, &m.1) {
+                combos.push((ComboSkill::BladeStorm, vec![w.0, m.0]));
+            }
+        }
+        if let (Some(w), Some(h)) = (warrior, healer) {
+            if adjacent(&w.1, &h.1) {
+                combos.push((ComboSkill::HolySmite, vec![w.0, h.0]));
+            }
+        }
+        if let (Some(m), Some(h)) = (mage, healer) {
+            if adjacent(&m.1, &h.1) {
+                combos.push((ComboSkill::ArcaneSanctuary, vec![m.0, h.0]));
+            }
+        }
+    }
+
+    if !combos.is_empty() {
+        let names: Vec<String> = combos
+            .iter()
+            .map(|(s, _)| {
+                crate::components::ComboSkillDef::for_skill(s).name.clone() + " available!"
+            })
+            .collect();
+        log(
+            world,
+            format!("[fg:FFD700][b]Combo Skills:[/] {}[/fg]", names.join(", ")),
+        );
+    }
+
+    if let Some(resource) = world.resource_mut::<AvailableCombos>() {
+        *resource = AvailableCombos { combos };
+    } else {
+        world.insert_resource(AvailableCombos { combos });
+    }
+}
+
+pub fn prestige_system(world: &mut World) {
+    let mut promotions: Vec<(Entity, CharacterClass, PrestigeClass)> = Vec::new();
+
+    for (e, class, progress) in world.query2::<CharacterClass, PrestigeProgress>() {
+        if progress.promoted {
+            continue;
+        }
+        let team = world.get::<Team>(e).copied().unwrap_or(Team::Enemy);
+        if team != Team::Player {
+            continue;
+        }
+
+        let target_prestige = match class {
+            CharacterClass::Warrior if progress.kill_count >= 10 => {
+                Some(PrestigeClass::BladeMaster)
+            }
+            CharacterClass::Mage if progress.total_damage_dealt >= 500 => {
+                Some(PrestigeClass::Archmage)
+            }
+            CharacterClass::Healer if progress.total_healing_done >= 300 => {
+                Some(PrestigeClass::DivineHealer)
+            }
+            _ => None,
+        };
+
+        if let Some(prestige) = target_prestige {
+            promotions.push((e, *class, prestige));
+        }
+    }
+
+    for (entity, class, prestige) in promotions {
+        if let Some(progress) = world.get_mut::<PrestigeProgress>(entity) {
+            progress.class = prestige;
+            progress.promoted = true;
+        }
+
+        if let Some(stats) = world.get_mut::<Stats>(entity) {
+            stats.atk += 5;
+            stats.def += 3;
+            stats.max_hp += 20;
+            stats.hp += 20;
+        }
+
+        let char_name = Game::get_class_name(class);
+        let prestige_name = prestige.display_name();
+        log(
+            world,
+            format!(
+                "[fg:FFD700]{} has ascended to {}![/fg]",
+                char_name, prestige_name
+            ),
+        );
+
+        let pos = world
+            .get::<Position>(entity)
+            .copied()
+            .unwrap_or(Position::new(0, 0));
+        let (cx, cy) = get_tile_center_pixels(world, pos);
+
+        if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+            vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                cx,
+                cy,
+                40,
+                Color(255, 215, 0),
+                &['✦', '✧', '*', '★'],
+            ));
+            vfx.shakes
+                .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                    4.0,
+                    0.8,
+                    verryte_terminal::vfx::EasingMode::ExpoOut,
+                ));
+            vfx.flashes
+                .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                    Color(255, 215, 0),
+                    0.4,
+                    verryte_terminal::vfx::EasingMode::ExpoOut,
+                ));
+        }
+
+        play_spatial_sfx(world, "level_up", pos);
+    }
 }

@@ -100,6 +100,50 @@ pub enum UIState {
     Normal,
     Inventory,
     Help,
+    Bestiary,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct BestiaryEntry {
+    pub class: CharacterClass,
+    pub name: String,
+    pub encountered: bool,
+    pub defeated_count: u32,
+    pub times_killed_by: u32,
+    pub hits_taken: u32,
+    pub known_weakness: Option<String>,
+    pub known_resistance: Option<String>,
+    pub lore_text: String,
+    pub drop_table: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct Bestiary {
+    pub entries: Vec<BestiaryEntry>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct LoreEntry {
+    pub id: String,
+    pub title: String,
+    pub text: String,
+    pub category: LoreCategory,
+    pub discovered: bool,
+    pub turn_discovered: u32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LoreCategory {
+    World,
+    Character,
+    Enemy,
+    Item,
+    Mechanic,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct LoreJournal {
+    pub entries: Vec<LoreEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -614,4 +658,210 @@ pub struct SkillUpgrade {
 pub struct SkillTree {
     pub skill_points: u32,
     pub upgrades: Vec<SkillUpgrade>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FloorModifier {
+    Darkness,
+    GravityWell,
+    ElementalStorm,
+    HealingSurge,
+    Frenzy,
+    FogOfWar,
+    Reversal,
+}
+
+impl FloorModifier {
+    pub fn all() -> &'static [FloorModifier] {
+        &[
+            FloorModifier::Darkness,
+            FloorModifier::GravityWell,
+            FloorModifier::ElementalStorm,
+            FloorModifier::HealingSurge,
+            FloorModifier::Frenzy,
+            FloorModifier::FogOfWar,
+            FloorModifier::Reversal,
+        ]
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            FloorModifier::Darkness => "Darkness",
+            FloorModifier::GravityWell => "Gravity Well",
+            FloorModifier::ElementalStorm => "Elemental Storm",
+            FloorModifier::HealingSurge => "Healing Surge",
+            FloorModifier::Frenzy => "Frenzy",
+            FloorModifier::FogOfWar => "Fog of War",
+            FloorModifier::Reversal => "Reversal",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct ActiveFloorModifiers {
+    pub modifiers: Vec<FloorModifier>,
+    pub turns_remaining: Vec<u32>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ComboSkill {
+    BladeStorm,
+    HolySmite,
+    ArcaneSanctuary,
+    TrinityStrike,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ComboSkillDef {
+    pub skill: ComboSkill,
+    pub name: String,
+    pub description: String,
+    pub ap_cost: i32,
+    pub base_damage: i32,
+    pub base_healing: i32,
+    pub range: i32,
+}
+
+impl ComboSkillDef {
+    pub fn for_skill(skill: &ComboSkill) -> Self {
+        match skill {
+            ComboSkill::BladeStorm => Self {
+                skill: ComboSkill::BladeStorm,
+                name: "Blade Storm".to_string(),
+                description: "Warrior+Mage AoE: lightning+slash around both".to_string(),
+                ap_cost: 3,
+                base_damage: 0,
+                base_healing: 0,
+                range: 2,
+            },
+            ComboSkill::HolySmite => Self {
+                skill: ComboSkill::HolySmite,
+                name: "Holy Smite".to_string(),
+                description: "Warrior+Healer: massive single target + self-heal".to_string(),
+                ap_cost: 2,
+                base_damage: 0,
+                base_healing: 0,
+                range: 2,
+            },
+            ComboSkill::ArcaneSanctuary => Self {
+                skill: ComboSkill::ArcaneSanctuary,
+                name: "Arcane Sanctuary".to_string(),
+                description: "Mage+Healer: shield all allies + heal over time".to_string(),
+                ap_cost: 3,
+                base_damage: 0,
+                base_healing: 15,
+                range: 0,
+            },
+            ComboSkill::TrinityStrike => Self {
+                skill: ComboSkill::TrinityStrike,
+                name: "Trinity Strike".to_string(),
+                description: "All 3 adjacent: devastating nuke + stun".to_string(),
+                ap_cost: 4,
+                base_damage: 0,
+                base_healing: 0,
+                range: 3,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct AvailableCombos {
+    pub combos: Vec<(ComboSkill, Vec<verryte_core::Entity>)>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Morale {
+    pub value: i32,
+    pub max: i32,
+}
+
+impl Default for Morale {
+    fn default() -> Self {
+        Self {
+            value: 70,
+            max: 100,
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Fatigue {
+    pub value: i32,
+    pub max: i32,
+    pub actions_taken: u32,
+}
+
+impl Default for Fatigue {
+    fn default() -> Self {
+        Self {
+            value: 0,
+            max: 100,
+            actions_taken: 0,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MoraleState {
+    Confident,
+    Steady,
+    Stressed,
+    Breaking,
+    Broken,
+}
+
+impl MoraleState {
+    pub fn from_morale(morale: i32) -> Self {
+        if morale >= 80 {
+            MoraleState::Confident
+        } else if morale >= 50 {
+            MoraleState::Steady
+        } else if morale >= 25 {
+            MoraleState::Stressed
+        } else if morale >= 1 {
+            MoraleState::Breaking
+        } else {
+            MoraleState::Broken
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            MoraleState::Confident => "Confident",
+            MoraleState::Steady => "Steady",
+            MoraleState::Stressed => "Stressed",
+            MoraleState::Breaking => "Breaking",
+            MoraleState::Broken => "Broken",
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PrestigeClass {
+    #[default]
+    None,
+    BladeMaster,
+    Archmage,
+    DivineHealer,
+}
+
+impl PrestigeClass {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            PrestigeClass::None => "None",
+            PrestigeClass::BladeMaster => "BladeMaster",
+            PrestigeClass::Archmage => "Archmage",
+            PrestigeClass::DivineHealer => "DivineHealer",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct PrestigeProgress {
+    pub class: PrestigeClass,
+    pub kill_count: u32,
+    pub total_damage_dealt: i32,
+    pub total_healing_done: i32,
+    pub promoted: bool,
 }

@@ -97,6 +97,10 @@ impl Game {
         world.insert_resource(crate::components::UndoStack::default());
         world.insert_resource(crate::components::RedoStack::default());
         world.insert_resource(crate::components::Weather::default());
+        world.insert_resource(crate::components::AvailableCombos::default());
+        world.insert_resource(crate::components::ActiveFloorModifiers::default());
+        world.insert_resource(Self::create_initial_bestiary());
+        world.insert_resource(Self::create_initial_lore_journal());
 
         let mut registry = VisualRegistry::new();
         crate::generated_assets::register_assets(&mut registry);
@@ -105,8 +109,11 @@ impl Game {
         let mut schedule = Schedule::new();
         schedule.add_named("visibility", crate::systems::visibility_system);
         schedule.add_named("turn_management", crate::systems::turn_management_system);
+        schedule.add_named("floor_modifier", crate::systems::floor_modifier_system);
         schedule.add_named("enemy_ai", crate::systems::enemy_ai_system);
         schedule.add_named("weather_cycle", crate::systems::weather_cycle_system);
+        schedule.add_named("combo_detection", crate::systems::combo_detection_system);
+        schedule.add_named("prestige", crate::systems::prestige_system);
 
         let mut audio_stream = None;
         if let Ok((mut player, stream)) = verryte_audio::AudioPlayer::try_new() {
@@ -238,9 +245,179 @@ impl Game {
 
         game.log("Wuthering Terminal Tactical RPG Initialized.");
         game.log("Move cursor: Arrows/WASD. Confirm: Enter. Cancel: Esc.");
-        game.log("End Turn: E. Cycle: Tab.");
+        game.log("End Turn: E. Cycle: Tab. Bestiary/Lore: J.");
 
         game
+    }
+
+    fn create_initial_bestiary() -> crate::components::Bestiary {
+        use crate::components::BestiaryEntry;
+        crate::components::Bestiary {
+            entries: vec![
+                BestiaryEntry { class: CharacterClass::ShadowStalker, name: "Shadow Stalker".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Created from the shadows of the Sovereign's domain, these silent hunters vanish when struck. Area attacks are the only reliable way to pin them down.".to_string(), drop_table: vec!["Frostbite Echo".to_string(), "Shadow Essence".to_string()] },
+                BestiaryEntry { class: CharacterClass::CorruptedSpore, name: "Corrupted Spore".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Once benign forest spores, corrupted by the Blight into volatile living mines. They explode on proximity, dealing devastating area damage.".to_string(), drop_table: vec!["Nature Essence".to_string()] },
+                BestiaryEntry { class: CharacterClass::CursedSentinel, name: "Cursed Sentinel".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Ancient guardians turned to serve darkness. They prefer ranged attacks and retreat when approached.".to_string(), drop_table: vec!["Sentinel Core".to_string()] },
+                BestiaryEntry { class: CharacterClass::PlagueWraith, name: "Plague Wraith".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Spirits of plague victims, bound to spread decay. Their touch applies Nature status.".to_string(), drop_table: vec!["Wraith Shard".to_string(), "Plague Essence".to_string()] },
+                BestiaryEntry { class: CharacterClass::GlacialGolem, name: "Glacial Golem".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Forged from eternal ice in the Sovereign's forge. Attacks apply Ice status, freezing victims in place.".to_string(), drop_table: vec!["Frost Core".to_string(), "Ice Walker Echo".to_string()] },
+                BestiaryEntry { class: CharacterClass::EnemyCleric, name: "Dark Cleric".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Fallen healers who chose darkness over light. They prioritize healing wounded allies.".to_string(), drop_table: vec!["Dark Blessing".to_string()] },
+                BestiaryEntry { class: CharacterClass::Boss, name: "Blight Sovereign".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "The source of all corruption. A multi-phase abomination. In Phase 2, it unleashes Celestial Ruin with telegraphed attacks that can be parried.".to_string(), drop_table: vec!["Sovereign's Echo".to_string(), "Blight Crystal".to_string()] },
+            ],
+        }
+    }
+
+    fn create_initial_lore_journal() -> crate::components::LoreJournal {
+        use crate::components::{LoreCategory, LoreEntry};
+        crate::components::LoreJournal {
+            entries: vec![
+                LoreEntry { id: "the_blight".to_string(), title: "The Blight".to_string(), text: "A creeping corruption from the Sovereign's domain, twisting living things into servants of darkness.".to_string(), category: LoreCategory::World, discovered: true, turn_discovered: 0 },
+                LoreEntry { id: "concert_energy".to_string(), title: "Concert Energy".to_string(), text: "A mystical force that builds as heroes fight. At 100, enables QTE Swaps with devastating intro skills.".to_string(), category: LoreCategory::Mechanic, discovered: true, turn_discovered: 0 },
+                LoreEntry { id: "echo_absorption".to_string(), title: "Echo Absorption".to_string(), text: "Defeated enemies leave Echoes. Absorb to gain Swift, Thorns, Frostbite, Stun, or Lifesteal.".to_string(), category: LoreCategory::Mechanic, discovered: true, turn_discovered: 0 },
+                LoreEntry { id: "kael_origins".to_string(), title: "Kael's Origins".to_string(), text: "A sellsword whose homeland fell to the Blight. Swift Foot grants bonus AP each turn.".to_string(), category: LoreCategory::Character, discovered: true, turn_discovered: 0 },
+                LoreEntry { id: "lyra_studies".to_string(), title: "Lyra's Studies".to_string(), text: "Arcane Academy prodigy pursuing the Blight's source. Storm Chaser amplifies lightning damage.".to_string(), category: LoreCategory::Character, discovered: true, turn_discovered: 0 },
+                LoreEntry { id: "mira_calling".to_string(), title: "Mira's Calling".to_string(), text: "Temple healer who answered the cries of the afflicted. Purifying Touch cleanses on heal.".to_string(), category: LoreCategory::Character, discovered: true, turn_discovered: 0 },
+                LoreEntry { id: "combat_insights".to_string(), title: "Combat Insights".to_string(), text: "Ice+Lightning=Shatter, Lightning+Nature=Overgrowth, Nature+Ice=Bloom. Combos amplify damage by 5% per chain.".to_string(), category: LoreCategory::Mechanic, discovered: false, turn_discovered: 0 },
+                LoreEntry { id: "sovereigns_rage".to_string(), title: "The Sovereign's Rage".to_string(), text: "Below half health, the Sovereign enters frenzy. Power doubles, shield manifests, Celestial Ruin begins.".to_string(), category: LoreCategory::Enemy, discovered: false, turn_discovered: 0 },
+                LoreEntry { id: "descent_into_darkness".to_string(), title: "Descent into Darkness".to_string(), text: "Floor 2 is a procedurally generated dungeon warped by the Blight. The Sovereign awaits in the deepest chamber.".to_string(), category: LoreCategory::World, discovered: false, turn_discovered: 0 },
+                LoreEntry { id: "echo_lore".to_string(), title: "Echo Lore".to_string(), text: "Echoes are the crystallized will of the fallen. Each absorbed Echo reshapes the hero's soul.".to_string(), category: LoreCategory::Mechanic, discovered: false, turn_discovered: 0 },
+            ],
+        }
+    }
+
+    pub fn record_enemy_encounter(&mut self, class: CharacterClass) {
+        let name = Self::get_class_name(class);
+        let mut discovered = false;
+        if let Some(bestiary) = self.world.resource_mut::<crate::components::Bestiary>() {
+            for entry in &mut bestiary.entries {
+                if entry.class == class && !entry.encountered {
+                    entry.encountered = true;
+                    discovered = true;
+                }
+            }
+        }
+        if discovered {
+            self.log(format!(
+                "[fg:FFD700]New bestiary entry discovered: {}![/fg]",
+                name
+            ));
+        }
+    }
+
+    pub fn record_enemy_defeat(&mut self, class: CharacterClass) {
+        let name = Self::get_class_name(class);
+        let mut should_reveal = false;
+        let mut weakness_str = String::new();
+        if let Some(bestiary) = self.world.resource_mut::<crate::components::Bestiary>() {
+            for entry in &mut bestiary.entries {
+                if entry.class == class {
+                    entry.defeated_count += 1;
+                    if entry.defeated_count >= 3 && entry.known_weakness.is_none() {
+                        let w = match class {
+                            CharacterClass::ShadowStalker => {
+                                "Area attacks reveal its position".to_string()
+                            }
+                            CharacterClass::CorruptedSpore => {
+                                "Kill at range to avoid explosion".to_string()
+                            }
+                            CharacterClass::CursedSentinel => {
+                                "Close the gap quickly; weak in melee".to_string()
+                            }
+                            CharacterClass::PlagueWraith => {
+                                "Cleanse removes Nature status".to_string()
+                            }
+                            CharacterClass::GlacialGolem => {
+                                "Fire and Lightning deal extra damage".to_string()
+                            }
+                            CharacterClass::EnemyCleric => {
+                                "Focus fire first to stop healing".to_string()
+                            }
+                            CharacterClass::Boss => "Parry telegraphed attacks to stun".to_string(),
+                            _ => "Unknown".to_string(),
+                        };
+                        entry.known_weakness = Some(w.clone());
+                        should_reveal = true;
+                        weakness_str = w;
+                    }
+                }
+            }
+        }
+        if should_reveal {
+            self.log(format!(
+                "[fg:FFD700]Bestiary: {} weakness -- {}![/fg]",
+                name, weakness_str
+            ));
+            self.unlock_lore("combat_insights");
+        }
+    }
+
+    pub fn record_enemy_hit_taken(&mut self, class: CharacterClass) {
+        let name = Self::get_class_name(class);
+        let mut should_reveal = false;
+        let mut resistance_str = String::new();
+        if let Some(bestiary) = self.world.resource_mut::<crate::components::Bestiary>() {
+            for entry in &mut bestiary.entries {
+                if entry.class == class {
+                    entry.hits_taken += 1;
+                    if entry.hits_taken >= 10 && entry.known_resistance.is_none() {
+                        let r = match class {
+                            CharacterClass::ShadowStalker => {
+                                "Resists single-target (vanishes)".to_string()
+                            }
+                            CharacterClass::CorruptedSpore => "Resists Nature damage".to_string(),
+                            CharacterClass::CursedSentinel => "Resists ranged attacks".to_string(),
+                            CharacterClass::PlagueWraith => "Resists Poison and Nature".to_string(),
+                            CharacterClass::GlacialGolem => "Resists Ice damage".to_string(),
+                            CharacterClass::EnemyCleric => {
+                                "Resists Holy/Nature debuffs".to_string()
+                            }
+                            CharacterClass::Boss => "Shield blocks physical in Phase 2".to_string(),
+                            _ => "Unknown".to_string(),
+                        };
+                        entry.known_resistance = Some(r.clone());
+                        should_reveal = true;
+                        resistance_str = r;
+                    }
+                }
+            }
+        }
+        if should_reveal {
+            self.log(format!(
+                "[fg:FFD700]Bestiary: {} resistance -- {}![/fg]",
+                name, resistance_str
+            ));
+        }
+    }
+
+    pub fn record_player_defeat_by(&mut self, attacker_class: CharacterClass) {
+        if let Some(bestiary) = self.world.resource_mut::<crate::components::Bestiary>() {
+            for entry in &mut bestiary.entries {
+                if entry.class == attacker_class {
+                    entry.times_killed_by += 1;
+                }
+            }
+        }
+    }
+
+    pub fn unlock_lore(&mut self, lore_id: &str) {
+        let mut newly_unlocked = false;
+        let mut title = String::new();
+        let turn = self
+            .world
+            .resource::<GameState>()
+            .map(|s| s.turn)
+            .unwrap_or(0);
+        if let Some(journal) = self.world.resource_mut::<crate::components::LoreJournal>() {
+            for entry in &mut journal.entries {
+                if entry.id == lore_id && !entry.discovered {
+                    entry.discovered = true;
+                    entry.turn_discovered = turn;
+                    newly_unlocked = true;
+                    title = entry.title.clone();
+                }
+            }
+        }
+        if newly_unlocked {
+            self.log(format!("[fg:9933FF]Lore unlocked: '{}'![/fg]", title));
+        }
     }
 
     pub fn trigger_intro_dialogue(&mut self) {
@@ -371,6 +548,14 @@ impl Game {
             self.play_spatial_sfx(sfx_name, pos);
         }
 
+        // Bestiary: record encounter and hit tracking
+        if let Some(target_class) = self.world.get::<CharacterClass>(target).copied() {
+            if self.world.get::<Team>(target) == Some(&Team::Enemy) {
+                self.record_enemy_encounter(target_class);
+                self.record_enemy_hit_taken(target_class);
+            }
+        }
+
         let mut boosted_base_damage = base_damage;
         let mut is_player = false;
         let mut new_combo = 0;
@@ -391,17 +576,85 @@ impl Game {
             attacker_name,
         );
 
+        let attacker_morale_state = self
+            .world
+            .get::<crate::components::Morale>(attacker)
+            .map(|m| crate::components::MoraleState::from_morale(m.value))
+            .unwrap_or(crate::components::MoraleState::Steady);
+
+        match attacker_morale_state {
+            crate::components::MoraleState::Confident => {
+                boosted_base_damage = (boosted_base_damage as f32 * 1.10) as i32;
+            }
+            crate::components::MoraleState::Stressed => {
+                boosted_base_damage = (boosted_base_damage as f32 * 0.90) as i32;
+            }
+            crate::components::MoraleState::Breaking => {
+                boosted_base_damage = (boosted_base_damage as f32 * 0.80) as i32;
+            }
+            _ => {}
+        }
+
+        let attacker_fatigue = self
+            .world
+            .get::<crate::components::Fatigue>(attacker)
+            .map(|f| f.value)
+            .unwrap_or(0);
+
+        let is_blademaster = self
+            .world
+            .get::<crate::components::PrestigeProgress>(attacker)
+            .is_some_and(|p| {
+                p.class == crate::components::PrestigeClass::BladeMaster && p.promoted
+            });
+
         let (is_crit, is_block, damage) = {
             let rng = self.world.resource_mut::<Rng>().unwrap();
+
+            if attacker_morale_state == crate::components::MoraleState::Breaking {
+                let fumble_roll = rng.next_u32(100);
+                if fumble_roll < 10 {
+                    self.log(format!("{} fumbled! (0 damage)", attacker_name));
+                    return (0, false);
+                }
+            }
+
+            let mut crit_threshold: i32 = 20;
+            match attacker_morale_state {
+                crate::components::MoraleState::Confident => crit_threshold -= 5,
+                crate::components::MoraleState::Stressed => crit_threshold += 5,
+                _ => {}
+            }
+            if attacker_fatigue > 50 {
+                crit_threshold += attacker_fatigue / 10;
+            }
+            crit_threshold = crit_threshold.clamp(1, 95);
+
             let roll = rng.next_u32(100);
-            if roll < 20 {
-                (true, false, (boosted_base_damage as f32 * 1.5) as i32)
-            } else if roll < 35 {
+            if roll < crit_threshold as u32 {
+                let crit_mult = if is_blademaster { 2.0 } else { 1.5 };
+                (true, false, (boosted_base_damage as f32 * crit_mult) as i32)
+            } else if roll < (crit_threshold + 15) as u32 {
                 (false, true, (boosted_base_damage / 2).max(1))
             } else {
                 (false, false, boosted_base_damage)
             }
         };
+
+        if attacker_fatigue > 80 {
+            let stun_roll = {
+                let rng = self.world.resource_mut::<Rng>().unwrap();
+                rng.next_u32(100)
+            };
+            if stun_roll < 5 {
+                self.world
+                    .insert(attacker, crate::components::Stunned { duration: 1 });
+                self.log(format!(
+                    "{} is exhausted and became Stunned!",
+                    attacker_name
+                ));
+            }
+        }
 
         let weather = self
             .world
@@ -428,6 +681,18 @@ impl Game {
             final_hp = stats.hp;
             if stats.hp <= 0 {
                 defeated = true;
+            }
+        }
+
+        if is_player {
+            if let Some(progress) = self
+                .world
+                .get_mut::<crate::components::PrestigeProgress>(attacker)
+            {
+                progress.total_damage_dealt += damage;
+                if defeated {
+                    progress.kill_count += 1;
+                }
             }
         }
 
@@ -644,6 +909,47 @@ impl Game {
             }
         }
 
+        if !defeated {
+            let target_is_blademaster = self
+                .world
+                .get::<crate::components::PrestigeProgress>(target)
+                .is_some_and(|p| {
+                    p.class == crate::components::PrestigeClass::BladeMaster && p.promoted
+                });
+            if target_is_blademaster {
+                let counter_roll = {
+                    let rng = self.world.resource_mut::<Rng>().unwrap();
+                    rng.next_u32(100)
+                };
+                if counter_roll < 25 {
+                    let counter_damage =
+                        self.world.get::<Stats>(target).map(|s| s.atk).unwrap_or(0);
+                    if counter_damage > 0 {
+                        if let Some(atk_stats) = self.world.get_mut::<Stats>(attacker) {
+                            atk_stats.hp -= counter_damage;
+                        }
+                        let attacker_class = self
+                            .world
+                            .get::<CharacterClass>(attacker)
+                            .copied()
+                            .unwrap_or(CharacterClass::Warrior);
+                        let attacker_name_str = Self::get_class_name(attacker_class);
+                        self.log(format!(
+                            "[fg:FFD700]BladeMaster counter-attack! {} strikes back for {} damage to {}![/fg]",
+                            target_name, counter_damage, attacker_name_str
+                        ));
+                        let (tcx, tcy) = self.get_tile_center_pixels(pos);
+                        self.vfx_mut()
+                            .particles
+                            .extend(verryte_terminal::vfx::emit_slash(tcx, tcy, 1.5));
+                        self.vfx_mut()
+                            .shakes
+                            .push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.3));
+                    }
+                }
+            }
+        }
+
         (damage, defeated)
     }
 
@@ -721,6 +1027,7 @@ impl Game {
             .resource::<crate::components::Weather>()
             .map(|w| w.current)
             .unwrap_or(crate::components::WeatherType::Sunny);
+        let gravity_bonus = crate::systems::floor_modifier_gravity_cost(&self.world);
 
         let mut occupied = HashSet::new();
         for (e, p) in self.world.query::<Position>() {
@@ -754,7 +1061,7 @@ impl Game {
                 if matches!(tile, Tile::Wall) {
                     continue;
                 }
-                let move_cost = map.movement_cost_with_weather(neighbor, weather);
+                let move_cost = map.movement_cost_with_weather(neighbor, weather) + gravity_bonus;
                 let new_cost = cost_so_far + move_cost;
                 if new_cost <= max_ap {
                     let entry = best_cost.entry(neighbor).or_insert(i32::MAX);
@@ -878,6 +1185,7 @@ impl Game {
                     if !echoes.abilities.contains(&ability) {
                         echoes.abilities.push(ability);
                         self.log("Granted Blight Sovereign's Lifesteal ability!");
+                        self.unlock_lore("echo_lore");
                     }
                 }
                 let floor = self
@@ -1029,6 +1337,14 @@ impl Game {
         if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
             log.send(GameEvent::Defeated { entity });
         }
+
+        let defeated_team = self.world.get::<Team>(entity).copied();
+        if defeated_team == Some(Team::Player) {
+            crate::systems::apply_ally_defeated_morale(&mut self.world, entity);
+        } else if defeated_team == Some(Team::Enemy) {
+            crate::systems::apply_enemy_defeated_morale(&mut self.world);
+        }
+
         self.world.despawn(entity);
 
         if class == CharacterClass::Boss {
@@ -1413,6 +1729,389 @@ impl Game {
         self.camera.look_at(cx, cy);
     }
 
+    pub fn execute_combo_skill(
+        &mut self,
+        skill: crate::components::ComboSkill,
+        participants: &[Entity],
+        target_pos: Position,
+    ) {
+        use crate::components::{ComboSkill, ComboSkillDef};
+
+        let def = ComboSkillDef::for_skill(&skill);
+        self.log(format!(
+            "[fg:FFD700][b]COMBO SKILL: {}![/] {}[/fg]",
+            def.name, def.description
+        ));
+
+        let total_atk: i32 = participants
+            .iter()
+            .filter_map(|&e| self.world.get::<Stats>(e))
+            .map(|s| s.atk)
+            .sum();
+
+        match skill {
+            ComboSkill::BladeStorm => {
+                let damage = ((total_atk as f32) * 1.5) as i32;
+                let mut center_positions = Vec::new();
+                for &e in participants {
+                    if let Some(pos) = self.world.get::<Position>(e) {
+                        center_positions.push(*pos);
+                    }
+                }
+
+                let mut targets = Vec::new();
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team == Team::Enemy {
+                        for center in &center_positions {
+                            let dist = (p.x - center.x).abs() + (p.y - center.y).abs();
+                            if dist <= 2 {
+                                targets.push((e, *p));
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                for (te, t_pos) in &targets {
+                    let target_class = self
+                        .world
+                        .get::<CharacterClass>(*te)
+                        .copied()
+                        .unwrap_or(CharacterClass::ShadowStalker);
+                    let target_name = Self::get_class_name(target_class);
+                    let base_dmg = std::cmp::max(
+                        1,
+                        damage - self.world.get::<Stats>(*te).map(|s| s.def).unwrap_or(0),
+                    );
+                    let (actual, defeated) = self.resolve_combat_hit(
+                        participants[0],
+                        *te,
+                        base_dmg,
+                        "Blade Storm",
+                        target_name,
+                        *t_pos,
+                    );
+                    if let Some(events) = self.world.resource_mut::<Events<GameEvent>>() {
+                        events.send(GameEvent::Attacked {
+                            attacker: participants[0],
+                            target: *te,
+                            damage: actual,
+                        });
+                    }
+                    if defeated {
+                        let name_str = target_name.to_string();
+                        self.handle_defeat(*te, &name_str, target_class, *t_pos);
+                    }
+                }
+
+                for center in &center_positions {
+                    let (cx, cy) = self.get_tile_center_pixels(*center);
+                    self.vfx_mut()
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_slash(cx, cy, 2.0));
+                    self.vfx_mut()
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
+                }
+                self.vfx_mut()
+                    .shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(4.0, 0.6));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(255, 255, 100),
+                        0.3,
+                    ));
+            }
+
+            ComboSkill::HolySmite => {
+                let damage = total_atk * 2;
+                let cursor = self.world.resource::<GameState>().unwrap().cursor;
+                let mut found_target = None;
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team == Team::Enemy && *p == cursor {
+                        let dist = participants.iter().any(|&pe| {
+                            self.world.get::<Position>(pe).map_or(false, |pp| {
+                                (pp.x - cursor.x).abs() + (pp.y - cursor.y).abs() <= 2
+                            })
+                        });
+                        if dist {
+                            found_target = Some((e, *p));
+                            break;
+                        }
+                    }
+                }
+
+                if let Some((te, t_pos)) = found_target {
+                    let target_class = self
+                        .world
+                        .get::<CharacterClass>(te)
+                        .copied()
+                        .unwrap_or(CharacterClass::ShadowStalker);
+                    let target_name = Self::get_class_name(target_class);
+                    let base_dmg = std::cmp::max(
+                        1,
+                        damage - self.world.get::<Stats>(te).map(|s| s.def).unwrap_or(0),
+                    );
+                    let (actual, defeated) = self.resolve_combat_hit(
+                        participants[0],
+                        te,
+                        base_dmg,
+                        "Holy Smite",
+                        target_name,
+                        t_pos,
+                    );
+                    if let Some(events) = self.world.resource_mut::<Events<GameEvent>>() {
+                        events.send(GameEvent::Attacked {
+                            attacker: participants[0],
+                            target: te,
+                            damage: actual,
+                        });
+                    }
+
+                    let warrior_ent = participants
+                        .iter()
+                        .find(|&&e| {
+                            self.world
+                                .get::<CharacterClass>(e)
+                                .is_some_and(|c| *c == CharacterClass::Warrior)
+                        })
+                        .copied();
+                    if let Some(we) = warrior_ent {
+                        let heal = (actual as f32 * 0.3) as i32;
+                        if heal > 0 {
+                            if let Some(stats) = self.world.get_mut::<Stats>(we) {
+                                stats.hp = (stats.hp + heal).min(stats.max_hp);
+                            }
+                            let w_name = Self::get_class_name(CharacterClass::Warrior);
+                            self.log(format!("Holy Smite healed {} for {} HP!", w_name, heal));
+                            let w_pos = *self.world.get::<Position>(we).unwrap();
+                            let (wx, wy) = self.get_tile_center_pixels(w_pos);
+                            self.vfx_mut().floating_texts.push(
+                                verryte_terminal::vfx::FloatingText::new(
+                                    wx,
+                                    wy - 2.0,
+                                    &format!("+{}", heal),
+                                    Color(255, 215, 0),
+                                    true,
+                                ),
+                            );
+                        }
+                    }
+
+                    if defeated {
+                        let name_str = target_name.to_string();
+                        self.handle_defeat(te, &name_str, target_class, t_pos);
+                    }
+
+                    let (cx, cy) = self.get_tile_center_pixels(t_pos);
+                    self.vfx_mut()
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_burst(
+                            cx,
+                            cy,
+                            30,
+                            Color(255, 215, 0),
+                            &['✦', '✧', '+', '*'],
+                        ));
+                    self.vfx_mut()
+                        .flashes
+                        .push(verryte_terminal::vfx::Flash::full_screen(
+                            Color(255, 215, 0),
+                            0.3,
+                        ));
+                    self.vfx_mut()
+                        .shakes
+                        .push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.5));
+                } else {
+                    self.log("Holy Smite: No valid target at cursor position!");
+                }
+            }
+
+            ComboSkill::ArcaneSanctuary => {
+                let shield_amount = total_atk;
+                let heal_amount = 15;
+                let mut players = Vec::new();
+                for (e, team) in self.world.query::<Team>() {
+                    if *team == Team::Player {
+                        players.push(e);
+                    }
+                }
+                for pe in &players {
+                    if let Some(shield) = self
+                        .world
+                        .get_mut::<crate::components::ElementalShield>(*pe)
+                    {
+                        shield.amount += shield_amount;
+                        shield.max_amount += shield_amount;
+                    } else {
+                        self.world.insert(
+                            *pe,
+                            crate::components::ElementalShield {
+                                shield_type: crate::components::ShieldType::Physical,
+                                amount: shield_amount,
+                                max_amount: shield_amount,
+                            },
+                        );
+                    }
+                    if let Some(stats) = self.world.get_mut::<Stats>(*pe) {
+                        stats.hp = (stats.hp + heal_amount).min(stats.max_hp);
+                    }
+                    let p_class = self
+                        .world
+                        .get::<CharacterClass>(*pe)
+                        .copied()
+                        .unwrap_or(CharacterClass::Warrior);
+                    let p_name = Self::get_class_name(p_class);
+                    let p_pos = *self.world.get::<Position>(*pe).unwrap();
+                    self.log(format!(
+                        "Arcane Sanctuary: {} shielded for {} and healed for {}!",
+                        p_name, shield_amount, heal_amount
+                    ));
+                    let (px, py) = self.get_tile_center_pixels(p_pos);
+                    self.vfx_mut()
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_heal(px, py, 20));
+                    self.vfx_mut()
+                        .floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            px,
+                            py - 2.0,
+                            &format!("SHIELD +{}", shield_amount),
+                            Color(100, 180, 255),
+                            true,
+                        ));
+                    if let Some(events) = self.world.resource_mut::<Events<GameEvent>>() {
+                        events.send(GameEvent::Healed {
+                            healer: participants[0],
+                            target: *pe,
+                            amount: heal_amount,
+                        });
+                    }
+                }
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(100, 180, 255),
+                        0.4,
+                    ));
+            }
+
+            ComboSkill::TrinityStrike => {
+                let damage = total_atk * 3;
+                let cursor = self.world.resource::<GameState>().unwrap().cursor;
+                let mut found_target = None;
+                for (e, p, team) in self.world.query2::<Position, Team>() {
+                    if *team == Team::Enemy && *p == cursor {
+                        let in_range = participants.iter().any(|&pe| {
+                            self.world.get::<Position>(pe).map_or(false, |pp| {
+                                (pp.x - cursor.x).abs() + (pp.y - cursor.y).abs() <= 3
+                            })
+                        });
+                        if in_range {
+                            found_target = Some((e, *p));
+                            break;
+                        }
+                    }
+                }
+
+                if let Some((te, t_pos)) = found_target {
+                    let target_class = self
+                        .world
+                        .get::<CharacterClass>(te)
+                        .copied()
+                        .unwrap_or(CharacterClass::ShadowStalker);
+                    let target_name = Self::get_class_name(target_class);
+                    let base_dmg = std::cmp::max(
+                        1,
+                        damage - self.world.get::<Stats>(te).map(|s| s.def).unwrap_or(0),
+                    );
+                    let (actual, defeated) = self.resolve_combat_hit(
+                        participants[0],
+                        te,
+                        base_dmg,
+                        "Trinity Strike",
+                        target_name,
+                        t_pos,
+                    );
+                    if let Some(events) = self.world.resource_mut::<Events<GameEvent>>() {
+                        events.send(GameEvent::Attacked {
+                            attacker: participants[0],
+                            target: te,
+                            damage: actual,
+                        });
+                    }
+
+                    let stun_roll = {
+                        let rng = self.world.resource_mut::<Rng>().unwrap();
+                        rng.next_u32(100)
+                    };
+                    if stun_roll < 50 && !defeated {
+                        self.world
+                            .insert(te, crate::components::Stunned { duration: 1 });
+                        self.log(format!(
+                            "Trinity Strike STUNNED {} for 1 turn!",
+                            target_name
+                        ));
+                    }
+
+                    if defeated {
+                        let name_str = target_name.to_string();
+                        self.handle_defeat(te, &name_str, target_class, t_pos);
+                    }
+
+                    let (cx, cy) = self.get_tile_center_pixels(t_pos);
+                    self.vfx_mut()
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_burst(
+                            cx,
+                            cy,
+                            50,
+                            Color(255, 255, 255),
+                            &['✦', '✧', '*', '░', '▓', '¤'],
+                        ));
+                    self.vfx_mut()
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_lightning(cx, cy, cx, cy));
+                    self.vfx_mut()
+                        .particles
+                        .extend(verryte_terminal::vfx::emit_slash(cx, cy, 3.0));
+                    self.vfx_mut()
+                        .shakes
+                        .push(verryte_terminal::vfx::ScreenShake::new(6.0, 0.8));
+                    self.vfx_mut()
+                        .flashes
+                        .push(verryte_terminal::vfx::Flash::full_screen(
+                            Color(255, 255, 255),
+                            0.5,
+                        ));
+                    self.vfx_mut()
+                        .aoe_rings
+                        .push(verryte_terminal::vfx::AoeRing {
+                            cx: cx as i32,
+                            cy: cy as i32,
+                            max_radius: 12.0,
+                            current_radius: 1.0,
+                            expand_speed: 20.0,
+                            color: Color(255, 255, 255),
+                            lifetime: 0.6,
+                            max_lifetime: 0.6,
+                        });
+                } else {
+                    self.log("Trinity Strike: No valid target at cursor position!");
+                }
+            }
+        }
+
+        for &e in participants {
+            if let Some(stats) = self.world.get_mut::<Stats>(e) {
+                stats.ap -= def.ap_cost;
+            }
+        }
+
+        self.build_concert_energy(50);
+    }
+
     pub fn get_skill_info(
         class: CharacterClass,
         skill: crate::components::TargetingMode,
@@ -1485,6 +2184,28 @@ impl Game {
         value: i32,
         is_aoe: bool,
     ) {
+        let is_divine_healer = class == CharacterClass::Healer
+            && self
+                .world
+                .get::<crate::components::PrestigeProgress>(caster)
+                .is_some_and(|p| {
+                    p.class == crate::components::PrestigeClass::DivineHealer && p.promoted
+                });
+
+        let is_archmage_aoe = class == CharacterClass::Mage
+            && self
+                .world
+                .get::<crate::components::PrestigeProgress>(caster)
+                .is_some_and(|p| {
+                    p.class == crate::components::PrestigeClass::Archmage && p.promoted
+                });
+
+        let value = if is_divine_healer && class == CharacterClass::Healer {
+            value * 2
+        } else {
+            value
+        };
+
         let (skill_name, _range, _ap, _is_aoe, _power) =
             Self::get_skill_info(class, skill).unwrap_or(("Unknown".to_string(), 0, 0, false, 0));
         let caster_name = Self::get_class_name(class);
@@ -1600,6 +2321,8 @@ impl Game {
                     p_name, value, final_hp
                 ));
 
+                crate::systems::apply_heal_morale(&mut self.world, pe);
+
                 let p_pos = *self.world.get::<Position>(pe).unwrap();
                 let (pcx, pcy) = self.get_tile_center_pixels(p_pos);
                 self.vfx_mut()
@@ -1636,7 +2359,15 @@ impl Game {
         } else {
             let mut targets = Vec::new();
             if is_aoe {
-                let aoe_tiles = Self::get_skill_aoe(class, skill, target_pos);
+                let mut aoe_tiles = Self::get_skill_aoe(class, skill, target_pos);
+                if is_archmage_aoe {
+                    let extra: Vec<Position> = aoe_tiles
+                        .iter()
+                        .flat_map(|p| p.neighbors4())
+                        .filter(|p| !aoe_tiles.contains(p))
+                        .collect();
+                    aoe_tiles.extend(extra);
+                }
                 for (e, p, team) in self.world.query2::<Position, Team>() {
                     if *team
                         == (if class == CharacterClass::Healer {
@@ -1684,8 +2415,16 @@ impl Game {
                         target_name, value, final_hp
                     ));
 
+                    crate::systems::apply_heal_morale(&mut self.world, te);
+
                     let mut cleansed = false;
-                    if self
+                    if is_divine_healer {
+                        cleansed = true;
+                        self.world
+                            .insert(te, crate::components::ElementalStatus::None);
+                        self.world.remove::<crate::components::Rooted>(te);
+                        self.world.remove::<crate::components::Stunned>(te);
+                    } else if self
                         .world
                         .get::<crate::components::CharacterTrait>(caster)
                         .is_some_and(|t| {
@@ -1860,6 +2599,8 @@ impl Game {
                 }
 
                 self.log("Blight Sovereign enters Phase 2! Its power intensifies, and Celestial Ruin is unleashed!");
+
+                crate::systems::apply_boss_phase_morale(&mut self.world);
 
                 if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>()
                 {
@@ -2269,6 +3010,9 @@ impl Game {
         }
 
         self.log(format!("Descending to Floor {}...", floor));
+        if floor == 2 {
+            self.unlock_lore("descent_into_darkness");
+        }
 
         // 1. Clear VFX
         self.vfx_mut().clear();
@@ -2448,6 +3192,8 @@ impl Game {
         let (cx, cy) = self.get_tile_center_pixels(player_spawn);
         self.camera.look_at(cx, cy);
 
+        crate::systems::select_floor_modifiers(&mut self.world);
+
         self.log(format!(
             "Welcome to Floor {}! Conquer this final level.",
             floor
@@ -2559,6 +3305,7 @@ impl Game {
                 | Action::TogglePerf
                 | Action::ToggleMinimap
                 | Action::ChangeWeather(_)
+                | Action::ViewPrestige
         );
 
         let phase_current = self
@@ -2638,6 +3385,14 @@ impl Game {
                 GameEvent::Healed { healer, amount, .. } => {
                     if let Some(threat) = self.world.get_mut::<crate::components::Threat>(*healer) {
                         threat.value += (*amount as f32 * 1.5) as i32;
+                    }
+                    if self.world.get::<Team>(*healer) == Some(&Team::Player) {
+                        if let Some(progress) = self
+                            .world
+                            .get_mut::<crate::components::PrestigeProgress>(*healer)
+                        {
+                            progress.total_healing_done += *amount;
+                        }
                     }
                 }
                 _ => {}
@@ -2937,6 +3692,7 @@ impl Game {
                 | Action::ToggleMinimap
                 | Action::ToggleHelp
                 | Action::AutoBattle
+                | Action::ToggleBestiary
         ) {
             return ActionOutcome::StateUpdated;
         }
@@ -3066,9 +3822,44 @@ impl Game {
             }
         }
 
+        if self.world.resource::<GameState>().unwrap().ui_state
+            == crate::components::UIState::Bestiary
+        {
+            match action {
+                Action::Cancel | Action::ToggleBestiary => {
+                    self.world.resource_mut::<GameState>().unwrap().ui_state =
+                        crate::components::UIState::Normal;
+                    self.log("Bestiary closed.");
+                    return;
+                }
+                Action::Quit => {}
+                _ => return,
+            }
+        }
+
         if self.outcome() != Outcome::Playing && action != Action::Quit {
             return;
         }
+
+        if let Some(sel) = self.world.resource::<GameState>().unwrap().selected_entity {
+            if let Some(morale) = self.world.get::<crate::components::Morale>(sel) {
+                if morale.value == 0
+                    && !matches!(
+                        action,
+                        Action::Wait | Action::EndTurn | Action::Rest | Action::Cancel
+                    )
+                {
+                    let name = self
+                        .world
+                        .get::<CharacterClass>(sel)
+                        .map(|c| Game::get_class_name(*c).to_string())
+                        .unwrap_or_default();
+                    self.log(format!("{} is too demoralized to act!", name));
+                    return;
+                }
+            }
+        }
+
         match action {
             Action::MoveNorth | Action::MoveSouth | Action::MoveEast | Action::MoveWest => {
                 let dir = action.direction().unwrap();
@@ -3101,6 +3892,18 @@ impl Game {
                     )
                     .unwrap_or(("Unknown".to_string(), 1, 1, false, 0));
 
+                    let is_archmage = self
+                        .world
+                        .get::<crate::components::PrestigeProgress>(sel_entity)
+                        .is_some_and(|p| {
+                            p.class == crate::components::PrestigeClass::Archmage && p.promoted
+                        });
+                    let effective_ap_cost = if is_archmage {
+                        ap_cost.max(2) - 1
+                    } else {
+                        ap_cost
+                    };
+
                     let dist = (caster_pos.x - cursor.x).abs() + (caster_pos.y - cursor.y).abs();
                     if range > 0 && dist > range {
                         self.log("Target is out of skill range!");
@@ -3109,8 +3912,8 @@ impl Game {
 
                     let mut ap_ok = false;
                     if let Some(stats) = self.world.get_mut::<Stats>(sel_entity) {
-                        if stats.ap >= ap_cost {
-                            stats.ap -= ap_cost;
+                        if stats.ap >= effective_ap_cost {
+                            stats.ap -= effective_ap_cost;
                             ap_ok = true;
                         }
                     }
@@ -3303,6 +4106,11 @@ impl Game {
                                             "Mira healed {} for {} HP! (Target HP: {})",
                                             target_name, heal_val, final_hp
                                         ));
+
+                                        crate::systems::apply_heal_morale(
+                                            &mut self.world,
+                                            target_entity,
+                                        );
 
                                         let (target_cx, target_cy) =
                                             self.get_tile_center_pixels(cursor);
@@ -4328,12 +5136,144 @@ impl Game {
                     self.log("Select a character first!");
                 }
             }
+            Action::RerollModifiers => {
+                let cost = 1i32;
+                let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
+                if let Some(entity) = sel_entity {
+                    let ap = self.world.get::<Stats>(entity).map(|s| s.ap).unwrap_or(0);
+                    if ap >= cost {
+                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
+                            stats.ap -= cost;
+                        }
+                        self.log("[fg:FF00FF]Rerolling floor modifiers (-1 AP)...[/fg]");
+                        crate::systems::select_floor_modifiers(&mut self.world);
+                        self.last_outcome = crate::snapshot::ActionOutcome::StateUpdated;
+                    } else {
+                        self.log("Not enough AP to reroll modifiers! (Costs 1 AP)");
+                        self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                            reason: "Not enough AP to reroll modifiers".to_string(),
+                        };
+                    }
+                } else {
+                    self.log("Select a character first to reroll modifiers!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "Select a character first".to_string(),
+                    };
+                }
+            }
+            Action::Rest => {
+                let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
+                if let Some(entity) = sel_entity {
+                    if let Some(fatigue) = self.world.get_mut::<crate::components::Fatigue>(entity)
+                    {
+                        fatigue.value = (fatigue.value - 20).max(0);
+                    }
+                    if let Some(morale) = self.world.get_mut::<crate::components::Morale>(entity) {
+                        morale.value = (morale.value + 5).min(morale.max);
+                    }
+                    let name = self
+                        .world
+                        .get::<CharacterClass>(entity)
+                        .map(|c| Game::get_class_name(*c).to_string())
+                        .unwrap_or_default();
+                    self.log(format!("{} rests and recovers stamina.", name));
+                    self.world
+                        .resource_mut::<GameState>()
+                        .unwrap()
+                        .selected_entity = None;
+                } else {
+                    self.log("Select a character first to rest!");
+                }
+            }
+            Action::ComboSkill(skill) => {
+                let available = self
+                    .world
+                    .resource::<crate::components::AvailableCombos>()
+                    .cloned()
+                    .unwrap_or_default();
+                let found = available.combos.iter().find(|(s, _)| *s == skill).cloned();
+                if let Some((_skill, participants)) = found {
+                    let def = crate::components::ComboSkillDef::for_skill(&skill);
+                    let all_have_ap = participants.iter().all(|&e| {
+                        self.world
+                            .get::<Stats>(e)
+                            .map_or(false, |s| s.ap >= def.ap_cost)
+                    });
+                    if !all_have_ap {
+                        self.log("Not enough AP from all participants for this combo!");
+                    } else {
+                        let cursor = self.world.resource::<GameState>().unwrap().cursor;
+                        self.execute_combo_skill(skill, &participants, cursor);
+                    }
+                } else {
+                    self.log("That combo skill is not currently available!");
+                }
+            }
+            Action::ToggleBestiary => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.ui_state == crate::components::UIState::Bestiary {
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.log("Bestiary closed.");
+                } else {
+                    state.ui_state = crate::components::UIState::Bestiary;
+                    self.log("Bestiary opened. Press [J] or [Esc] to close.");
+                }
+            }
+            Action::ViewPrestige => {
+                let mut prestige_data: Vec<(String, String, String)> = Vec::new();
+                let entity_classes: Vec<(Entity, CharacterClass)> = self
+                    .world
+                    .query2::<CharacterClass, crate::components::PrestigeProgress>()
+                    .iter()
+                    .filter(|(e, _, _)| {
+                        self.world.get::<Team>(*e).copied().unwrap_or(Team::Enemy) == Team::Player
+                    })
+                    .map(|(e, class, _)| (*e, (*class).clone()))
+                    .collect::<Vec<_>>();
+                for (e, class) in entity_classes {
+                    if let Some(progress) = self.world.get::<crate::components::PrestigeProgress>(e)
+                    {
+                        let name = Self::get_class_name(class).to_string();
+                        let prestige_name = if progress.promoted {
+                            progress.class.display_name().to_string()
+                        } else {
+                            "Not yet promoted".to_string()
+                        };
+                        let req = match class {
+                            CharacterClass::Warrior => format!("Kills: {}/10", progress.kill_count),
+                            CharacterClass::Mage => {
+                                format!("Damage: {}/500", progress.total_damage_dealt)
+                            }
+                            CharacterClass::Healer => {
+                                format!("Healing: {}/300", progress.total_healing_done)
+                            }
+                            _ => String::new(),
+                        };
+                        prestige_data.push((name, prestige_name, req));
+                    }
+                }
+                self.log("[fg:FFD700][b]--- Prestige Status ---[/][/fg]");
+                for (name, prestige_name, req) in prestige_data {
+                    self.log(format!("{}: [b]{}[/] ({})", name, prestige_name, req));
+                }
+                self.log("[fg:FFD700]-----------------------[/fg]");
+            }
             _ => {}
         }
-        let mut rng = *self.world.resource::<Rng>().unwrap();
-        self.camera.tick(&mut rng);
-        self.world.insert_resource(self.camera.clone());
-        self.world.insert_resource(rng);
+
+        let is_skill = matches!(action, Action::Skill1 | Action::Skill2 | Action::Skill3);
+        let is_wait = action == Action::Wait;
+        let is_rest = action == Action::Rest;
+        if (is_skill || is_wait || matches!(action, Action::Confirm)) && !is_rest {
+            if let Some(sel) = self.world.resource::<GameState>().unwrap().selected_entity {
+                crate::systems::increment_fatigue_on_action(
+                    &mut self.world,
+                    sel,
+                    is_skill,
+                    is_wait,
+                );
+            }
+        }
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -5284,6 +6224,46 @@ impl Game {
                     })
             }),
             aoe_preview: Vec::new(),
+            available_combos: self
+                .world
+                .resource::<crate::components::AvailableCombos>()
+                .map(|ac| {
+                    ac.combos
+                        .iter()
+                        .map(|(s, _)| crate::components::ComboSkillDef::for_skill(s).name)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            bestiary_discovered: self
+                .world
+                .resource::<crate::components::Bestiary>()
+                .map(|b| b.entries.iter().filter(|e| e.encountered).count() as u32)
+                .unwrap_or(0),
+            bestiary_total: self
+                .world
+                .resource::<crate::components::Bestiary>()
+                .map(|b| b.entries.len() as u32)
+                .unwrap_or(0),
+            lore_discovered: self
+                .world
+                .resource::<crate::components::LoreJournal>()
+                .map(|j| j.entries.iter().filter(|e| e.discovered).count() as u32)
+                .unwrap_or(0),
+            lore_total: self
+                .world
+                .resource::<crate::components::LoreJournal>()
+                .map(|j| j.entries.len() as u32)
+                .unwrap_or(0),
+            active_modifiers: self
+                .world
+                .resource::<crate::components::ActiveFloorModifiers>()
+                .map(|m| {
+                    m.modifiers
+                        .iter()
+                        .map(|fm| fm.display_name().to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -5314,6 +6294,30 @@ impl Game {
             } else {
                 dead += 1;
             }
+            let prestige_str = self
+                .world
+                .get::<crate::components::PrestigeProgress>(e)
+                .map(|p| format!("{:?}", p.class))
+                .unwrap_or_default();
+            let morale_val = self
+                .world
+                .get::<crate::components::Morale>(e)
+                .map(|m| m.value)
+                .unwrap_or(70);
+            let morale_state_str = self
+                .world
+                .get::<crate::components::Morale>(e)
+                .map(|m| {
+                    crate::components::MoraleState::from_morale(m.value)
+                        .display_name()
+                        .to_string()
+                })
+                .unwrap_or_else(|| "Steady".to_string());
+            let fatigue_val = self
+                .world
+                .get::<crate::components::Fatigue>(e)
+                .map(|f| f.value)
+                .unwrap_or(0);
             characters.push(crate::snapshot::CharacterDiag {
                 name,
                 hp: stats.hp,
@@ -5322,6 +6326,10 @@ impl Game {
                 max_ap: stats.max_ap,
                 status,
                 alive: is_alive,
+                prestige: prestige_str,
+                morale: morale_val,
+                morale_state: morale_state_str,
+                fatigue: fatigue_val,
             });
         }
 
@@ -5430,6 +6438,21 @@ impl Game {
         {
             self.world
                 .insert_resource(crate::components::Weather::default());
+        }
+        if self
+            .world
+            .resource::<crate::components::Bestiary>()
+            .is_none()
+        {
+            self.world.insert_resource(Self::create_initial_bestiary());
+        }
+        if self
+            .world
+            .resource::<crate::components::LoreJournal>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(Self::create_initial_lore_journal());
         }
 
         // Sync camera from resource

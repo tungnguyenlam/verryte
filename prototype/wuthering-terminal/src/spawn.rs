@@ -1,5 +1,6 @@
 use crate::components::{
-    CharacterClass, ElementalStatus, Inventory, Item, ItemEffect, Position, Stats, Team,
+    CharacterClass, ElementalStatus, EquippedItems, Fatigue, Inventory, Item, ItemEffect, Morale,
+    Position, Stats, Team,
 };
 use verryte_core::{Entity, World};
 
@@ -153,7 +154,19 @@ impl Spawner for World {
         }
 
         if team == Team::Player {
+            let starter_gear = crate::equipment::equipment_for_class(class);
+            let mut equipped = EquippedItems::default();
+            for item in starter_gear {
+                equipped.equip(item);
+            }
+            builder = builder.with(equipped);
             builder = builder.with(crate::components::Threat { value: 0 });
+            builder = builder.with(crate::components::PrestigeProgress::default());
+            builder = builder.with(Morale {
+                value: 70,
+                max: 100,
+            });
+            builder = builder.with(Fatigue::default());
         } else {
             let archetype = match class {
                 CharacterClass::CorruptedSpore | CharacterClass::ShadowStalker => {
@@ -163,6 +176,16 @@ impl Spawner for World {
                 _ => crate::components::AIArchetype::Chaser,
             };
             builder = builder.with(archetype);
+            let morale_value = if class == CharacterClass::Boss {
+                100
+            } else {
+                50
+            };
+            builder = builder.with(Morale {
+                value: morale_value,
+                max: 100,
+            });
+            builder = builder.with(Fatigue::default());
         }
 
         builder.build()

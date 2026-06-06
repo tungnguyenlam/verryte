@@ -5934,4 +5934,1590 @@ mod tests {
         let action = resolve_command_token("upgrades").unwrap();
         assert_eq!(action, Action::ToggleSkillTree);
     }
+
+    #[test]
+    fn test_combo_detection_warrior_mage_adjacent() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Move mage adjacent to warrior, healer far away
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(0, 15);
+
+        crate::systems::combo_detection_system(&mut game.world);
+
+        let combos = game
+            .world
+            .resource::<crate::components::AvailableCombos>()
+            .unwrap();
+        assert_eq!(combos.combos.len(), 1);
+        assert_eq!(
+            combos.combos[0].0,
+            crate::components::ComboSkill::BladeStorm
+        );
+    }
+
+    #[test]
+    fn test_combo_detection_all_three_adjacent() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // All 3 mutually adjacent (triangle)
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(5, 4);
+
+        crate::systems::combo_detection_system(&mut game.world);
+
+        let combos = game
+            .world
+            .resource::<crate::components::AvailableCombos>()
+            .unwrap();
+        assert_eq!(combos.combos.len(), 1);
+        assert_eq!(
+            combos.combos[0].0,
+            crate::components::ComboSkill::TrinityStrike
+        );
+    }
+
+    #[test]
+    fn test_combo_non_adjacent_no_combos() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // All far apart
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(0, 0);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(10, 10);
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(20, 15);
+
+        crate::systems::combo_detection_system(&mut game.world);
+
+        let combos = game
+            .world
+            .resource::<crate::components::AvailableCombos>()
+            .unwrap();
+        assert!(combos.combos.is_empty());
+    }
+
+    #[test]
+    fn test_combo_blade_storm_hits_multiple_enemies() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 5);
+
+        // Place two enemies within range 2 of warrior/mage
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(4, 6);
+
+        // Move boss close too
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(boss).unwrap() = Position::new(5, 4);
+
+        // Move other enemies far away
+        let others: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(e, t)| **t == Team::Enemy && *e != shadow && *e != boss)
+            .map(|(e, _)| e)
+            .collect();
+        for e in others {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(20, 20);
+        }
+
+        let boss_hp_before = game.world.get::<Stats>(boss).unwrap().hp;
+        let shadow_hp_before = game.world.get::<Stats>(shadow).unwrap().hp;
+
+        // Give enough AP
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 10;
+        game.world.get_mut::<Stats>(mage).unwrap().ap = 10;
+
+        let participants = vec![warrior, mage];
+        game.execute_combo_skill(
+            crate::components::ComboSkill::BladeStorm,
+            &participants,
+            Position::new(4, 4),
+        );
+
+        let boss_hp_after = game.world.get::<Stats>(boss).unwrap().hp;
+        let shadow_hp_after = game.world.get::<Stats>(shadow).unwrap().hp;
+        assert!(
+            boss_hp_after < boss_hp_before,
+            "Boss should take BladeStorm damage"
+        );
+        assert!(
+            shadow_hp_after < shadow_hp_before,
+            "Shadow should take BladeStorm damage"
+        );
+    }
+
+    #[test]
+    fn test_combo_holy_smite_heals_warrior() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(4, 5);
+
+        // Place enemy at cursor
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(4, 3);
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 1000;
+
+        // Move other enemies far away
+        let others: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(e, t)| **t == Team::Enemy && *e != shadow)
+            .map(|(e, _)| e)
+            .collect();
+        for e in others {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(20, 20);
+        }
+
+        // Damage warrior
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 50;
+        game.world.get_mut::<Stats>(warrior).unwrap().max_hp = 100;
+
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 10;
+        game.world.get_mut::<Stats>(healer).unwrap().ap = 10;
+
+        // Set cursor to enemy
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 3);
+
+        let warrior_hp_before = game.world.get::<Stats>(warrior).unwrap().hp;
+
+        let participants = vec![warrior, healer];
+        game.execute_combo_skill(
+            crate::components::ComboSkill::HolySmite,
+            &participants,
+            Position::new(4, 3),
+        );
+
+        let warrior_hp_after = game.world.get::<Stats>(warrior).unwrap().hp;
+        assert!(
+            warrior_hp_after > warrior_hp_before,
+            "Warrior should be healed by HolySmite. Before: {}, After: {}",
+            warrior_hp_before,
+            warrior_hp_after
+        );
+    }
+
+    #[test]
+    fn test_combo_ap_consumed_from_participants() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 5);
+
+        // Move all enemies far away
+        let enemies: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(_, t)| **t == Team::Enemy)
+            .map(|(e, _)| e)
+            .collect();
+        for e in enemies {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(20, 20);
+        }
+
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 5;
+        game.world.get_mut::<Stats>(mage).unwrap().ap = 5;
+
+        let participants = vec![warrior, mage];
+        game.execute_combo_skill(
+            crate::components::ComboSkill::BladeStorm,
+            &participants,
+            Position::new(4, 4),
+        );
+
+        // BladeStorm costs 3 AP from each
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().ap, 2);
+        assert_eq!(game.world.get::<Stats>(mage).unwrap().ap, 2);
+    }
+
+    #[test]
+    fn test_combo_command_token_resolution() {
+        use crate::action::resolve_command_token;
+
+        let action = resolve_command_token("combo:bladestorm").unwrap();
+        assert_eq!(
+            action,
+            Action::ComboSkill(crate::components::ComboSkill::BladeStorm)
+        );
+
+        let action = resolve_command_token("combo:holysmite").unwrap();
+        assert_eq!(
+            action,
+            Action::ComboSkill(crate::components::ComboSkill::HolySmite)
+        );
+
+        let action = resolve_command_token("combo:arcanesanctuary").unwrap();
+        assert_eq!(
+            action,
+            Action::ComboSkill(crate::components::ComboSkill::ArcaneSanctuary)
+        );
+
+        let action = resolve_command_token("combo:trinitystrike").unwrap();
+        assert_eq!(
+            action,
+            Action::ComboSkill(crate::components::ComboSkill::TrinityStrike)
+        );
+
+        assert!(resolve_command_token("combo:invalid").is_none());
+    }
+
+    #[test]
+    fn test_trinity_strike_stun_chance() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(5, 4);
+
+        // Place enemy at cursor
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(4, 3);
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 10000;
+
+        // Move other enemies far away
+        let others: Vec<_> = game
+            .world
+            .query::<Team>()
+            .into_iter()
+            .filter(|(e, t)| **t == Team::Enemy && *e != shadow)
+            .map(|(e, _)| e)
+            .collect();
+        for e in others {
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(20, 20);
+        }
+
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 10;
+        game.world.get_mut::<Stats>(mage).unwrap().ap = 10;
+        game.world.get_mut::<Stats>(healer).unwrap().ap = 10;
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 3);
+
+        let mut stun_count = 0;
+        for _ in 0..20 {
+            game.world.get_mut::<Stats>(shadow).unwrap().hp = 10000;
+            game.world.remove::<crate::components::Stunned>(shadow);
+            game.world.get_mut::<Stats>(warrior).unwrap().ap = 10;
+            game.world.get_mut::<Stats>(mage).unwrap().ap = 10;
+            game.world.get_mut::<Stats>(healer).unwrap().ap = 10;
+
+            let participants = vec![warrior, mage, healer];
+            game.execute_combo_skill(
+                crate::components::ComboSkill::TrinityStrike,
+                &participants,
+                Position::new(4, 3),
+            );
+
+            if game
+                .world
+                .get::<crate::components::Stunned>(shadow)
+                .is_some()
+            {
+                stun_count += 1;
+            }
+        }
+        assert!(
+            stun_count > 0,
+            "TrinityStrike should stun at least once in 20 attempts"
+        );
+    }
+
+    #[test]
+    fn test_available_combos_in_snapshot() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(0, 15);
+
+        crate::systems::combo_detection_system(&mut game.world);
+
+        let snap = game.snapshot();
+        assert!(!snap.available_combos.is_empty());
+        assert!(snap.available_combos[0].contains("Blade Storm"));
+    }
+
+    #[test]
+    fn test_floor_modifier_deterministic_selection() {
+        let mut game1 = Game::new();
+        let mut game2 = Game::new();
+
+        crate::systems::select_floor_modifiers(&mut game1.world);
+        crate::systems::select_floor_modifiers(&mut game2.world);
+
+        let mods1 = game1
+            .world
+            .resource::<crate::components::ActiveFloorModifiers>()
+            .unwrap();
+        let mods2 = game2
+            .world
+            .resource::<crate::components::ActiveFloorModifiers>()
+            .unwrap();
+
+        assert_eq!(mods1.modifiers, mods2.modifiers);
+        assert_eq!(mods1.turns_remaining, mods2.turns_remaining);
+        assert!(!mods1.modifiers.is_empty());
+        for &d in &mods1.turns_remaining {
+            assert!(d >= 3 && d <= 8, "Duration {} out of range [3, 8]", d);
+        }
+    }
+
+    #[test]
+    fn test_elemental_storm_deals_damage() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let initial_hp = game.world.get::<Stats>(warrior).unwrap().hp;
+
+        {
+            let modifiers = game
+                .world
+                .resource_mut::<crate::components::ActiveFloorModifiers>()
+                .unwrap();
+            modifiers
+                .modifiers
+                .push(crate::components::FloorModifier::ElementalStorm);
+            modifiers.turns_remaining.push(5);
+        }
+
+        crate::systems::floor_modifier_system(&mut game.world);
+
+        let final_hp = game.world.get::<Stats>(warrior).unwrap().hp;
+        assert!(
+            final_hp < initial_hp,
+            "ElementalStorm should deal damage. Initial: {}, Final: {}",
+            initial_hp,
+            final_hp
+        );
+    }
+
+    #[test]
+    fn test_healing_surge_doubles_healing() {
+        let game = Game::new();
+
+        let multiplier_no_mod = crate::systems::floor_modifier_healing_multiplier(&game.world);
+        assert_eq!(multiplier_no_mod, 1.0);
+
+        let mut game2 = Game::new();
+        {
+            let modifiers = game2
+                .world
+                .resource_mut::<crate::components::ActiveFloorModifiers>()
+                .unwrap();
+            modifiers
+                .modifiers
+                .push(crate::components::FloorModifier::HealingSurge);
+            modifiers.turns_remaining.push(5);
+        }
+        let multiplier_with_mod = crate::systems::floor_modifier_healing_multiplier(&game2.world);
+        assert_eq!(multiplier_with_mod, 2.0);
+    }
+
+    #[test]
+    fn test_frenzy_applies_stat_changes() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let initial_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+        let initial_def = game.world.get::<Stats>(warrior).unwrap().def;
+
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Frenzy],
+            vec![5],
+        );
+
+        let new_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+        let new_def = game.world.get::<Stats>(warrior).unwrap().def;
+        assert_eq!(new_atk, initial_atk + 2, "Frenzy should add +2 ATK");
+        assert_eq!(
+            new_def,
+            (initial_def - 1).max(0),
+            "Frenzy should reduce DEF by 1"
+        );
+    }
+
+    #[test]
+    fn test_reroll_modifiers_action() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        crate::systems::select_floor_modifiers(&mut game.world);
+        let initial_ap = game.world.get::<Stats>(warrior).unwrap().ap;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+        }
+
+        let report = game.apply_action(Action::RerollModifiers, ActionSource::Terminal);
+
+        let final_ap = game.world.get::<Stats>(warrior).unwrap().ap;
+        assert_eq!(final_ap, initial_ap - 1, "Reroll should cost 1 AP");
+        assert!(
+            !matches!(report.outcome, ActionOutcome::Failed { .. }),
+            "Reroll should succeed"
+        );
+
+        let modifiers = game
+            .world
+            .resource::<crate::components::ActiveFloorModifiers>()
+            .unwrap();
+        assert!(
+            !modifiers.modifiers.is_empty(),
+            "Should have new modifiers after reroll"
+        );
+    }
+
+    #[test]
+    fn test_reroll_modifiers_insufficient_ap() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 0;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+        }
+
+        let report = game.apply_action(Action::RerollModifiers, ActionSource::Terminal);
+
+        assert!(
+            matches!(report.outcome, ActionOutcome::Failed { ref reason } if reason.contains("Not enough AP")),
+            "Should fail with Not enough AP, got {:?}",
+            report.outcome
+        );
+    }
+
+    #[test]
+    fn test_floor_modifier_snapshot_display() {
+        let mut game = Game::new();
+
+        crate::systems::select_floor_modifiers(&mut game.world);
+
+        let snap = game.snapshot();
+        assert!(
+            !snap.active_modifiers.is_empty(),
+            "Snapshot should show active modifiers"
+        );
+        for name in &snap.active_modifiers {
+            assert!(!name.is_empty(), "Modifier name should not be empty");
+        }
+    }
+
+    #[test]
+    fn test_gravity_well_movement_cost() {
+        let game = Game::new();
+        let bonus = crate::systems::floor_modifier_gravity_cost(&game.world);
+        assert_eq!(bonus, 0, "No gravity well by default");
+
+        let mut game2 = Game::new();
+        {
+            let modifiers = game2
+                .world
+                .resource_mut::<crate::components::ActiveFloorModifiers>()
+                .unwrap();
+            modifiers
+                .modifiers
+                .push(crate::components::FloorModifier::GravityWell);
+            modifiers.turns_remaining.push(5);
+        }
+        let bonus = crate::systems::floor_modifier_gravity_cost(&game2.world);
+        assert_eq!(bonus, 1, "GravityWell should add +1 to movement costs");
+    }
+
+    #[test]
+    fn test_darkness_visibility_reduction() {
+        let game = Game::new();
+        let reduction = crate::systems::floor_modifier_visibility_reduction(&game.world);
+        assert_eq!(reduction, 0, "No darkness by default");
+
+        let mut game2 = Game::new();
+        {
+            let modifiers = game2
+                .world
+                .resource_mut::<crate::components::ActiveFloorModifiers>()
+                .unwrap();
+            modifiers
+                .modifiers
+                .push(crate::components::FloorModifier::Darkness);
+            modifiers.turns_remaining.push(5);
+        }
+        let reduction = crate::systems::floor_modifier_visibility_reduction(&game2.world);
+        assert_eq!(reduction, 2, "Darkness should reduce visibility by 2");
+    }
+
+    #[test]
+    fn test_bestiary_starts_with_all_entries_none_discovered() {
+        let game = Game::new();
+        let bestiary = game
+            .world
+            .resource::<crate::components::Bestiary>()
+            .unwrap();
+        assert_eq!(bestiary.entries.len(), 7);
+        for entry in &bestiary.entries {
+            assert!(!entry.encountered);
+            assert_eq!(entry.defeated_count, 0);
+            assert_eq!(entry.times_killed_by, 0);
+            assert!(entry.known_weakness.is_none());
+            assert!(entry.known_resistance.is_none());
+        }
+    }
+
+    #[test]
+    fn test_bestiary_encounter_marks_discovered() {
+        let mut game = Game::new();
+        let bestiary = game
+            .world
+            .resource::<crate::components::Bestiary>()
+            .unwrap();
+        let entry = bestiary
+            .entries
+            .iter()
+            .find(|e| e.class == CharacterClass::ShadowStalker)
+            .unwrap();
+        assert!(!entry.encountered);
+
+        game.record_enemy_encounter(CharacterClass::ShadowStalker);
+
+        let bestiary = game
+            .world
+            .resource::<crate::components::Bestiary>()
+            .unwrap();
+        let entry = bestiary
+            .entries
+            .iter()
+            .find(|e| e.class == CharacterClass::ShadowStalker)
+            .unwrap();
+        assert!(entry.encountered);
+    }
+
+    #[test]
+    fn test_bestiary_defeat_3_reveals_weakness() {
+        let mut game = Game::new();
+        for _ in 0..3 {
+            game.record_enemy_defeat(CharacterClass::ShadowStalker);
+        }
+        let bestiary = game
+            .world
+            .resource::<crate::components::Bestiary>()
+            .unwrap();
+        let entry = bestiary
+            .entries
+            .iter()
+            .find(|e| e.class == CharacterClass::ShadowStalker)
+            .unwrap();
+        assert_eq!(entry.defeated_count, 3);
+        assert!(entry.known_weakness.is_some());
+    }
+
+    #[test]
+    fn test_bestiary_hit_10_reveals_resistance() {
+        let mut game = Game::new();
+        for _ in 0..10 {
+            game.record_enemy_hit_taken(CharacterClass::Boss);
+        }
+        let bestiary = game
+            .world
+            .resource::<crate::components::Bestiary>()
+            .unwrap();
+        let entry = bestiary
+            .entries
+            .iter()
+            .find(|e| e.class == CharacterClass::Boss)
+            .unwrap();
+        assert_eq!(entry.hits_taken, 10);
+        assert!(entry.known_resistance.is_some());
+    }
+
+    #[test]
+    fn test_lore_journal_starts_with_initial_entries() {
+        let game = Game::new();
+        let journal = game
+            .world
+            .resource::<crate::components::LoreJournal>()
+            .unwrap();
+        assert_eq!(journal.entries.len(), 10);
+        let discovered_count = journal.entries.iter().filter(|e| e.discovered).count();
+        assert_eq!(discovered_count, 6);
+    }
+
+    #[test]
+    fn test_lore_unlock_on_milestone() {
+        let mut game = Game::new();
+        let journal = game
+            .world
+            .resource::<crate::components::LoreJournal>()
+            .unwrap();
+        let entry = journal
+            .entries
+            .iter()
+            .find(|e| e.id == "combat_insights")
+            .unwrap();
+        assert!(!entry.discovered);
+
+        game.unlock_lore("combat_insights");
+
+        let journal = game
+            .world
+            .resource::<crate::components::LoreJournal>()
+            .unwrap();
+        let entry = journal
+            .entries
+            .iter()
+            .find(|e| e.id == "combat_insights")
+            .unwrap();
+        assert!(entry.discovered);
+        assert_eq!(entry.turn_discovered, 1);
+    }
+
+    #[test]
+    fn test_bestiary_save_load_roundtrip() {
+        let mut game = Game::new();
+        game.record_enemy_encounter(CharacterClass::ShadowStalker);
+        game.record_enemy_defeat(CharacterClass::ShadowStalker);
+        game.record_enemy_defeat(CharacterClass::ShadowStalker);
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let bestiary = game2
+            .world
+            .resource::<crate::components::Bestiary>()
+            .unwrap();
+        let entry = bestiary
+            .entries
+            .iter()
+            .find(|e| e.class == CharacterClass::ShadowStalker)
+            .unwrap();
+        assert!(entry.encountered);
+        assert_eq!(entry.defeated_count, 2);
+    }
+
+    #[test]
+    fn test_toggle_bestiary_action() {
+        let mut game = Game::new();
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Normal
+        );
+
+        game.apply_action(Action::ToggleBestiary, ActionSource::Terminal);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Bestiary
+        );
+
+        game.apply_action(Action::ToggleBestiary, ActionSource::Terminal);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Normal
+        );
+    }
+
+    #[test]
+    fn test_snapshot_includes_bestiary_counts() {
+        let mut game = Game::new();
+        let snap = game.snapshot();
+        assert_eq!(snap.bestiary_total, 7);
+        assert_eq!(snap.bestiary_discovered, 0);
+        assert_eq!(snap.lore_total, 10);
+        assert_eq!(snap.lore_discovered, 6);
+
+        game.record_enemy_encounter(CharacterClass::ShadowStalker);
+        let snap = game.snapshot();
+        assert_eq!(snap.bestiary_discovered, 1);
+    }
+
+    #[test]
+    fn test_bestiary_via_script_command() {
+        let mut game = Game::new();
+        let count = game
+            .router
+            .inject_script_with(
+                &default_commands(),
+                "bestiary",
+                ActionSource::Script,
+                resolve_command_token,
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        let reports = game.run_pending_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().ui_state,
+            crate::components::UIState::Bestiary
+        );
+    }
+
+    #[test]
+    fn test_morale_decreases_when_ally_defeated() {
+        let mut game = Game::new();
+        let mut player_entities = Vec::new();
+        for (e, team) in game.world.query::<Team>() {
+            if *team == Team::Player {
+                player_entities.push(e);
+            }
+        }
+        let initial_morale = game
+            .world
+            .get::<crate::components::Morale>(player_entities[0])
+            .unwrap()
+            .value;
+        assert_eq!(initial_morale, 70);
+
+        crate::systems::apply_ally_defeated_morale(&mut game.world, player_entities[1]);
+
+        let new_morale = game
+            .world
+            .get::<crate::components::Morale>(player_entities[0])
+            .unwrap()
+            .value;
+        assert_eq!(
+            new_morale, 55,
+            "Morale should drop by 15 when ally is defeated"
+        );
+    }
+
+    #[test]
+    fn test_morale_increases_when_enemy_defeated() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let initial_morale = game
+            .world
+            .get::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value;
+        assert_eq!(initial_morale, 70);
+
+        crate::systems::apply_enemy_defeated_morale(&mut game.world);
+
+        let new_morale = game
+            .world
+            .get::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value;
+        assert_eq!(
+            new_morale, 80,
+            "Morale should increase by 10 when enemy is defeated"
+        );
+    }
+
+    #[test]
+    fn test_confident_state_gives_damage_bonus() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(2, 2);
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(2, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 1000;
+        game.world
+            .get_mut::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value = 80;
+
+        let (damage, _) = game.resolve_combat_hit(
+            warrior,
+            shadow,
+            100,
+            "Warrior",
+            "ShadowStalker",
+            Position::new(2, 3),
+        );
+        assert!(
+            damage >= 110,
+            "Confident state should give 10% damage bonus, got {}",
+            damage
+        );
+    }
+
+    #[test]
+    fn test_stressed_state_reduces_damage() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(2, 2);
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(2, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 1000;
+        game.world
+            .get_mut::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value = 30;
+
+        let (damage, _) = game.resolve_combat_hit(
+            warrior,
+            shadow,
+            100,
+            "Warrior",
+            "ShadowStalker",
+            Position::new(2, 3),
+        );
+        assert!(
+            damage <= 90,
+            "Stressed state should reduce damage by 10%, got {}",
+            damage
+        );
+    }
+
+    #[test]
+    fn test_broken_morale_only_allows_wait() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+        game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+        game.world
+            .get_mut::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value = 0;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+            state.cursor = Position::new(4, 5);
+        }
+
+        let report = game.apply_action(Action::Confirm, ActionSource::Terminal);
+        assert!(
+            matches!(report.outcome, ActionOutcome::Failed { .. })
+                || matches!(report.outcome, ActionOutcome::NoOp),
+            "Broken morale should block non-Wait actions, got {:?}",
+            report.outcome
+        );
+
+        let report = game.apply_action(Action::Wait, ActionSource::Terminal);
+        assert!(
+            !matches!(report.outcome, ActionOutcome::Failed { .. }),
+            "Wait should be allowed with Broken morale"
+        );
+    }
+
+    #[test]
+    fn test_fatigue_increases_with_actions() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let initial_fatigue = game
+            .world
+            .get::<crate::components::Fatigue>(warrior)
+            .unwrap()
+            .value;
+        assert_eq!(initial_fatigue, 0);
+
+        crate::systems::increment_fatigue_on_action(&mut game.world, warrior, false, false);
+        assert_eq!(
+            game.world
+                .get::<crate::components::Fatigue>(warrior)
+                .unwrap()
+                .value,
+            3,
+            "Normal action should add 3 fatigue"
+        );
+
+        crate::systems::increment_fatigue_on_action(&mut game.world, warrior, true, false);
+        assert_eq!(
+            game.world
+                .get::<crate::components::Fatigue>(warrior)
+                .unwrap()
+                .value,
+            8,
+            "Skill use should add 5 fatigue"
+        );
+    }
+
+    #[test]
+    fn test_rest_reduces_fatigue_and_increases_morale() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world
+            .get_mut::<crate::components::Fatigue>(warrior)
+            .unwrap()
+            .value = 50;
+        game.world
+            .get_mut::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value = 50;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+        }
+
+        game.apply_action(Action::Rest, ActionSource::Terminal);
+
+        let fatigue = game
+            .world
+            .get::<crate::components::Fatigue>(warrior)
+            .unwrap()
+            .value;
+        let morale = game
+            .world
+            .get::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value;
+
+        assert_eq!(fatigue, 30, "Rest should reduce fatigue by 20");
+        assert_eq!(morale, 55, "Rest should increase morale by 5");
+    }
+
+    #[test]
+    fn test_morale_modifiers_survive_save_load() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        game.world
+            .get_mut::<crate::components::Morale>(warrior)
+            .unwrap()
+            .value = 45;
+        game.world
+            .get_mut::<crate::components::Fatigue>(warrior)
+            .unwrap()
+            .value = 30;
+
+        let serialized = game.save_state().unwrap();
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let warrior2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let morale = game2
+            .world
+            .get::<crate::components::Morale>(warrior2)
+            .unwrap()
+            .value;
+        let fatigue = game2
+            .world
+            .get::<crate::components::Fatigue>(warrior2)
+            .unwrap()
+            .value;
+
+        assert_eq!(morale, 45, "Morale should survive save/load");
+        assert_eq!(fatigue, 30, "Fatigue should survive save/load");
+    }
+
+    #[test]
+    fn test_prestige_progress_tracking_increments() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Verify initial PrestigeProgress is default
+        let progress = game
+            .world
+            .get::<crate::components::PrestigeProgress>(warrior)
+            .unwrap();
+        assert_eq!(progress.kill_count, 0);
+        assert_eq!(progress.total_damage_dealt, 0);
+        assert_eq!(progress.class, crate::components::PrestigeClass::None);
+        assert!(!progress.promoted);
+
+        // Position warrior next to a shadow stalker and attack
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(2, 2);
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(2, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(warrior).unwrap().atk = 50;
+
+        // Select warrior and attack
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(2, 2);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(2, 3);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        let progress = game
+            .world
+            .get::<crate::components::PrestigeProgress>(warrior)
+            .unwrap();
+        assert!(
+            progress.total_damage_dealt > 0,
+            "Damage tracking should increment"
+        );
+    }
+
+    #[test]
+    fn test_prestige_promotion_triggers_at_threshold() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Set kill count to threshold
+        {
+            let progress = game
+                .world
+                .get_mut::<crate::components::PrestigeProgress>(warrior)
+                .unwrap();
+            progress.kill_count = 10;
+        }
+
+        let atk_before = game.world.get::<Stats>(warrior).unwrap().atk;
+        let def_before = game.world.get::<Stats>(warrior).unwrap().def;
+        let max_hp_before = game.world.get::<Stats>(warrior).unwrap().max_hp;
+
+        // Run the prestige system
+        crate::systems::prestige_system(&mut game.world);
+
+        let progress = game
+            .world
+            .get::<crate::components::PrestigeProgress>(warrior)
+            .unwrap();
+        assert!(progress.promoted, "Should be promoted at threshold");
+        assert_eq!(
+            progress.class,
+            crate::components::PrestigeClass::BladeMaster
+        );
+
+        let stats = game.world.get::<Stats>(warrior).unwrap();
+        assert_eq!(stats.atk, atk_before + 5);
+        assert_eq!(stats.def, def_before + 3);
+        assert_eq!(stats.max_hp, max_hp_before + 20);
+    }
+
+    #[test]
+    fn test_blademaster_crit_multiplier() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let shadow = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Promote warrior to BladeMaster
+        {
+            let progress = game
+                .world
+                .get_mut::<crate::components::PrestigeProgress>(warrior)
+                .unwrap();
+            progress.class = crate::components::PrestigeClass::BladeMaster;
+            progress.promoted = true;
+        }
+
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(2, 2);
+        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(2, 3);
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
+        game.world.get_mut::<Stats>(shadow).unwrap().hp = 10000;
+        game.world.get_mut::<Stats>(shadow).unwrap().def = 0;
+
+        // Run many attacks and check for 2.0x crits
+        let mut found_2x_crit = false;
+        let base_dmg = 100;
+        for _ in 0..200 {
+            game.world.get_mut::<Stats>(shadow).unwrap().hp = 10000;
+            let (damage, _) = game.resolve_combat_hit(
+                warrior,
+                shadow,
+                base_dmg,
+                "Kael",
+                "Shadow Stalker",
+                Position::new(2, 3),
+            );
+            // Normal crit is 1.5x = 150. BladeMaster crit is 2.0x = 200.
+            if damage == 200 || damage > 150 {
+                found_2x_crit = true;
+                break;
+            }
+        }
+        assert!(
+            found_2x_crit,
+            "BladeMaster should have 2.0x crit multiplier"
+        );
+    }
+
+    #[test]
+    fn test_divine_healer_cleanse_on_heal() {
+        let mut game = Game::new();
+
+        let healer = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Healer)
+            .map(|(e, _)| e)
+            .unwrap();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Promote healer to DivineHealer
+        {
+            let progress = game
+                .world
+                .get_mut::<crate::components::PrestigeProgress>(healer)
+                .unwrap();
+            progress.class = crate::components::PrestigeClass::DivineHealer;
+            progress.promoted = true;
+        }
+
+        // Apply negative status to warrior
+        game.world.insert(
+            warrior,
+            crate::components::ElementalStatus::Ice { duration: 3 },
+        );
+        game.world
+            .insert(warrior, crate::components::Rooted { duration: 3 });
+
+        // Damage warrior so healer can heal
+        game.world.get_mut::<Stats>(warrior).unwrap().hp = 50;
+
+        // Position healer next to warrior
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(4, 5);
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+
+        // Select healer and use Skill1 to heal warrior
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(healer);
+            state.cursor = Position::new(4, 4);
+            state.targeting = crate::components::TargetingMode::Skill1;
+        }
+        {
+            let stats = game.world.get_mut::<Stats>(healer).unwrap();
+            stats.ap = 2;
+        }
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Warrior should have status cleansed
+        let status = game
+            .world
+            .get::<crate::components::ElementalStatus>(warrior)
+            .copied()
+            .unwrap();
+        assert_eq!(
+            status,
+            crate::components::ElementalStatus::None,
+            "DivineHealer should cleanse negative status on heal"
+        );
+        assert!(
+            game.world
+                .get::<crate::components::Rooted>(warrior)
+                .is_none(),
+            "DivineHealer should remove Rooted"
+        );
+    }
+
+    #[test]
+    fn test_archmage_skill_cost_reduction() {
+        let mut game = Game::new();
+
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Promote mage to Archmage
+        {
+            let progress = game
+                .world
+                .get_mut::<crate::components::PrestigeProgress>(mage)
+                .unwrap();
+            progress.class = crate::components::PrestigeClass::Archmage;
+            progress.promoted = true;
+        }
+
+        // Position mage and set up targeting
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 4);
+        game.world.get_mut::<Stats>(mage).unwrap().ap = 2;
+
+        // Mage Skill1 costs 2 AP. With Archmage it should cost 1 AP.
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(mage);
+            state.cursor = Position::new(4, 4);
+            state.targeting = crate::components::TargetingMode::Skill1;
+        }
+
+        game.apply_action(Action::Confirm, ActionSource::Terminal);
+
+        // Mage should have 1 AP remaining (2 - 1 = 1, reduced from normal cost of 2)
+        let stats = game.world.get::<Stats>(mage).unwrap();
+        assert_eq!(
+            stats.ap, 1,
+            "Archmage should have 1 AP remaining after Skill1 (reduced cost)"
+        );
+    }
+
+    #[test]
+    fn test_prestige_survives_save_load() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Set up prestige progress
+        {
+            let progress = game
+                .world
+                .get_mut::<crate::components::PrestigeProgress>(warrior)
+                .unwrap();
+            progress.class = crate::components::PrestigeClass::BladeMaster;
+            progress.kill_count = 15;
+            progress.total_damage_dealt = 200;
+            progress.promoted = true;
+        }
+
+        let serialized = game.save_state().unwrap();
+
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let warrior2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let progress2 = game2
+            .world
+            .get::<crate::components::PrestigeProgress>(warrior2)
+            .unwrap();
+        assert_eq!(
+            progress2.class,
+            crate::components::PrestigeClass::BladeMaster
+        );
+        assert_eq!(progress2.kill_count, 15);
+        assert_eq!(progress2.total_damage_dealt, 200);
+        assert!(progress2.promoted);
+    }
+
+    #[test]
+    fn test_view_prestige_action() {
+        let mut game = Game::new();
+        let report = game.apply_action(Action::ViewPrestige, ActionSource::Terminal);
+        // Should not fail
+        assert!(
+            !matches!(report.outcome, ActionOutcome::Failed { .. }),
+            "ViewPrestige should not fail"
+        );
+
+        // Check that log messages were added
+        let log = game.world.resource::<verryte_core::MessageLog>().unwrap();
+        let messages: Vec<_> = log.messages().to_vec();
+        let has_prestige_header = messages.iter().any(|m| m.contains("Prestige Status"));
+        assert!(has_prestige_header, "Should log prestige status header");
+    }
+
+    #[test]
+    fn test_prestige_command_token() {
+        let action = resolve_command_token("prestige").unwrap();
+        assert_eq!(action, Action::ViewPrestige);
+    }
 }

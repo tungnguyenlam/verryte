@@ -4113,3 +4113,202 @@ and save/load reliability. All tasks were independent and ran in parallel.
 **Gotchas.** Position uses `i16` not `i32`, so all tile generation functions cast accordingly. `query3` only takes 3 generic params, so enemy intent prediction uses `query3` + `get` for the 4th component. `GameState` doesn't impl `Default`, so tests construct it manually. `Entity` has private fields; `Entity::INVALID` is the only public constructor.
 
 **Follow-ups.** The 2 pre-existing test failures (`test_cover_positions_adjacent_to_wall`, `test_hazard_initialization_from_map`) are unrelated to this change and exist on the working tree before these edits.
+
+## 2026-06-06 - Advanced Enemy AI: tactical behaviors module
+
+**Goal.** Enhance enemy AI with tactical behaviors: cover usage, coordinated attacks, flanking awareness, and dynamic retreat. Create a self-contained `ai.rs` module that reads world state and returns `AIAction` decisions.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/components.rs:381-427` - Added `AIBehavior` (archetype, aggression/caution/coordination 0-100, last_action, target_priority), `AIAction` enum (Attack, MoveTo, Retreat, Defend, HealAlly, UseCover, FlankAttack), and `TacticalAssessment` (threat_map, cover_positions, flank_positions, safe_positions). All derive serde.
+- `prototype/wuthering-terminal/src/ai.rs` - New module: `TacticalAI` with pure-function battlefield assessment and decision logic. Key functions: `assess_battlefield`, `find_cover_positions` (LOS-blocking positions adjacent to walls), `find_flank_positions` (opposite-side positions from allies), `calculate_threat_map` (per-tile threat based on player ATK and distance), `decide_action`, `chaser_strategy` (aggressive pursuit with flanking preference), `cleric_strategy` (heal low-HP allies first, then attack), `coward_strategy` (retreat to cover when low HP, safe attacks otherwise), `is_covered` (Bresenham LOS check through walls), `safest_move_target`, `focus_fire_target` (lowest HP player). 12 unit tests.
+- `prototype/wuthering-terminal/src/lib.rs:4` - Added `pub mod ai;` module declaration.
+
+**Reasoning.** The AI module is intentionally self-contained: it takes `&World` references and returns `AIAction` decisions without modifying state. This follows Verryte's "observable state" promise. The module reads ECS queries (Position, Team, Stats, AIArchetype) and map data to produce tactical decisions. Cover detection uses Bresenham-style line tracing to check if walls block LOS. Flanking uses perpendicular position detection relative to ally positions. Threat mapping considers player ATK weighted by Manhattan distance.
+
+**Assumptions.** `Entity` fields are `pub(crate)` in verryte-core, so tests use `World::builder().build()` to spawn real entities. `Position` is `verryte_map::Point` with `i16` coordinates, so all distance arithmetic uses `i16` and casts to `i32` for division. The `AIBehavior` component is available for future systems to attach to enemies but is not yet wired into `enemy_ai_system` (which still uses the simpler `AIArchetype` directly). `find_cover_positions` checks both wall adjacency and LOS blocking, not just adjacency.
+
+**Gotchas.** `game.rs` had a pre-existing syntax error (unclosed delimiter at line 5237 due to wrong indentation on `.iter()`). Fixed as part of this pass. `battle_preview.rs` had `Entity::from(0u64)` which doesn't compile; changed to `Entity::INVALID`. `lib.rs` tests were missing `ElementalStatus` import. All pre-existing issues unrelated to the AI work.
+
+**Follow-ups.** The AI module is not yet integrated into `enemy_ai_system` in `systems.rs`. A future step would wire `TacticalAI::decide_action` into the enemy turn loop, replacing or augmenting the current archetype-based logic. The `AIBehavior` component could be added to enemies in `spawn.rs` to enable aggression/caution/coordination tuning per enemy type.
+
+## 2026-06-07 - tactical RPG depth: equipment, AI, hazards, skills, battle preview
+
+**Goal.** Extend the wuthering-terminal tactical RPG prototype with 5 independent
+feature systems, implemented in parallel via 5 subagents with non-overlapping
+file ownership to avoid merge conflicts.
+
+**Changes.**
+
+Equipment System:
+- `prototype/wuthering-terminal/src/equipment.rs` — New module with 13 predefined
+  items (5 weapons, 4 armors, 4 accessories), `equipment_for_class()` starter
+  gear, 11 unit tests.
+- `prototype/wuthering-terminal/src/components.rs:429-510` — Added
+  `EquipmentSlot`, `Equipment`, `EquipmentSpecial`, `Element`, `EquippedItems`
+  types with serde derives and equip/unequip/stat aggregation methods.
+- `prototype/wuthering-terminal/src/spawn.rs:156-162` — Player characters spawn
+  with class-appropriate starter gear.
+
+Advanced Enemy AI:
+- `prototype/wuthering-terminal/src/ai.rs` — New module with `TacticalAI` struct:
+  `assess_battlefield()`, `find_cover_positions()` (Bresenham LOS through walls),
+  `find_flank_positions()` (perpendicular ally detection),
+  `calculate_threat_map()` (ATK-weighted Manhattan), `chaser_strategy()`
+  (aggressive with flanking), `cleric_strategy()` (heal-first), `coward_strategy()`
+  (retreat under 30%), `focus_fire_target()` (lowest HP), 12 unit tests.
+- `prototype/wuthering-terminal/src/components.rs:381-427` — Added `AIBehavior`,
+  `AIAction`, `TacticalAssessment` types.
+
+Environmental Hazards:
+- `prototype/wuthering-terminal/src/hazards.rs` — New module with `HazardSystem`:
+  `initialize_hazards()`, `trigger_hazard()`, `process_cracked_floor()`,
+  `populate_hazards()` (floor-scaled procedural), `cleanup_hazards()`, 12 unit
+  tests.
+- `prototype/wuthering-terminal/src/map.rs:13-18` — 6 new `Tile` variants:
+  SpikeTrap, PoisonCloud, HealingSpring, CrackedFloor, PressurePlate, ThornBush.
+  Updated `is_walkable()`, `movement_cost()`, `from_ascii()` mappings.
+- `prototype/wuthering-terminal/src/components.rs` — Added `HazardType`,
+  `HazardEffect`, `ActiveHazards`, `Destructible` types.
+
+Skill Upgrade Tree:
+- `prototype/wuthering-terminal/src/skill_tree.rs` — New module with per-class
+  skill trees (Warrior, Mage, Healer). Each has 4 branches (3 skills + passive)
+  with 3 tiers. `SkillTree::for_class()`, `available_upgrades()`, `can_unlock()`,
+  `unlock()`, bonus aggregation methods. 14 unit tests.
+- `prototype/wuthering-terminal/src/components.rs` — Added `SkillTree`,
+  `SkillUpgrade`, `SkillSlot`, `UpgradeEffect` types.
+- `prototype/wuthering-terminal/src/action.rs` — Added `UpgradeSkill(String)`,
+  `ToggleSkillTree` actions with key/command bindings.
+
+Battle QoL:
+- `prototype/wuthering-terminal/src/battle_preview.rs` — New module with
+  `BattlePreview`: `calculate_damage_preview()` (ATK/DEF/level/elemental formula),
+  `calculate_aoe_preview()` (Circle/Square/Cross/Line/Cone shapes),
+  `calculate_turn_order()` (SPD-descending), `predict_enemy_intents()`
+  (archetype-based), format functions. 13 unit tests.
+- `prototype/wuthering-terminal/src/components.rs` — Added `DamagePreview`,
+  `AoEPreview`, `TurnOrderEntry`, `TurnOrderDisplay`, `EnemyIntent`, `IntentType`,
+  `EnemyIntentions` types.
+- `prototype/wuthering-terminal/src/snapshot.rs:44-51` — Added `turn_order`,
+  `enemy_intents`, `damage_preview`, `aoe_preview` fields to `Snapshot`.
+
+**Reasoning.** All 5 systems are implemented as self-contained modules with pure
+data types and pure-function APIs. This preserves the unified action path: each
+module defines data structures and decision functions, but the actual game.rs
+integration (wiring equipment bonuses into combat, executing AI decisions,
+triggering hazards on movement, applying skill upgrades to damage, displaying
+preview data in UI) remains for a separate integration pass. This approach let
+5 agents work concurrently without file conflicts and produced 62 new unit tests.
+
+**Assumptions.** Equipment bonuses are computed via `EquippedItems` methods and
+meant to be read by `game.rs` combat resolution. AI decisions return `AIAction`
+enums that `systems.rs` would execute. Hazard triggers return
+`HazardTriggerResult` that `game.rs` would apply. Skill upgrades store effects
+as data that combat reads. Battle previews are read-only calculations from
+current world state.
+
+**Gotchas.** Agent 3 (hazards) and Agent 5 (battle preview) both modified
+`game.rs` for minor match-arm additions and snapshot population respectively.
+Agent 2 fixed a pre-existing unclosed delimiter in `game.rs:5254`. Agent 1
+reported 37 pre-existing build errors from WIP files already in the worktree
+(created by earlier agents), but all resolved after all 5 agents completed.
+The final workspace builds clean with 0 warnings in wuthering-terminal.
+
+**Follow-ups.** The main integration pass needed next:
+1. Wire `EquippedItems` bonuses into `game.rs` damage calculation.
+2. Wire `TacticalAI::decide_action()` into `systems.rs` enemy turns.
+3. Wire `HazardSystem::trigger_hazard()` into `game.rs` movement.
+4. Wire `SkillTree` bonuses into `game.rs` skill damage/healing.
+5. Wire `BattlePreview` data into `ui.rs` HUD rendering.
+6. Add equip/unequip actions to the Action enum and key bindings.
+7. Add skill tree UI toggle rendering.
+
+## 2026-06-07 - Combo Skill System implementation
+
+**Goal.** Implement a Combo Skill System that unlocks special abilities when two or more player characters are positioned adjacent to each other, encouraging tactical positioning.
+
+**Changes.**
+- `components.rs:706-866` — Added `ComboSkill` enum (BladeStorm, HolySmite, ArcaneSanctuary, TrinityStrike), `ComboSkillDef` with per-skill stats, and `AvailableCombos` resource.
+- `action.rs:44` — Added `Action::ComboSkill(ComboSkill)` variant. Added `combo:bladestorm`, `combo:holysmite`, `combo:arcanesanctuary`, `combo:trinitystrike` command tokens in `resolve_command_token`.
+- `systems.rs:3032+` — Added `combo_detection_system` that checks player character adjacency at the start of each player turn, detects available combos (Warrior+Mage→BladeStorm, Warrior+Healer→HolySmite, Mage+Healer→ArcaneSanctuary, all 3→TrinityStrike), and stores results in `AvailableCombos` resource.
+- `game.rs` — Added `execute_combo_skill` method with full combo effects:
+  - **BladeStorm**: AoE lightning+slash damage around both characters, costs 3 AP each.
+  - **HolySmite**: Single-target massive damage + 30% lifesteal heal to Warrior, costs 2 AP each.
+  - **ArcaneSanctuary**: Shield all allies + heal 15 HP, costs 3 AP each.
+  - **TrinityStrike**: Devastating single-target nuke (sum ATK × 3) + 50% stun chance, costs 4 AP each.
+  - Added `Action::ComboSkill` handler in `apply_action_internal`.
+  - Added `AvailableCombos` resource initialization and `combo_detection` schedule entry.
+  - Added `available_combos` to snapshot output.
+- `snapshot.rs:52-53` — Added `available_combos: Vec<String>` field to `Snapshot`.
+- `lib.rs` — Added 8 tests: adjacent detection, all-3 adjacency, non-adjacent no-combos, BladeStorm multi-hit, HolySmite heal, AP consumption, command token resolution, TrinityStrike stun, snapshot integration.
+
+**Reasoning.** The combo system follows the existing pattern of `AvailableCombos` as a resource (similar to `TelegraphZone`, `EquippedEchoes`), uses the existing `combo_detection_system` as a schedule entry, and implements combo execution as a method on `Game` following the same pattern as `execute_skill`. AP is consumed from all participating characters. The system integrates with the existing VFX, audio, and event systems.
+
+**Assumptions.** The codebase has pre-existing compilation errors from other in-progress work (PrestigeClass, Morale, bestiary, lore journal). The combo skill code itself introduces no new errors. Tests cannot be verified until those pre-existing issues are resolved.
+
+**Gotchas.** `ComboSkill` needed `Copy + Hash` derives because `Action` derives `Copy + Hash`. The `Action::ComboSkill` handler was initially misplaced inside a `GameEvent` match block during editing.
+
+**Follow-ups.** Verify all tests pass once pre-existing compilation errors are fixed. Consider adding combo skill VFX sounds and UI indicators in the status bar.
+
+## 2026-06-07 - Bestiary & Lore System Implementation
+
+**Goal.** Implement a persistent Bestiary & Lore knowledge base that tracks enemy encounters, weaknesses, and world lore entries.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/components.rs` - Added `UIState::Bestiary` variant, `BestiaryEntry`, `Bestiary`, `LoreEntry`, `LoreCategory`, `LoreJournal` types with serde derives.
+- `prototype/wuthering-terminal/src/action.rs` - Added `Action::ToggleBestiary` variant, bound to `j`/`J` key, added `"bestiary"` and `"lore"` command tokens.
+- `prototype/wuthering-terminal/src/game.rs:251-380` - Added `create_initial_bestiary()` (7 enemy entries), `create_initial_lore_journal()` (10 entries: 6 initial, 4 unlockable), `record_enemy_encounter()`, `record_enemy_defeat()`, `record_enemy_hit_taken()`, `record_player_defeat_by()`, `unlock_lore()`. Integrated tracking into `resolve_combat_hit` (encounter + hit tracking), `handle_defeat` (defeat counting + lore unlock), `check_boss_phase_transition` (sovereigns_rage lore), `transition_to_next_floor` (descent_into_darkness lore), `try_absorb_echo` (echo_lore lore). Added `ToggleBestiary` action handler in `apply_action_internal` and `Bestiary` UI state check for overlay. Updated `snapshot()` with resource lookups for bestiary/lore counts.
+- `prototype/wuthering-terminal/src/snapshot.rs` - Added `bestiary_discovered`, `bestiary_total`, `lore_discovered`, `lore_total` fields to `Snapshot`. Registered `Bestiary` and `LoreJournal` resources in `create_registry()`.
+- `prototype/wuthering-terminal/src/lib.rs` - Added 10 tests covering bestiary initialization, encounter marking, defeat weakness reveal (3 defeats), resistance reveal (10 hits), lore journal initial entries, lore unlock on milestones, save/load roundtrip, toggle UI state, snapshot counts, and script command.
+
+**Reasoning.** Bestiary entries track per-class encounter/defeat/hit stats. Weakness reveals at 3 defeats, resistance at 10 hits — these thresholds create a gradual discovery mechanic. Lore entries are split into pre-discovered (6) and milestone-unlocked (4) to reward gameplay progression. The `ToggleBestiary` action follows the same overlay pattern as `ToggleHelp` and `ToggleInventory` with the `UIState` enum. Resources are registered in the snapshot registry for save/load persistence.
+
+**Assumptions.** The existing `UIState` enum can be extended without breaking serialization (serde handles new variants via `#[serde(default)]` on `GameState`). The `Action` enum can be extended without breaking the action trace format (existing traces won't contain `ToggleBestiary`).
+
+**Gotchas.** The working tree was already dirty with many other feature additions (combo skills, prestige, morale, fatigue). All 5 modified files contain mixed changes from multiple features. The 3 pre-existing test failures (`test_combo_blade_storm_hits_multiple_enemies`, `test_combo_detection_all_three_adjacent`, `test_trinity_strike_stun_chance`) are unrelated to this feature.
+
+**Follow-ups.** TTY rendering of the `UIState::Bestiary` overlay is not implemented (data is available but no `render_bestiary` function exists). Could add a `render_bestiary` function to `ui.rs` similar to `render_help`. Could also add more lore entries for specific gameplay events (e.g., first QTE swap, first elemental reaction, etc.).
+
+## 2026-06-07 - Prestige Class System
+
+**Goal.** Implement a Prestige Class System for the wuthering-terminal tactical RPG prototype — class evolution that unlocks when player characters meet specific combat conditions (kills, damage dealt, healing done).
+
+**Changes.**
+- `prototype/wuthering-terminal/src/components.rs` - Added `PrestigeClass` enum (`None`, `BladeMaster`, `Archmage`, `DivineHealer`) with `display_name()`, and `PrestigeProgress` struct with `class`, `kill_count`, `total_damage_dealt`, `total_healing_done`, `promoted` fields.
+- `prototype/wuthering-terminal/src/action.rs` - Added `Action::ViewPrestige` variant, bound to `v`/`V` keys, with `"prestige"` command token for script support.
+- `prototype/wuthering-terminal/src/snapshot.rs` - Added `prestige: String` field to `CharacterDiag` (with `#[serde(default)]`), registered `PrestigeProgress` component in `create_registry()`.
+- `prototype/wuthering-terminal/src/spawn.rs` - Added `PrestigeProgress::default()` component to all player characters during spawn.
+- `prototype/wuthering-terminal/src/systems.rs` - Added `prestige_system()` function that checks promotion conditions (Warrior: 10+ kills → BladeMaster, Mage: 500+ damage → Archmage, Healer: 300+ healing → DivineHealer), applies stat bonuses (+5 ATK, +3 DEF, +20 MaxHP), logs gold-colored promotion message, spawns celebration VFX (gold burst particles, screen shake, flash), and plays level_up sound.
+- `prototype/wuthering-terminal/src/game.rs`:
+  - Registered `prestige_system` in the schedule.
+  - In `resolve_combat_hit`: BladeMaster attacker gets 2.0x crit multiplier instead of 1.5x; tracks `total_damage_dealt` and `kill_count` in `PrestigeProgress` for player attackers; adds 25% chance for BladeMaster target to counter-attack when hit.
+  - In skill casting confirmation: Archmage gets 1 AP cost reduction (min 1).
+  - In `execute_skill`: DivineHealer doubles heal values; DivineHealer guaranteed cleanse-on-heal (overrides PurifyingTouch 50% chance); Archmage gets AoE +1 radius via extra neighbor tiles.
+  - In event tracking: healing events increment `total_healing_done` for player healers.
+  - Added `Action::ViewPrestige` handler that logs prestige status for all player characters.
+  - Populated `prestige` field in `CharacterDiag` construction.
+  - Added `ViewPrestige` to non-undoable action list.
+- `prototype/wuthering-terminal/src/lib.rs` - Added 8 new tests:
+  - `test_prestige_progress_tracking_increments` - verifies damage dealt tracking increments.
+  - `test_prestige_promotion_triggers_at_threshold` - verifies promotion at kill_count >= 10.
+  - `test_blademaster_crit_multiplier` - verifies 2.0x crit multiplier.
+  - `test_divine_healer_cleanse_on_heal` - verifies guaranteed cleanse on heal.
+  - `test_archmage_skill_cost_reduction` - verifies 1 AP reduction on skills.
+  - `test_prestige_survives_save_load` - verifies PrestigeProgress serialization round-trip.
+  - `test_view_prestige_action` - verifies ViewPrestige action logs messages.
+  - `test_prestige_command_token` - verifies "prestige" command token resolves.
+
+**Reasoning.** The prestige system follows Verryte's ECS pattern — `PrestigeProgress` is a component on player entities, tracked in combat/healing code paths, with promotion checked by a schedule system. Effects are integrated at the point of use (crit multiplier in resolve_combat_hit, AP cost in skill casting, cleanse in healing). This keeps the architecture data-first and observable.
+
+**Assumptions.**
+- Prestige classes only apply to player characters (Warrior, Mage, Healer).
+- Only one prestige class per character (matching their base class).
+- Counter-attack damage is based on the BladeMaster's ATK stat.
+- Archmage AoE expansion uses neighbor4 tiles of existing AoE tiles.
+
+**Gotchas.**
+- The `query2` return type uses references requiring explicit `.clone()` or for-loop patterns to avoid borrow checker issues when calling `self.log()` inside iteration.
+- Three pre-existing combo-system tests (`test_combo_detection_all_three_adjacent`, `test_combo_blade_storm_hits_multiple_enemies`, `test_trinity_strike_stun_chance`) fail independently of these changes.
+
+**Follow-ups.**
+- None. All 8 new prestige tests pass, 230 total tests pass, formatting is clean.

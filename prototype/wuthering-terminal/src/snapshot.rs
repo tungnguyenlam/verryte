@@ -49,6 +49,18 @@ pub struct Snapshot {
     pub damage_preview: Option<DamagePreview>,
     #[serde(default)]
     pub aoe_preview: Vec<Position>,
+    #[serde(default)]
+    pub available_combos: Vec<String>,
+    #[serde(default)]
+    pub bestiary_discovered: u32,
+    #[serde(default)]
+    pub bestiary_total: u32,
+    #[serde(default)]
+    pub lore_discovered: u32,
+    #[serde(default)]
+    pub lore_total: u32,
+    #[serde(default)]
+    pub active_modifiers: Vec<String>,
 }
 
 fn default_floor_one() -> u32 {
@@ -162,6 +174,9 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_component::<Inventory>("Inventory");
     reg.register_component::<Item>("Item");
     reg.register_component::<EchoItem>("EchoItem");
+    reg.register_component::<crate::components::PrestigeProgress>("PrestigeProgress");
+    reg.register_component::<crate::components::Morale>("Morale");
+    reg.register_component::<crate::components::Fatigue>("Fatigue");
 
     // Resources
     reg.register_resource::<GameState>("GameState");
@@ -179,6 +194,9 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_resource::<verryte_core::Events<GameEvent>>("GameEvents");
     reg.register_resource::<crate::components::BattleStats>("BattleStats");
     reg.register_resource::<crate::components::Weather>("Weather");
+    reg.register_resource::<crate::components::Bestiary>("Bestiary");
+    reg.register_resource::<crate::components::LoreJournal>("LoreJournal");
+    reg.register_resource::<crate::components::ActiveFloorModifiers>("ActiveFloorModifiers");
 
     reg
 }
@@ -205,6 +223,14 @@ pub struct CharacterDiag {
     pub max_ap: i32,
     pub status: String,
     pub alive: bool,
+    #[serde(default)]
+    pub prestige: String,
+    #[serde(default)]
+    pub morale: i32,
+    #[serde(default)]
+    pub morale_state: String,
+    #[serde(default)]
+    pub fatigue: i32,
 }
 
 /// A snapshot of diagnostic information about the game state, useful for
