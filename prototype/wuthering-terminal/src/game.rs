@@ -11,11 +11,13 @@ use verryte_input::{ActionSource, InputRouter};
 use verryte_terminal::{Camera, Cell, Color, Grid, VisualRegistry};
 
 fn saves_dir() -> &'static str {
-    if std::path::Path::new("prototype/wuthering-terminal").exists() {
+    let dir = if std::path::Path::new("prototype/wuthering-terminal").exists() {
         "prototype/wuthering-terminal/saves"
     } else {
         "saves"
-    }
+    };
+    let _ = std::fs::create_dir_all(dir);
+    dir
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -42,6 +44,7 @@ pub struct Game {
     /// Set to true by `check_boss_phase_transition` when the boss crossed into
     /// phase 2 during this step. Reset by `apply_action` at the start of each step.
     pub boss_transitioned: bool,
+    pub _audio_stream: Option<verryte_audio::OutputStream>,
 }
 
 impl Default for Game {
@@ -93,6 +96,7 @@ impl Game {
         world.insert_resource(BattleStats::default());
         world.insert_resource(crate::components::UndoStack::default());
         world.insert_resource(crate::components::RedoStack::default());
+        world.insert_resource(crate::components::Weather::default());
 
         let mut registry = VisualRegistry::new();
         crate::generated_assets::register_assets(&mut registry);
@@ -103,6 +107,26 @@ impl Game {
         schedule.add_named("turn_management", crate::systems::turn_management_system);
         schedule.add_named("enemy_ai", crate::systems::enemy_ai_system);
 
+        let mut audio_stream = None;
+        if let Ok((mut player, stream)) = verryte_audio::AudioPlayer::try_new() {
+            player.register("music_theme", vec![0; 100]);
+            player.register("warrior_attack", vec![0; 100]);
+            player.register("mage_attack", vec![0; 100]);
+            player.register("healer_attack", vec![0; 100]);
+            player.register("boss_attack", vec![0; 100]);
+            player.register("enemy_attack", vec![0; 100]);
+            player.register("swap_swoosh", vec![0; 100]);
+            player.register("item_craft", vec![0; 100]);
+            player.register("level_up", vec![0; 100]);
+            player.register("boss_phase_transition", vec![0; 100]);
+            player.register("dialogue_blip", vec![0; 100]);
+
+            player.play_music("music_theme", true);
+
+            world.insert_resource(player);
+            audio_stream = Some(stream);
+        }
+
         let mut game = Self {
             world,
             schedule,
@@ -110,6 +134,7 @@ impl Game {
             camera: Camera::new(0.0, 0.0).with_smooth(0.15),
             last_outcome: ActionOutcome::NoOp,
             boss_transitioned: false,
+            _audio_stream: audio_stream,
         };
         let (cx, cy) = game.get_tile_center_pixels(Position::new(5, 5));
         game.camera.center_x = cx;
@@ -286,6 +311,34 @@ impl Game {
         (cx, cy)
     }
 
+    pub fn play_spatial_sfx(&mut self, name: &str, emitter_pos: Position) {
+        let listener = self
+            .world
+            .resource::<GameState>()
+            .map(|s| s.cursor)
+            .unwrap_or(Position::new(12, 8));
+        let dx = (emitter_pos.x - listener.x) as f32;
+        let dy = (emitter_pos.y - listener.y) as f32;
+        let dist = (dx * dx + dy * dy).sqrt();
+        let max_range = 15.0_f32;
+        let volume = (1.0 - (dist / max_range)).clamp(0.0, 1.0);
+        let pan = if max_range > 0.0 {
+            (dx / max_range).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        if let Some(events) = self
+            .world
+            .resource_mut::<Events<verryte_core::AudioEvent>>()
+        {
+            events.send(
+                verryte_core::AudioEvent::play(name)
+                    .with_volume(volume)
+                    .with_pan(pan),
+            );
+        }
+    }
+
     pub fn resolve_combat_hit(
         &mut self,
         attacker: Entity,
@@ -295,6 +348,18 @@ impl Game {
         target_name: &str,
         pos: Position,
     ) -> (i32, bool) {
+        let attacker_class = self.world.get::<CharacterClass>(attacker).copied();
+        if let Some(class) = attacker_class {
+            let sfx_name = match class {
+                CharacterClass::Warrior => "warrior_attack",
+                CharacterClass::Mage => "mage_attack",
+                CharacterClass::Healer => "healer_attack",
+                CharacterClass::Boss => "boss_attack",
+                _ => "enemy_attack",
+            };
+            self.play_spatial_sfx(sfx_name, pos);
+        }
+
         let mut boosted_base_damage = base_damage;
         let mut is_player = false;
         let mut new_combo = 0;
@@ -1123,6 +1188,8 @@ impl Game {
             *pos = active_pos;
         }
 
+        self.play_spatial_sfx("swap_swoosh", active_pos);
+
         self.world
             .resource_mut::<GameState>()
             .unwrap()
@@ -1310,6 +1377,9 @@ impl Game {
             (CharacterClass::Warrior, crate::components::TargetingMode::Skill2) => {
                 Some(("Dragon Fire".to_string(), 3, 3, true, 50))
             }
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill3) => {
+                Some(("Taunt Shield".to_string(), 0, 1, false, 0))
+            }
             (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
                 Some(("Thunderbolt".to_string(), 3, 2, false, 55))
             }
@@ -1402,6 +1472,23 @@ impl Game {
                         0.2,
                     ));
             }
+            (CharacterClass::Warrior, crate::components::TargetingMode::Skill3) => {
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen(
+                        Color(255, 50, 50),
+                        0.15,
+                    ));
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        cx,
+                        cy,
+                        30,
+                        Color(255, 50, 50),
+                        &['!', 'X', '#'],
+                    ));
+            }
             (CharacterClass::Mage, crate::components::TargetingMode::Skill1) => {
                 let caster_pos = *self.world.get::<Position>(caster).unwrap();
                 let (ccx, ccy) = self.get_tile_center_pixels(caster_pos);
@@ -1480,6 +1567,24 @@ impl Game {
                 self.vfx_mut()
                     .particles
                     .extend(verryte_terminal::vfx::emit_heal(pcx, pcy, 10));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::Healed {
+                        healer: caster,
+                        target: pe,
+                        amount: value,
+                    });
+                }
+            }
+        } else if class == CharacterClass::Warrior
+            && skill == crate::components::TargetingMode::Skill3
+        {
+            if let Some(threat) = self.world.get_mut::<crate::components::Threat>(caster) {
+                threat.value += 100;
+                self.log(format!(
+                    "{} taunted the enemies! Threat significantly increased (+100).",
+                    caster_name
+                ));
             }
         } else {
             let mut targets = Vec::new();
@@ -1571,6 +1676,14 @@ impl Game {
                             Color(50, 255, 50),
                             true,
                         ));
+
+                    if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                        log.send(GameEvent::Healed {
+                            healer: caster,
+                            target: te,
+                            amount: value,
+                        });
+                    }
                 } else {
                     let base_damage =
                         std::cmp::max(1, value - self.world.get::<Stats>(te).unwrap().def);
@@ -1710,6 +1823,7 @@ impl Game {
                 }
 
                 let bp = boss_pos.unwrap_or(Position::new(0, 0));
+                self.play_spatial_sfx("boss_phase_transition", bp);
                 let (bx, by) = self.get_tile_center_pixels(bp);
 
                 self.vfx_mut()
@@ -2072,6 +2186,8 @@ impl Game {
                     crate::components::ElementalStatus::Ice { .. } => "Ice",
                     crate::components::ElementalStatus::Lightning { .. } => "Lightning",
                     crate::components::ElementalStatus::Nature { .. } => "Nature",
+                    crate::components::ElementalStatus::Poison { .. } => "Poison",
+                    crate::components::ElementalStatus::Regen { .. } => "Regen",
                     _ => "None",
                 };
 
@@ -2079,6 +2195,8 @@ impl Game {
                     "Ice" => "64C8FF",
                     "Lightning" => "FFFF64",
                     "Nature" => "32DC64",
+                    "Poison" => "A020F0",
+                    "Regen" => "32CD32",
                     _ => "FFFFFF",
                 };
                 self.log(format!(
@@ -2400,6 +2518,25 @@ impl Game {
             .map(|e| e.iter().cloned().collect())
             .unwrap_or_default();
 
+        for event in &events_vec {
+            match event {
+                GameEvent::Attacked {
+                    attacker, damage, ..
+                } => {
+                    if let Some(threat) = self.world.get_mut::<crate::components::Threat>(*attacker)
+                    {
+                        threat.value += *damage;
+                    }
+                }
+                GameEvent::Healed { healer, amount, .. } => {
+                    if let Some(threat) = self.world.get_mut::<crate::components::Threat>(*healer) {
+                        threat.value += (*amount as f32 * 1.5) as i32;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let mut entity_teams = std::collections::HashMap::new();
         for (entity, team) in self.world.query::<Team>() {
             entity_teams.insert(entity, *team);
@@ -2606,6 +2743,17 @@ impl Game {
                 }
                 if let GameEvent::PhaseChanged(_) = event {
                     return ActionOutcome::PhaseChanged;
+                }
+                if let GameEvent::Moved { entity, to, .. } = event {
+                    let entity_name = self
+                        .world
+                        .get::<CharacterClass>(*entity)
+                        .map(|c| Game::get_class_name(*c).to_string())
+                        .unwrap_or_default();
+                    return ActionOutcome::Moved {
+                        entity: entity_name,
+                        to: *to,
+                    };
                 }
             }
         }
@@ -3332,16 +3480,21 @@ impl Game {
                 }
             }
             Action::Skill3 => {
-                let energy = self.world.resource::<GameState>().unwrap().concert_energy;
-                if energy >= 100 {
-                    let active_entity = self.world.resource::<GameState>().unwrap().selected_entity;
-                    if let Some(active_ent) = active_entity {
+                let state = self.world.resource::<GameState>().unwrap();
+                if let Some(active_ent) = state.selected_entity {
+                    let class = *self.world.get::<CharacterClass>(active_ent).unwrap();
+                    let energy = state.concert_energy;
+                    if class == CharacterClass::Warrior && energy < 100 {
+                        let state_mut = self.world.resource_mut::<GameState>().unwrap();
+                        state_mut.targeting = crate::components::TargetingMode::Skill3;
+                        self.log("Taunt Shield targeted! Use cursor to select target (self) and press Confirm.");
+                    } else if energy >= 100 {
                         self.trigger_qte_swap(active_ent);
                     } else {
-                        self.log("Select a character first to perform QTE Swap!");
+                        self.log(format!("Concert Energy not full ({}/100)!", energy));
                     }
                 } else {
-                    self.log(format!("Concert Energy not full ({}/100)!", energy));
+                    self.log("Select a character first!");
                 }
             }
             Action::UseItem(idx) => {
@@ -3949,11 +4102,8 @@ impl Game {
                                 self.vfx_mut()
                                     .particles
                                     .extend(verryte_terminal::vfx::emit_bloom(tcx, tcy, 20));
-                                if let Some(events) = self
-                                    .world
-                                    .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                {
-                                    events.send(verryte_core::AudioEvent::play("cleanse"));
+                                if let Some(pos) = self.world.get::<Position>(entity).copied() {
+                                    self.play_spatial_sfx("item_craft", pos);
                                 }
                             } else {
                                 self.log("No valid recipe for those items!");
@@ -4028,6 +4178,7 @@ impl Game {
 
         // Run systems
         self.schedule.run(&mut self.world);
+        verryte_audio::audio_system(&mut self.world);
     }
 
     fn tick_auto_battle(&mut self) {
@@ -4824,6 +4975,14 @@ impl Game {
         {
             self.world
                 .insert_resource(crate::components::RedoStack::default());
+        }
+        if self
+            .world
+            .resource::<crate::components::Weather>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::Weather::default());
         }
 
         // Sync camera from resource

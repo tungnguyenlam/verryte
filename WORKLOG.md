@@ -3431,3 +3431,74 @@ runner that the shield is announced.
 **Gotchas.** When implementing change detection, ensuring that the world's global tick is incremented before insertion is critical to produce correct delta query results.
 
 **Follow-ups.** None. All workspace checks, clippy warnings, formatting, and unit/integration tests pass cleanly.
+
+## 2026-06-06 - finish interrupted AI archetype, status spread, spatial audio, and threat work
+
+**Goal.** Complete the interrupted work from the previous agent session (depleted quota).
+The work was adding AI archetypes (Chaser/Cleric/Coward), threat-based targeting,
+Poison/Regen status effects with elemental spread to adjacent entities, spatial audio,
+Taunt Shield warrior skill, and Weather scaffolding.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/spawn.rs:147-153` — Fixed archetype mapping:
+  changed `ShadowStalker` from default Chaser to `Coward` (stalkers retreat at low HP),
+  removed `PlagueWraith => Cleric` mapping (PlagueWraith's core mechanic is applying
+  Nature on hit, which requires attacking — incompatible with Cleric AI that only
+  heals/flees). All other enemies default to Chaser.
+- `prototype/wuthering-terminal/src/snapshot.rs:4-8` — Removed unused `Weather` import
+  (resource is referenced via full path `crate::components::Weather`).
+- `prototype/wuthering-terminal/src/game.rs:330` — Removed unnecessary `mut` on
+  `events` binding in `play_spatial_sfx`.
+- `prototype/wuthering-terminal/src/systems.rs:1595` — Removed unnecessary `mut` on
+  `events` binding in standalone `play_spatial_sfx`.
+- `.gitignore:28` — Added `saves/` to prevent runtime trace files from being committed.
+- `cargo fmt` — Applied formatting across the workspace (trailing whitespace, line wrapping).
+
+**Reasoning.** The previous agent added the AI archetype system but the test expectations
+were not updated to match the new behavior. ShadowStalker was mapped to Chaser (default)
+but the test expected low-HP retreat — only Coward archetypes retreat at <30% HP.
+PlagueWraith was mapped to Cleric but its Nature-on-hit mechanic requires attacking,
+which Cleric AI never does (it heals/flees instead). Both fixes are minimal archetype
+re-mappings that preserve the full system architecture.
+
+**Assumptions.** The Cleric AI path (heal injured allies, flee from nearby players, defend
+otherwise) is correct and complete — it just shouldn't be assigned to enemies whose core
+mechanic is offensive status application. Future enemy healers can use the Cleric archetype.
+
+**Gotchas.** The `Weather` resource and component are fully wired (inserted in Game::new,
+registered in snapshot, defaults to Sunny) but not yet used in any gameplay system.
+The saves/ directory contained 44 trace files from gameplay testing.
+
+**Follow-ups.** Weather gameplay effects (Rainy boosts Nature, LightningStorm boosts
+Lightning, etc.) remain to be implemented. The Cleric archetype should be assigned to
+a future dedicated enemy healer class. Threat-based targeting by Chasers should be
+exercised in more tests.
+
+## 2026-06-06 - fix Moved event detection in compute_outcome
+
+**Goal.** Fix a bug where character movement via Confirm action returned
+`ActionOutcome::NoOp` instead of `ActionOutcome::Moved`, breaking agent/script
+observability of movement actions.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/game.rs:2744` - Added `GameEvent::Moved`
+  detection in `compute_outcome()`. The `ActionOutcome::Moved` variant existed
+  but was never wired up. Now movement Confirm actions correctly return
+  `Moved { entity, to }` with the character name resolved from `CharacterClass`.
+
+**Reasoning.** The `compute_outcome` function checked for `Attacked`, `Healed`,
+and `PhaseChanged` GameEvents but not `Moved`. Since `Confirm` is not in the
+"cursor-only action" list either, movement Confirm fell through to `NoOp`. This
+broke the script/agent observability contract where every meaningful action
+should report what it did.
+
+**Assumptions.** The `Moved` event check is placed after combat event checks so
+that combat outcomes (Hit, Healed) take priority when both occur in the same
+step.
+
+**Gotchas.** Step 1 of the script "inspect:4,4 confirm inspect:4,5 confirm"
+still shows NoOp for the selection Confirm, which is correct — selecting a
+character without moving is a state-only change. The Moved outcome only fires
+when an actual `GameEvent::Moved` was emitted.
+
+**Follow-ups.** None required; the fix is self-contained and all tests pass.
