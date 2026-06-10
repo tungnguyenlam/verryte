@@ -454,6 +454,60 @@ fn starter_upgrade_kit_upgrades_equipped_weapon() {
 }
 
 #[test]
+fn upgrade_equipment_without_kit_reports_failure() {
+    let mut game = Game::new();
+
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(
+        Action::UpgradeEquipment(EquipmentSlot::Weapon),
+        ActionSource::Script,
+    );
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "No Upgrade Kit available".to_string(),
+        }
+    );
+}
+
+#[test]
+fn upgrade_empty_equipment_slot_reports_failure_and_keeps_kit() {
+    let mut game = Game::new();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let kit = game.world.spawn_item(
+        "Upgrade Kit",
+        wuthering_terminal::components::ItemEffect::UpgradeKit,
+    );
+    game.world
+        .get_mut::<Inventory>(warrior)
+        .unwrap()
+        .items
+        .push(kit);
+    let items_before = game.world.get::<Inventory>(warrior).unwrap().items.len();
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(
+        Action::UpgradeEquipment(EquipmentSlot::Accessory),
+        ActionSource::Script,
+    );
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "No upgradeable equipment in that slot".to_string(),
+        }
+    );
+    assert_eq!(
+        game.world.get::<Inventory>(warrior).unwrap().items.len(),
+        items_before
+    );
+    assert!(game.world.is_alive(kit));
+}
+
+#[test]
 fn defeating_set_reward_enemies_auto_equips_shadow_knight_set() {
     let mut game = Game::new();
 

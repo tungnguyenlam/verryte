@@ -4726,3 +4726,20 @@ per-turn schedule.
 **Gotchas.** `StepReport` carries one primary `ActionOutcome`; combat actions that both hit and trigger equipment healing still report the combat hit. The new equipment outcomes cover equipment-only upgrades and defeat reward logs, not secondary healing side effects.
 
 **Follow-ups.** Consider adding an explicit equipment inventory/equip action if future content needs player choice between multiple set pieces. The duplicated defeat reward wiring in `game.rs` and `systems/combat.rs` should eventually be folded into one shared defeat helper when the combat paths are unified.
+
+## 2026-06-11 - Fix failed equipment upgrade outcomes
+
+**Goal.** Focus the tactical RPG pass on bug fixing rather than adding new roadmap surface. Verify the current workspace, then address a concrete observability defect in the shared action path.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/game.rs:3645` - `Game::compute_outcome()` now preserves explicit `ActionOutcome::Failed` values set by action handlers before falling back to log and state-delta inference. This keeps failed equipment upgrade attempts from being reported as generic `StateUpdated` outcomes.
+- `prototype/wuthering-terminal/tests/integration.rs:456` - Added regression coverage for upgrading without an Upgrade Kit.
+- `prototype/wuthering-terminal/tests/integration.rs:477` - Added regression coverage for trying to upgrade an empty equipment slot while confirming the Upgrade Kit remains in inventory/world state.
+
+**Reasoning.** The upgrade action already set precise failures internally, but the outer report derivation only recognized a fixed set of failure log prefixes. Adding more string prefixes would keep the fragile log-scraping behavior growing; honoring the explicit failure outcome keeps the shared terminal/script/replay path observable without changing gameplay state.
+
+**Assumptions.** Explicit `last_outcome` failures are authoritative for an action. Successful actions should continue to use existing state-delta, event, and log-derived structured outcomes so combat, floor transitions, equipment rewards, and successful upgrades keep their current precedence.
+
+**Gotchas.** `World::contains<T>()` checks for component-column existence, not entity liveness. The regression test uses `World::is_alive(kit)` to assert the unused Upgrade Kit was not despawned.
+
+**Follow-ups.** Consider replacing more log-derived outcome parsing with explicit structured outcomes from action handlers, especially for crafting and equipment rewards, to reduce future string coupling.

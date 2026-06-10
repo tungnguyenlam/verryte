@@ -3642,6 +3642,10 @@ impl Game {
             }
         }
 
+        if let ActionOutcome::Failed { .. } = &self.last_outcome {
+            return self.last_outcome.clone();
+        }
+
         if before.floor != break_after.floor {
             return ActionOutcome::FloorTransition {
                 from: before.floor,
