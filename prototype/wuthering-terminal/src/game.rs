@@ -3642,8 +3642,17 @@ impl Game {
             }
         }
 
-        if let ActionOutcome::Failed { .. } = &self.last_outcome {
-            return self.last_outcome.clone();
+        match (&self.last_outcome, action) {
+            (ActionOutcome::Failed { .. }, _) => return self.last_outcome.clone(),
+            (
+                ActionOutcome::ItemUsed { .. },
+                Action::UseItem(_) | Action::Skill1 | Action::Skill2 | Action::Skill3,
+            )
+            | (ActionOutcome::Crafted { .. }, Action::CraftItem(_, _))
+            | (ActionOutcome::EquipmentUpgraded { .. }, Action::UpgradeEquipment(_)) => {
+                return self.last_outcome.clone();
+            }
+            _ => {}
         }
 
         if before.floor != break_after.floor {
@@ -4723,6 +4732,7 @@ impl Game {
                             {
                                 let item_name = item.name.clone();
                                 let effect = item.effect.clone();
+                                let mut should_consume = true;
                                 self.log(format!("Used {}!", item_name));
 
                                 match effect {
@@ -4890,7 +4900,15 @@ impl Game {
                                         }
                                     }
                                     crate::components::ItemEffect::UpgradeKit => {
-                                        self.log("Upgrade Kit used — no target selected.");
+                                        should_consume = false;
+                                        self.log(
+                                            "Upgrade Kit must be used with equip_upgrade:<slot>.",
+                                        );
+                                        self.last_outcome =
+                                            crate::snapshot::ActionOutcome::Failed {
+                                                reason: "Upgrade Kit requires an equipment slot"
+                                                    .to_string(),
+                                            };
                                     }
                                 }
 
@@ -4898,13 +4916,35 @@ impl Game {
                                 self.world.resource_mut::<GameState>().unwrap().ui_state =
                                     crate::components::UIState::Normal;
 
-                                // Consumed item entity is gone
-                                self.world.despawn(item_ent);
+                                if should_consume {
+                                    self.last_outcome = crate::snapshot::ActionOutcome::ItemUsed {
+                                        name: item_name,
+                                    };
+                                    // Consumed item entity is gone
+                                    self.world.despawn(item_ent);
+                                } else if let Some(inv) =
+                                    self.world.get_mut::<crate::components::Inventory>(entity)
+                                {
+                                    inv.items.insert(idx.min(inv.items.len()), item_ent);
+                                }
                             }
                         } else {
                             self.log("Invalid item slot!");
+                            self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                                reason: "Invalid item slot".to_string(),
+                            };
                         }
+                    } else {
+                        self.log("Inventory must be open to use items!");
+                        self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                            reason: "Inventory must be open to use items".to_string(),
+                        };
                     }
+                } else {
+                    self.log("Select a character first to use an item!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "Select a character first".to_string(),
+                    };
                 }
             }
             Action::ToggleInventory => {
@@ -5216,9 +5256,15 @@ impl Game {
                         self.transition_to_next_floor();
                     } else {
                         self.log("You must stand on a staircase to descend!");
+                        self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                            reason: "You must stand on a staircase to descend".to_string(),
+                        };
                     }
                 } else {
                     self.log("Select a character first!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "Select a character first".to_string(),
+                    };
                 }
             }
             Action::ChangeWeather(weather_type) => {
@@ -5314,6 +5360,9 @@ impl Game {
                                     "Alchemy success! Crafted {} from {} and {}.",
                                     new_name, name1, name2
                                 ));
+                                self.last_outcome = crate::snapshot::ActionOutcome::Crafted {
+                                    item_name: new_name.clone(),
+                                };
 
                                 let (tcx, tcy) = self.get_tile_center_pixels(
                                     *self.world.get::<Position>(entity).unwrap(),
@@ -5326,13 +5375,22 @@ impl Game {
                                 }
                             } else {
                                 self.log("No valid recipe for those items!");
+                                self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                                    reason: "No valid recipe for those items".to_string(),
+                                };
                             }
                         }
                     } else {
                         self.log("Invalid crafting slots chosen!");
+                        self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                            reason: "Invalid crafting slots chosen".to_string(),
+                        };
                     }
                 } else {
                     self.log("Select a character first!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "Select a character first".to_string(),
+                    };
                 }
             }
             Action::UpgradeEquipment(slot) => {

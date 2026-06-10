@@ -1,10 +1,10 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    CharacterClass, EquipmentSlot, EquippedItems, GameState, Inventory, Outcome, Stats, TurnPhase,
-    TurnTransition,
+    CharacterClass, EquipmentSlot, EquippedItems, GameState, Inventory, ItemEffect, Outcome, Stats,
+    TurnPhase, TurnTransition, UIState,
 };
 use wuthering_terminal::equipment;
-use wuthering_terminal::snapshot::ActionOutcome;
+use wuthering_terminal::snapshot::{ActionOutcome, FailureCategory};
 use wuthering_terminal::{Action, Game, Position, Spawner};
 
 fn find_entity(game: &Game, class: CharacterClass) -> verryte_core::Entity {
@@ -375,7 +375,7 @@ fn use_healing_item_restores_hp() {
 
     let items_before = game.world.get::<Inventory>(warrior).unwrap().items.len();
 
-    game.apply_action(Action::Skill1, ActionSource::Terminal);
+    let report = game.apply_action(Action::Skill1, ActionSource::Terminal);
 
     let hp_after = game.world.get::<Stats>(warrior).unwrap().hp;
     assert_eq!(
@@ -388,7 +388,13 @@ fn use_healing_item_restores_hp() {
 
     assert_eq!(
         game.world.resource::<GameState>().unwrap().ui_state,
-        wuthering_terminal::components::UIState::Normal
+        UIState::Normal
+    );
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::ItemUsed {
+            name: "Healing Potion".to_string(),
+        }
     );
 }
 
@@ -410,6 +416,116 @@ fn healing_does_not_exceed_max_hp() {
         "HP {} should not exceed max_hp {}",
         hp_after,
         max_hp
+    );
+}
+
+#[test]
+fn use_item_without_inventory_reports_context_failure() {
+    let mut game = Game::new();
+
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(Action::UseItem(0), ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "Inventory must be open to use items".to_string(),
+        }
+    );
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::WrongContext)
+    );
+}
+
+#[test]
+fn use_upgrade_kit_directly_reports_failure_and_keeps_item() {
+    let mut game = Game::new();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let kit = game.world.spawn_item("Upgrade Kit", ItemEffect::UpgradeKit);
+    game.world
+        .get_mut::<Inventory>(warrior)
+        .unwrap()
+        .items
+        .insert(0, kit);
+    select_character(&mut game, Position::new(4, 4));
+    game.world.resource_mut::<GameState>().unwrap().ui_state = UIState::Inventory;
+    let items_before = game.world.get::<Inventory>(warrior).unwrap().items.len();
+
+    let report = game.apply_action(Action::UseItem(0), ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "Upgrade Kit requires an equipment slot".to_string(),
+        }
+    );
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::InvalidItem)
+    );
+    assert_eq!(
+        game.world.get::<Inventory>(warrior).unwrap().items.len(),
+        items_before
+    );
+    assert!(game.world.is_alive(kit));
+}
+
+#[test]
+fn craft_valid_recipe_reports_crafted_outcome() {
+    let mut game = Game::new();
+
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(Action::CraftItem(0, 1), ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Crafted {
+            item_name: "Elixir of Life".to_string(),
+        }
+    );
+}
+
+#[test]
+fn craft_invalid_recipe_reports_failure_category() {
+    let mut game = Game::new();
+
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(Action::CraftItem(1, 2), ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "No valid recipe for those items".to_string(),
+        }
+    );
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::InvalidRecipe)
+    );
+}
+
+#[test]
+fn next_floor_off_stairs_reports_context_failure() {
+    let mut game = Game::new();
+
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(Action::NextFloor, ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "You must stand on a staircase to descend".to_string(),
+        }
+    );
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::WrongContext)
     );
 }
 

@@ -4743,3 +4743,24 @@ per-turn schedule.
 **Gotchas.** `World::contains<T>()` checks for component-column existence, not entity liveness. The regression test uses `World::is_alive(kit)` to assert the unused Upgrade Kit was not despawned.
 
 **Follow-ups.** Consider replacing more log-derived outcome parsing with explicit structured outcomes from action handlers, especially for crafting and equipment rewards, to reduce future string coupling.
+
+## 2026-06-11 - Structured item and crafting outcomes
+
+**Goal.** Continue the autonomous engine run by improving Wuthering Terminal's shared action observability for inventory, crafting, and floor-transition actions without adding a separate test or script path.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/game.rs:3642` - `compute_outcome()` now preserves explicit item-use, crafting, and equipment-upgrade outcomes from action handlers, including inventory hotkeys that enter through `Skill1`/`Skill2`/`Skill3` while the inventory overlay is open.
+- `prototype/wuthering-terminal/src/game.rs:4732` - item use now reports `ActionOutcome::ItemUsed`, rejects direct Upgrade Kit use with a structured failure, and keeps the kit in inventory for the proper `equip_upgrade:<slot>` action.
+- `prototype/wuthering-terminal/src/game.rs:5256` - `NextFloor` off stairs now reports a precise structured failure instead of falling through to generic state/no-op inference.
+- `prototype/wuthering-terminal/src/game.rs:5360` - crafting now sets explicit `Crafted` or `Failed` outcomes for valid recipes, invalid recipes, invalid slots, and missing selection.
+- `prototype/wuthering-terminal/src/snapshot.rs:141` - expanded `FailureCategory` with `InvalidItem`, `InvalidRecipe`, and `WrongContext` for agent-friendly failure classification.
+- `prototype/wuthering-terminal/tests/integration.rs:375` - added focused integration coverage for item-use outcomes, invalid item context, direct Upgrade Kit protection, crafting success/failure outcomes, and off-stairs floor failure classification.
+- `README.md` and `prototype/wuthering-terminal/README.md` - documented structured item/craft/failure outcomes and the Upgrade Kit usage rule.
+
+**Reasoning.** Recent work had already made equipment progression observable, but item use and crafting still relied on log-derived or generic outcomes. The smallest useful vertical slice was to set explicit outcomes in the existing `Action` handlers and keep `compute_outcome()` as the shared report boundary. This avoids a separate script-only interpretation layer and keeps terminal hotkeys, scripts, replays, and tests aligned.
+
+**Assumptions.** `last_outcome` is reset before each top-level action, so preserving explicit item/craft outcomes is safe when scoped to item, inventory hotkey, craft, and equipment actions. Upgrade Kits should only be consumed by `UpgradeEquipment`; direct inventory use is treated as a wrong action rather than a consumable no-op.
+
+**Gotchas.** Inventory number hotkeys are represented as `Skill1`/`Skill2`/`Skill3` before delegating to `UseItem`, so `compute_outcome()` must preserve `ItemUsed` for those actions too. The starter inventory contains a valid potion+elixir recipe, so invalid recipe tests must choose an actually unmatched pair.
+
+**Follow-ups.** Consider replacing more log-derived outcome parsing with explicit action-handler outcomes, especially for echo absorption, set rewards, and boss phase transitions. A later cleanup could centralize the explicit-outcome handoff so action handlers do not set `last_outcome` directly.

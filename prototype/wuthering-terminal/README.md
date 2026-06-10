@@ -38,8 +38,8 @@ Characters can have unique traits that modify gameplay:
 - **QTE team swap**: spend concert energy for instant swap with intro skill
 - **Boss phases**: multi-phase fight with stat boosts and new attack patterns
 - **Inventory**: healing potions, energy elixirs, cleanse remedies, aegis elixirs
-- **Equipment**: class starter gear, enemy-awarded set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration. Equipment upgrades and set rewards are exposed as structured `ActionOutcome` values for scripts and replays.
-- **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`
+- **Equipment**: class starter gear, enemy-awarded set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration. Equipment upgrades and set rewards are exposed as structured `ActionOutcome` values for scripts and replays. Upgrade Kits are used through `equip_upgrade:<slot>` and are not consumed by direct inventory use.
+- **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`. Successful crafts report `ActionOutcome::Crafted`; invalid recipes and slots report structured failures.
 - **Floor progression**: stairs spawn upon defeating enemies, triggering descent to Floor 2 (using `Action::NextFloor` or keyboard key `>`) which features a procedural BSP dungeon layout
 - **Elemental shields**: absorb damage before HP
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
@@ -101,6 +101,9 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "confirm skil
 
 The script runner accepts action tokens separated by spaces. It prints
 rendered frames, state summaries, and event outcomes after each action.
+Item use, crafting, equipment upgrades, set rewards, and invalid inventory or
+floor-transition attempts are reported through structured `ActionOutcome`
+values so scripts and replays do not need to scrape log text.
 
 ### Script tokens
 

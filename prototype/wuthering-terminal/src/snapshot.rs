@@ -141,6 +141,9 @@ pub enum FailureCategory {
     OutOfRange,
     TileBlocked,
     NoSelection,
+    InvalidItem,
+    InvalidRecipe,
+    WrongContext,
     Other,
 }
 
@@ -160,6 +163,16 @@ impl ActionOutcome {
                     Some(FailureCategory::TileBlocked)
                 } else if reason.starts_with("Select a character") {
                     Some(FailureCategory::NoSelection)
+                } else if reason.starts_with("Invalid item") || reason.starts_with("Upgrade Kit") {
+                    Some(FailureCategory::InvalidItem)
+                } else if reason.starts_with("Invalid crafting")
+                    || reason.starts_with("No valid recipe")
+                {
+                    Some(FailureCategory::InvalidRecipe)
+                } else if reason.starts_with("Inventory must be open")
+                    || reason.starts_with("You must stand on")
+                {
+                    Some(FailureCategory::WrongContext)
                 } else {
                     Some(FailureCategory::Other)
                 }

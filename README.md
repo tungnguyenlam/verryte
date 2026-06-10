@@ -217,7 +217,7 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "inspect:4,4 
 cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
-`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, equipment upgrades, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including equipment upgrade and set reward reports.
+`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, and precise failure reports for invalid inventory/crafting/floor actions.
 The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
 
 ## Verification
