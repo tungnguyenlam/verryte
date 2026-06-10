@@ -38,7 +38,7 @@ Characters can have unique traits that modify gameplay:
 - **QTE team swap**: spend concert energy for instant swap with intro skill
 - **Boss phases**: multi-phase fight with stat boosts and new attack patterns
 - **Inventory**: healing potions, energy elixirs, cleanse remedies, aegis elixirs
-- **Equipment**: class starter gear, set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration
+- **Equipment**: class starter gear, enemy-awarded set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration. Equipment upgrades and set rewards are exposed as structured `ActionOutcome` values for scripts and replays.
 - **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`
 - **Floor progression**: stairs spawn upon defeating enemies, triggering descent to Floor 2 (using `Action::NextFloor` or keyboard key `>`) which features a procedural BSP dungeon layout
 - **Elemental shields**: absorb damage before HP

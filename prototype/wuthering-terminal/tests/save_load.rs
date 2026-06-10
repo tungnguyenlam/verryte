@@ -921,6 +921,15 @@ fn action_outcome_variants_roundtrip() {
             target: "Boss".to_string(),
         },
         ActionOutcome::ComboExtended { combo_count: 3 },
+        ActionOutcome::EquipmentUpgraded {
+            item_name: "Iron Sword".to_string(),
+            slot: wuthering_terminal::components::EquipmentSlot::Weapon,
+            level: 1,
+        },
+        ActionOutcome::EquipmentRewarded {
+            item_name: "DarkBlade".to_string(),
+            hero: "Kael".to_string(),
+        },
         ActionOutcome::StateUpdated,
         ActionOutcome::Failed {
             reason: "Not enough AP".to_string(),

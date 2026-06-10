@@ -425,6 +425,7 @@ pub fn handle_defeat(
             "Blight Sovereign dropped an Echo! Move a character to its tile to absorb it.",
         );
         world.builder().with(pos).with(EchoItem { class }).build();
+        award_equipment_set_reward(world, class, name);
 
         // Visual boss death burst
         let (cx, cy) = get_tile_center_pixels(world, pos);
@@ -471,6 +472,9 @@ pub fn handle_defeat(
             }
         }
     }
+    if class != CharacterClass::Boss {
+        award_equipment_set_reward(world, class, name);
+    }
 
     let enemy_exists = world
         .query::<Team>()
@@ -485,6 +489,39 @@ pub fn handle_defeat(
         log(
             world,
             "[fg:32CD32][b]Victory![/] All enemies defeated.[/fg]",
+        );
+    }
+}
+
+fn award_equipment_set_reward(
+    world: &mut World,
+    defeated_class: CharacterClass,
+    defeated_name: &str,
+) {
+    let Some((hero_class, equipment)) =
+        crate::equipment::set_reward_for_defeated_class(defeated_class)
+    else {
+        return;
+    };
+    let item_name = equipment.name.clone();
+    let Some(hero) = world
+        .query2::<Team, CharacterClass>()
+        .iter()
+        .find(|(_, team, class)| **team == Team::Player && **class == hero_class)
+        .map(|(entity, _, _)| *entity)
+    else {
+        return;
+    };
+    if let Some(equipped) = world.get_mut::<EquippedItems>(hero) {
+        equipped.equip(equipment);
+        log(
+            world,
+            format!(
+                "{} equipped {} from {}.",
+                Game::get_class_name(hero_class),
+                item_name,
+                defeated_name
+            ),
         );
     }
 }

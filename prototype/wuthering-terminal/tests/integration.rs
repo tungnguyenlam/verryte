@@ -430,11 +430,19 @@ fn starter_upgrade_kit_upgrades_equipped_weapon() {
     let items_before = game.world.get::<Inventory>(warrior).unwrap().items.len();
     select_character(&mut game, Position::new(4, 4));
 
-    game.apply_action(
+    let report = game.apply_action(
         Action::UpgradeEquipment(EquipmentSlot::Weapon),
         ActionSource::Script,
     );
 
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::EquipmentUpgraded {
+            item_name: "Iron Sword".to_string(),
+            slot: EquipmentSlot::Weapon,
+            level: 1,
+        }
+    );
     let equipped = game.world.get::<EquippedItems>(warrior).unwrap();
     let weapon = equipped.weapon.as_ref().unwrap();
     assert_eq!(weapon.upgrade_level, 1);
@@ -443,6 +451,38 @@ fn starter_upgrade_kit_upgrades_equipped_weapon() {
         game.world.get::<Inventory>(warrior).unwrap().items.len(),
         items_before - 1
     );
+}
+
+#[test]
+fn defeating_set_reward_enemies_auto_equips_shadow_knight_set() {
+    let mut game = Game::new();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let stalker = find_entity(&game, CharacterClass::ShadowStalker);
+    let stalker_pos = *game.world.get::<Position>(stalker).unwrap();
+    game.handle_defeat(
+        stalker,
+        "Shadow Stalker",
+        CharacterClass::ShadowStalker,
+        stalker_pos,
+    );
+
+    let sentinel = find_entity(&game, CharacterClass::CursedSentinel);
+    let sentinel_pos = *game.world.get::<Position>(sentinel).unwrap();
+    game.handle_defeat(
+        sentinel,
+        "Cursed Sentinel",
+        CharacterClass::CursedSentinel,
+        sentinel_pos,
+    );
+
+    let equipped = game.world.get::<EquippedItems>(warrior).unwrap();
+    assert_eq!(equipped.armor.as_ref().unwrap().name, "ShadowArmor");
+    assert_eq!(equipped.weapon.as_ref().unwrap().name, "DarkBlade");
+    assert!(game
+        .snapshot()
+        .active_set_bonuses
+        .contains(&"Shadow Knight".to_string()));
 }
 
 #[test]

@@ -1446,6 +1446,7 @@ impl Game {
                 }
             }
         }
+        self.award_equipment_set_reward(class, name);
 
         let enemy_exists = self
             .world
@@ -1476,6 +1477,33 @@ impl Game {
                 self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Victory;
                 self.log("Victory! All enemies defeated and Floor 2 conquered!");
             }
+        }
+    }
+
+    fn award_equipment_set_reward(&mut self, defeated_class: CharacterClass, defeated_name: &str) {
+        let Some((hero_class, equipment)) =
+            crate::equipment::set_reward_for_defeated_class(defeated_class)
+        else {
+            return;
+        };
+        let item_name = equipment.name.clone();
+        let Some(hero) = self
+            .world
+            .query2::<Team, CharacterClass>()
+            .iter()
+            .find(|(_, team, class)| **team == Team::Player && **class == hero_class)
+            .map(|(entity, _, _)| *entity)
+        else {
+            return;
+        };
+        if let Some(equipped) = self.world.get_mut::<EquippedItems>(hero) {
+            equipped.equip(equipment);
+            self.log(format!(
+                "{} equipped {} from {}.",
+                Game::get_class_name(hero_class),
+                item_name,
+                defeated_name
+            ));
         }
     }
 
@@ -3664,6 +3692,30 @@ impl Game {
                     .unwrap_or("Unknown")
                     .to_string();
                 return ActionOutcome::Crafted { item_name };
+            }
+            if let Some(upgraded) = msg.strip_prefix("Upgraded ") {
+                let upgraded = upgraded.trim_end_matches('.');
+                if let Some((item_name, level)) = upgraded.rsplit_once(" +") {
+                    if let (Action::UpgradeEquipment(slot), Ok(level)) =
+                        (action, level.parse::<u8>())
+                    {
+                        return ActionOutcome::EquipmentUpgraded {
+                            item_name: item_name.to_string(),
+                            slot,
+                            level,
+                        };
+                    }
+                }
+            }
+            if let Some(reward) = msg.strip_suffix('.') {
+                if let Some((hero, rest)) = reward.split_once(" equipped ") {
+                    if let Some((item_name, _source)) = rest.split_once(" from ") {
+                        return ActionOutcome::EquipmentRewarded {
+                            item_name: item_name.to_string(),
+                            hero: hero.to_string(),
+                        };
+                    }
+                }
             }
         }
 

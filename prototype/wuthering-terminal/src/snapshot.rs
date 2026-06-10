@@ -119,6 +119,14 @@ pub enum ActionOutcome {
     StatusApplied { status: String, target: String },
     /// A combo chain was extended.
     ComboExtended { combo_count: u32 },
+    /// An equipped item was upgraded.
+    EquipmentUpgraded {
+        item_name: String,
+        slot: crate::components::EquipmentSlot,
+        level: u8,
+    },
+    /// Defeating an enemy awarded and equipped a set item.
+    EquipmentRewarded { item_name: String, hero: String },
     /// The action triggered a state-only change (selection, cursor, inventory).
     StateUpdated,
     /// The action failed (e.g. out of AP, out of range, invalid target).

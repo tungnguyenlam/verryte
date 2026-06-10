@@ -251,6 +251,18 @@ pub fn equipment_for_class(class: CharacterClass) -> Vec<Equipment> {
     }
 }
 
+pub fn set_reward_for_defeated_class(class: CharacterClass) -> Option<(CharacterClass, Equipment)> {
+    match class {
+        CharacterClass::ShadowStalker => Some((CharacterClass::Warrior, shadow_armor())),
+        CharacterClass::CursedSentinel => Some((CharacterClass::Warrior, dark_blade())),
+        CharacterClass::PlagueWraith => Some((CharacterClass::Mage, arcane_robe())),
+        CharacterClass::GlacialGolem => Some((CharacterClass::Mage, arcane_staff())),
+        CharacterClass::EnemyCleric => Some((CharacterClass::Healer, divine_staff())),
+        CharacterClass::Boss => Some((CharacterClass::Healer, divine_vestments())),
+        _ => None,
+    }
+}
+
 pub fn dark_blade() -> Equipment {
     equip!(
         "DarkBlade",
@@ -412,6 +424,22 @@ mod tests {
         assert!(gear.is_empty());
         let gear = equipment_for_class(CharacterClass::ShadowStalker);
         assert!(gear.is_empty());
+    }
+
+    #[test]
+    fn test_set_reward_for_defeated_class() {
+        let (hero, equipment) = set_reward_for_defeated_class(CharacterClass::CursedSentinel)
+            .expect("sentinel should award a set piece");
+        assert_eq!(hero, CharacterClass::Warrior);
+        assert_eq!(equipment.name, "DarkBlade");
+        assert_eq!(equipment.set_id, Some(EquipmentSet::ShadowKnight));
+
+        let (hero, equipment) = set_reward_for_defeated_class(CharacterClass::EnemyCleric)
+            .expect("cleric should award a set piece");
+        assert_eq!(hero, CharacterClass::Healer);
+        assert_eq!(equipment.name, "DivineStaff");
+
+        assert!(set_reward_for_defeated_class(CharacterClass::CorruptedSpore).is_none());
     }
 
     #[test]

@@ -164,7 +164,7 @@ those pieces.
 - `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
   Features team-swapping, Echo absorption, telegraphed enemy attacks with
   parry/dodge, an alchemy crafting system for item combinations, equipment
-  upgrades and special effects (lifesteal and per-turn HP regeneration),
+  upgrades, enemy-awarded set gear, and special effects (lifesteal and per-turn HP regeneration),
   floor-by-floor progression with procedural BSP dungeon generation, and an adaptive resolution sprite system that scales visual
   fidelity to the user's terminal size. Sprites are compiled from PNG pixel
   art into static Rust arrays at build time using half-block sub-pixel packing.
@@ -217,7 +217,7 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "inspect:4,4 
 cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
-`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, and target selections. The script runner parses these commands and validates game logic.
+`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, equipment upgrades, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including equipment upgrade and set reward reports.
 The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
 
 ## Verification

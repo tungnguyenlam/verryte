@@ -4706,3 +4706,23 @@ per-turn schedule.
 **Gotchas.** The `UpgradeEquipment` action and parser existed but had no game handler. Adding starter upgrade kits broke older exact entity-count and inventory-order tests, so kit placement moved to enemy rewards and focused tests provision kits directly. Fixing equipment-aware combo damage changed exact damage assertions because Kael's starter sword now correctly contributes before combo/morale/weather modifiers.
 
 **Follow-ups.** Consider adding structured `ActionOutcome` variants for equipment upgrades and equipment-triggered healing instead of relying on `StateUpdated` and logs. Set equipment exists as constructors but still needs broader loot placement beyond upgrade kits.
+
+## 2026-06-11 - Equipment reward outcomes and set gear drops
+
+**Goal.** Continue the tactical RPG prototype by making the equipment system more observable through structured outcomes and by wiring existing set gear into actual enemy reward paths.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/snapshot.rs` - Added `ActionOutcome::EquipmentUpgraded` and `ActionOutcome::EquipmentRewarded` so scripts/replays can assert equipment progression without scraping generic state updates.
+- `prototype/wuthering-terminal/src/equipment.rs` - Added `set_reward_for_defeated_class()` mapping enemies to class-appropriate set pieces: Shadow Knight, Arcane Weaver, and Divine Guardian rewards.
+- `prototype/wuthering-terminal/src/game.rs` - `handle_defeat()` now auto-equips set rewards on the matching hero after existing echo and upgrade-kit reward handling. `compute_outcome()` derives structured equipment outcomes from the same shared action/report path.
+- `prototype/wuthering-terminal/src/systems/combat.rs` - Mirrored set reward auto-equip in the reusable combat defeat path so system-driven defeats do not diverge from `Game::handle_defeat()`.
+- `prototype/wuthering-terminal/tests/integration.rs` and `tests/save_load.rs` - Added coverage for structured upgrade outcomes, set reward auto-equip, active set snapshot reporting, and outcome serialization.
+- `README.md` and `prototype/wuthering-terminal/README.md` - Documented enemy-awarded set gear and structured equipment outcomes.
+
+**Reasoning.** The repository already had set item constructors and set bonus detection, but the items were not reachable through gameplay. Because the current inventory model only stores consumable `Item`s, auto-equipping set rewards on enemy defeat is the smallest complete vertical slice: no half-built equipment inventory UI, no separate control path, and the reward immediately affects snapshots and combat stats.
+
+**Assumptions.** Replacing starter gear with set rewards is acceptable progression behavior for now. Enemy-to-set-piece mapping is deterministic rather than RNG-based so scripts and replay tests can rely on it.
+
+**Gotchas.** `StepReport` carries one primary `ActionOutcome`; combat actions that both hit and trigger equipment healing still report the combat hit. The new equipment outcomes cover equipment-only upgrades and defeat reward logs, not secondary healing side effects.
+
+**Follow-ups.** Consider adding an explicit equipment inventory/equip action if future content needs player choice between multiple set pieces. The duplicated defeat reward wiring in `game.rs` and `systems/combat.rs` should eventually be folded into one shared defeat helper when the combat paths are unified.
