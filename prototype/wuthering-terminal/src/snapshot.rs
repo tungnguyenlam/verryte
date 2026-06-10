@@ -61,6 +61,8 @@ pub struct Snapshot {
     pub lore_total: u32,
     #[serde(default)]
     pub active_modifiers: Vec<String>,
+    #[serde(default)]
+    pub active_set_bonuses: Vec<String>,
 }
 
 fn default_floor_one() -> u32 {

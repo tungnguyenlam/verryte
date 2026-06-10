@@ -154,6 +154,7 @@ pub fn emit_burst(cx: f32, cy: f32, count: usize, color: Color, glyphs: &[char])
 }
 
 /// Emit particles that start in a burst/ring and then converge toward a target point.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_homeward(
     cx: f32,
     cy: f32,
@@ -457,6 +458,145 @@ pub fn emit_shockwave(cx: f32, cy: f32, count: usize, color: Color) -> Vec<Parti
             vy: angle.sin() * speed * 0.5,
             glyph: glyphs[i % glyphs.len()],
             fg: color,
+            bg: Color::BLACK,
+            lifetime,
+            max_lifetime: lifetime,
+            attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
+        });
+    }
+    particles
+}
+
+/// Emit gentle falling snowflakes across the top of the area.
+pub fn emit_snow(width: u16, height: u16) -> Vec<Particle> {
+    let count = ((width as usize) / 3 + 4).max(8);
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['·', '*', '◦'];
+    let colors = [
+        Color(255, 255, 255), // White
+        Color(220, 235, 255), // Light blue
+        Color(200, 220, 255), // Pale blue
+        Color(240, 245, 255), // Near white
+    ];
+    for i in 0..count {
+        let x = (i as f32 * (width.max(1) as f32 / count.max(1) as f32))
+            + ((i as f32 * 2.37) % 2.0)
+            - 1.0;
+        let speed = 0.4 + (i as f32 * 0.13) % 0.6;
+        let lifetime = 2.0 + (i as f32 * 0.19) % 1.5;
+        particles.push(Particle {
+            x: x.max(0.0),
+            y: (i as f32 * 0.73) % (height.max(1) as f32 * 0.15).max(2.0),
+            vx: ((i as f32 * 1.37) % 1.0) - 0.5,
+            vy: speed,
+            glyph: glyphs[i % glyphs.len()],
+            fg: colors[i % colors.len()],
+            bg: Color::BLACK,
+            lifetime,
+            max_lifetime: lifetime,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Wave {
+                frequency: 0.5 + (i as f32 * 0.11) % 0.5,
+                amplitude: 0.3 + (i as f32 * 0.07) % 0.4,
+            },
+        });
+    }
+    particles
+}
+
+/// Emit rain drops falling fast from the top of the area.
+pub fn emit_rain(width: u16, _height: u16) -> Vec<Particle> {
+    let count = ((width as usize) / 2 + 6).max(10);
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['│', '┃', '|'];
+    let colors = [
+        Color(100, 180, 255), // Light cyan
+        Color(80, 160, 235),  // Blue
+        Color(120, 200, 255), // Cyan
+        Color(60, 140, 220),  // Deep blue
+    ];
+    for i in 0..count {
+        let x = (i as f32 * (width.max(1) as f32 / count.max(1) as f32))
+            + ((i as f32 * 3.17) % 2.0)
+            - 1.0;
+        let speed = 4.0 + (i as f32 * 0.31) % 3.0;
+        let lifetime = 0.3 + (i as f32 * 0.07) % 0.3;
+        particles.push(Particle {
+            x: x.max(0.0),
+            y: (i as f32 * 0.43) % 2.0,
+            vx: ((i as f32 * 0.97) % 0.4) - 0.2,
+            vy: speed,
+            glyph: glyphs[i % glyphs.len()],
+            fg: colors[i % colors.len()],
+            bg: Color::BLACK,
+            lifetime,
+            max_lifetime: lifetime,
+            attrs: CellAttrs::NONE.bold(),
+            trajectory: Trajectory::Straight,
+        });
+    }
+    particles
+}
+
+/// Emit blowing sand particles drifting from left to right.
+pub fn emit_sandstorm(width: u16, height: u16) -> Vec<Particle> {
+    let count = ((height as usize) / 2 + 4).max(8);
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['·', '°', '∘'];
+    let colors = [
+        Color(210, 180, 100), // Sand
+        Color(180, 150, 80),  // Brown sand
+        Color(230, 200, 120), // Light sand
+        Color(160, 130, 70),  // Dark sand
+    ];
+    for i in 0..count {
+        let y = (i as f32 * (height.max(1) as f32 / count.max(1) as f32))
+            + ((i as f32 * 1.73) % 2.0)
+            - 1.0;
+        let speed = 2.0 + (i as f32 * 0.23) % 2.0;
+        let lifetime = 1.0 + (i as f32 * 0.13) % 1.0;
+        particles.push(Particle {
+            x: (i as f32 * 0.67) % (width.max(1) as f32 * 0.1).max(2.0),
+            y: y.max(0.0),
+            vx: speed,
+            vy: ((i as f32 * 2.53) % 2.0) - 1.0,
+            glyph: glyphs[i % glyphs.len()],
+            fg: colors[i % colors.len()],
+            bg: Color::BLACK,
+            lifetime,
+            max_lifetime: lifetime,
+            attrs: CellAttrs::NONE,
+            trajectory: Trajectory::Straight,
+        });
+    }
+    particles
+}
+
+/// Emit floating embers rising from the bottom of the area.
+pub fn emit_embers(width: u16, height: u16) -> Vec<Particle> {
+    let count = ((width as usize) / 3 + 4).max(8);
+    let mut particles = Vec::with_capacity(count);
+    let glyphs = ['·', '°', '✦'];
+    let colors = [
+        Color(255, 160, 40), // Orange
+        Color(255, 80, 20),  // Red-orange
+        Color(255, 200, 60), // Yellow
+        Color(220, 60, 10),  // Deep red
+    ];
+    for i in 0..count {
+        let x = (i as f32 * (width.max(1) as f32 / count.max(1) as f32))
+            + ((i as f32 * 2.71) % 2.0)
+            - 1.0;
+        let speed = 0.5 + (i as f32 * 0.17) % 0.8;
+        let lifetime = 1.2 + (i as f32 * 0.13) % 1.0;
+        particles.push(Particle {
+            x: x.max(0.0),
+            y: height as f32 - 1.0 - ((i as f32 * 0.53) % 3.0),
+            vx: ((i as f32 * 1.67) % 1.0) - 0.5,
+            vy: -speed,
+            glyph: glyphs[i % glyphs.len()],
+            fg: colors[i % colors.len()],
             bg: Color::BLACK,
             lifetime,
             max_lifetime: lifetime,
@@ -1141,6 +1281,26 @@ impl VfxSystem {
     ) {
         self.auras
             .push(Aura::new(center_x, center_y, radius, color).with_lifetime(lifetime));
+    }
+
+    /// Trigger gentle snowfall across the given area.
+    pub fn trigger_snow(&mut self, w: u16, h: u16) {
+        self.particles.extend(emit_snow(w, h));
+    }
+
+    /// Trigger rain drops across the given area.
+    pub fn trigger_rain(&mut self, w: u16, h: u16) {
+        self.particles.extend(emit_rain(w, h));
+    }
+
+    /// Trigger a sandstorm blowing across the given area.
+    pub fn trigger_sandstorm(&mut self, w: u16, h: u16) {
+        self.particles.extend(emit_sandstorm(w, h));
+    }
+
+    /// Trigger floating embers rising across the given area.
+    pub fn trigger_embers(&mut self, w: u16, h: u16) {
+        self.particles.extend(emit_embers(w, h));
     }
 
     pub fn shake_offset(&self) -> (i16, i16) {
@@ -2150,5 +2310,186 @@ mod tests {
         let mut grid = Grid::new(20, 20);
         let viewport = crate::TileViewport::new(Rect::new(0, 0, 20, 20), 1, 1);
         vfx.render_world(&mut grid, &viewport);
+    }
+
+    #[test]
+    fn test_emit_snow_produces_particles() {
+        let snow = emit_snow(80, 24);
+        assert!(snow.len() >= 8, "snow should produce at least 8 particles");
+        for p in &snow {
+            assert!(p.alive());
+            assert!(p.vy > 0.0, "snow should fall downward");
+            assert!(
+                matches!(p.trajectory, Trajectory::Wave { .. }),
+                "snow should use Wave trajectory for sway"
+            );
+        }
+    }
+
+    #[test]
+    fn test_emit_snow_uses_correct_glyphs() {
+        let snow = emit_snow(40, 20);
+        let valid = ['·', '*', '◦'];
+        for p in &snow {
+            assert!(valid.contains(&p.glyph), "unexpected glyph: {}", p.glyph);
+        }
+    }
+
+    #[test]
+    fn test_emit_snow_small_dimensions() {
+        let snow = emit_snow(1, 1);
+        assert!(snow.len() >= 8);
+        for p in &snow {
+            assert!(p.alive());
+        }
+    }
+
+    #[test]
+    fn test_emit_rain_produces_particles() {
+        let rain = emit_rain(80, 24);
+        assert!(
+            rain.len() >= 10,
+            "rain should produce at least 10 particles"
+        );
+        for p in &rain {
+            assert!(p.alive());
+            assert!(p.vy > 0.0, "rain should fall downward");
+            assert!(
+                matches!(p.trajectory, Trajectory::Straight),
+                "rain should use Straight trajectory"
+            );
+        }
+    }
+
+    #[test]
+    fn test_emit_rain_falls_fast() {
+        let rain = emit_rain(80, 24);
+        for p in &rain {
+            assert!(p.vy >= 4.0, "rain should fall fast, got {}", p.vy);
+        }
+    }
+
+    #[test]
+    fn test_emit_rain_uses_correct_glyphs() {
+        let rain = emit_rain(40, 20);
+        let valid = ['│', '┃', '|'];
+        for p in &rain {
+            assert!(valid.contains(&p.glyph), "unexpected glyph: {}", p.glyph);
+        }
+    }
+
+    #[test]
+    fn test_emit_sandstorm_produces_particles() {
+        let sand = emit_sandstorm(80, 24);
+        assert!(
+            sand.len() >= 8,
+            "sandstorm should produce at least 8 particles"
+        );
+        for p in &sand {
+            assert!(p.alive());
+            assert!(p.vx > 0.0, "sand should blow rightward");
+        }
+    }
+
+    #[test]
+    fn test_emit_sandstorm_uses_correct_glyphs() {
+        let sand = emit_sandstorm(80, 24);
+        let valid = ['·', '°', '∘'];
+        for p in &sand {
+            assert!(valid.contains(&p.glyph), "unexpected glyph: {}", p.glyph);
+        }
+    }
+
+    #[test]
+    fn test_emit_sandstorm_vertical_scatter() {
+        let sand = emit_sandstorm(80, 24);
+        let has_positive = sand.iter().any(|p| p.vy > 0.0);
+        let has_negative = sand.iter().any(|p| p.vy < 0.0);
+        assert!(
+            has_positive && has_negative,
+            "sandstorm should scatter vertically in both directions"
+        );
+    }
+
+    #[test]
+    fn test_emit_embers_produces_particles() {
+        let embers = emit_embers(80, 24);
+        assert!(
+            embers.len() >= 8,
+            "embers should produce at least 8 particles"
+        );
+        for p in &embers {
+            assert!(p.alive());
+            assert!(p.vy < 0.0, "embers should rise upward");
+        }
+    }
+
+    #[test]
+    fn test_emit_embers_uses_correct_glyphs() {
+        let embers = emit_embers(40, 20);
+        let valid = ['·', '°', '✦'];
+        for p in &embers {
+            assert!(valid.contains(&p.glyph), "unexpected glyph: {}", p.glyph);
+        }
+    }
+
+    #[test]
+    fn test_emit_embers_spawns_near_bottom() {
+        let embers = emit_embers(80, 24);
+        for p in &embers {
+            assert!(
+                p.y >= 20.0,
+                "embers should spawn near bottom, got y={}",
+                p.y
+            );
+        }
+    }
+
+    #[test]
+    fn test_weather_trigger_helpers() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_snow(80, 24);
+        let snow_count = vfx.particles.len();
+        assert!(snow_count > 0);
+
+        vfx.trigger_rain(80, 24);
+        let after_rain = vfx.particles.len();
+        assert!(after_rain > snow_count);
+
+        vfx.trigger_sandstorm(80, 24);
+        let after_sand = vfx.particles.len();
+        assert!(after_sand > after_rain);
+
+        vfx.trigger_embers(80, 24);
+        let after_embers = vfx.particles.len();
+        assert!(after_embers > after_sand);
+    }
+
+    #[test]
+    fn test_weather_particles_update_and_expire() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_snow(40, 20);
+        vfx.trigger_rain(40, 20);
+        let initial = vfx.particles.len();
+        assert!(initial > 0);
+
+        for _ in 0..20 {
+            vfx.update(0.5);
+        }
+        assert!(
+            vfx.particles.is_empty(),
+            "all weather particles should expire after enough time"
+        );
+    }
+
+    #[test]
+    fn test_weather_particles_render_does_not_panic() {
+        let mut vfx = VfxSystem::new();
+        vfx.trigger_snow(20, 10);
+        vfx.trigger_rain(20, 10);
+        vfx.trigger_sandstorm(20, 10);
+        vfx.trigger_embers(20, 10);
+        let mut grid = Grid::new(20, 10);
+        vfx.render(&mut grid, 20, 10);
     }
 }

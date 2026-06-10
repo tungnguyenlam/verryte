@@ -9,6 +9,8 @@ use crate::key::{InputEvent, Key, KeyEventKind, MouseButton, ScrollDirection};
 use crate::trace::ActionTrace;
 use crate::RepeatConfig;
 
+type InterceptorFn<A> = std::sync::Arc<dyn Fn(&A) -> bool + Send + Sync>;
+
 /// The shared event/script funnel.
 ///
 /// Holds the active [`Bindings`] and a queue of pending actions. Frontends
@@ -30,7 +32,7 @@ pub struct InputRouter<A: Clone> {
     held_time: f32,
     last_repeat_time: f32,
     profiles: crate::bindings::BindingsProfileRegistry<A>,
-    interceptor: Option<std::sync::Arc<dyn Fn(&A) -> bool + Send + Sync>>,
+    interceptor: Option<InterceptorFn<A>>,
 }
 
 #[derive(Clone, Debug)]

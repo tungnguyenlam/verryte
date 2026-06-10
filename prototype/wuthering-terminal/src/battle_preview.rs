@@ -15,9 +15,7 @@ impl BattlePreview {
         crit_chance: u32,
     ) -> DamagePreview {
         let base_damage = (attacker_atk - target_def / 2).max(1);
-        let level_bonus = ((attacker_level as i32 - target_level as i32) * 2)
-            .max(-10)
-            .min(10);
+        let level_bonus = ((attacker_level as i32 - target_level as i32) * 2).clamp(-10, 10);
         let min_dmg =
             ((base_damage + level_bonus) as f32 * elemental_modifier * 0.8).max(1.0) as i32;
         let max_dmg =
@@ -144,7 +142,7 @@ impl BattlePreview {
                             if let Some(pstats) = world.get::<Stats>(pe) {
                                 if pstats.hp > 0 {
                                     let dist = (ppos.x - pos.x).abs() + (ppos.y - pos.y).abs();
-                                    if nearest_player.as_ref().map_or(true, |n| dist < n.2) {
+                                    if nearest_player.as_ref().is_none_or(|n| dist < n.2) {
                                         nearest_player = Some((pe, *ppos, dist));
                                     }
                                 }
@@ -185,10 +183,10 @@ impl BattlePreview {
                             if let Some(astats) = world.get::<Stats>(ae) {
                                 if astats.hp > 0 {
                                     let hp_pct = astats.hp as f32 / astats.max_hp as f32;
-                                    if hp_pct < 0.5 {
-                                        if needy_ally.as_ref().map_or(true, |n| hp_pct < n.1) {
-                                            needy_ally = Some((ae, hp_pct));
-                                        }
+                                    if hp_pct < 0.5
+                                        && needy_ally.as_ref().is_none_or(|n| hp_pct < n.1)
+                                    {
+                                        needy_ally = Some((ae, hp_pct));
                                     }
                                 }
                             }

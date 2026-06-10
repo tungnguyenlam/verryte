@@ -38,6 +38,7 @@ Characters can have unique traits that modify gameplay:
 - **QTE team swap**: spend concert energy for instant swap with intro skill
 - **Boss phases**: multi-phase fight with stat boosts and new attack patterns
 - **Inventory**: healing potions, energy elixirs, cleanse remedies, aegis elixirs
+- **Equipment**: class starter gear, set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration
 - **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`
 - **Floor progression**: stairs spawn upon defeating enemies, triggering descent to Floor 2 (using `Action::NextFloor` or keyboard key `>`) which features a procedural BSP dungeon layout
 - **Elemental shields**: absorb damage before HP
@@ -105,7 +106,7 @@ rendered frames, state summaries, and event outcomes after each action.
 
 Movement: `north`, `south`, `east`, `west` (or `n`, `s`, `e`, `w`)
 
-Combat: `skill1`, `skill2`, `skill3`, `confirm`, `cancel`, `end`, `wait`, `craft:<idx1>,<idx2>` (1-indexed, e.g. `craft:1,2`), `use:<idx>` (1-indexed)
+Combat: `skill1`, `skill2`, `skill3`, `confirm`, `cancel`, `end`, `wait`, `craft:<idx1>,<idx2>` (1-indexed, e.g. `craft:1,2`), `use:<idx>` (1-indexed), `equip_upgrade:<weapon|armor|accessory>`
 
 Swap: `swap1`, `swap2`, `swap3` (or `4`, `5`, `6`)
 

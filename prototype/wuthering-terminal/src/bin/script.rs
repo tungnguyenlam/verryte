@@ -8,7 +8,46 @@
 //! expected JSON file for CI regression testing.
 
 use verryte_input::ActionSource;
-use wuthering_terminal::{default_commands, resolve_command_token, ActionOutcome, Game, Outcome};
+use wuthering_terminal::{
+    default_commands, resolve_command_token, ActionOutcome, Game, Outcome, StepReport,
+};
+
+fn print_battle_summary(game: &Game) {
+    let state = game
+        .world
+        .resource::<wuthering_terminal::components::GameState>()
+        .unwrap();
+    let stats = game
+        .world
+        .resource::<wuthering_terminal::components::BattleStats>()
+        .cloned()
+        .unwrap_or_default();
+    let echoes = game
+        .world
+        .resource::<wuthering_terminal::components::EquippedEchoes>()
+        .map(|e| {
+            e.abilities
+                .iter()
+                .map(|a| format!("{:?}", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|| "None".to_string());
+
+    println!("=== BATTLE SUMMARY ===");
+    println!("Outcome:         {:?}", state.outcome);
+    println!("Floor:           {}", state.floor);
+    println!("Turns:           {}", stats.total_turns);
+    println!("Damage Dealt:    {}", stats.total_damage_dealt);
+    println!("Damage Taken:    {}", stats.total_damage_taken);
+    println!("Healing Done:    {}", stats.total_healing_done);
+    println!("Enemies Killed:  {}", stats.total_kills);
+    println!("Max Combo:       x{}", stats.max_combo_reached);
+    println!("Team Swaps:      {}", stats.total_swaps);
+    println!("Concert Energy:  {}/100", state.concert_energy);
+    println!("Equipped Echoes: {}", echoes);
+    println!("======================");
+}
 
 fn main() {
     let mut args = std::env::args();
@@ -27,18 +66,45 @@ fn main() {
         let script = first_arg.unwrap();
 
         let mut verify_path: Option<String> = None;
+        let mut seed: Option<u64> = None;
+        let mut json_mode = false;
+        let mut quiet = false;
+
         let remaining: Vec<String> = args.collect();
         let mut i = 0;
         while i < remaining.len() {
-            if remaining[i] == "--verify" && i + 1 < remaining.len() {
-                verify_path = Some(remaining[i + 1].clone());
-                i += 2;
-            } else {
-                i += 1;
+            match remaining[i].as_str() {
+                "--verify" if i + 1 < remaining.len() => {
+                    verify_path = Some(remaining[i + 1].clone());
+                    i += 2;
+                }
+                "--seed" if i + 1 < remaining.len() => {
+                    seed = Some(remaining[i + 1].parse().unwrap_or_else(|_| {
+                        eprintln!("error: invalid seed value '{}'", remaining[i + 1]);
+                        std::process::exit(2);
+                    }));
+                    i += 2;
+                }
+                "--json" => {
+                    json_mode = true;
+                    i += 1;
+                }
+                "--quiet" => {
+                    quiet = true;
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
             }
         }
 
         let mut game = Game::new();
+
+        if let Some(s) = seed {
+            *game.world.resource_mut::<verryte_core::Rng>().unwrap() = verryte_core::Rng::seed(s);
+        }
+
         let queued = match game.router.inject_script_with(
             &default_commands(),
             &script,
@@ -52,15 +118,23 @@ fn main() {
             }
         };
 
-        println!("--- initial ---");
-        print_frame(&game);
-        println!("queued_actions={queued}");
+        if !quiet && !json_mode {
+            println!("--- initial ---");
+            print_frame(&game);
+            println!("queued_actions={queued}");
+        }
 
         let mut actual_outcomes: Vec<ActionOutcome> = Vec::new();
+        let mut all_reports: Vec<StepReport> = Vec::new();
 
         for (i, report) in game.run_pending_reports().into_iter().enumerate() {
-            print_report(i, &report);
-            print_frame(&game);
+            if !quiet && !json_mode {
+                print_report(i, &report);
+                print_frame(&game);
+            }
+            if json_mode {
+                all_reports.push(report.clone());
+            }
             actual_outcomes.push(report.outcome.clone());
             if !matches!(report.after.outcome, Outcome::Playing) {
                 break;
@@ -68,29 +142,50 @@ fn main() {
         }
 
         let diag = game.diagnostics();
-        println!("--- diagnostics ---");
-        println!(
-            "alive={} dead={} floor={} turn={} phase={:?} weather={} combo={} energy={}",
-            diag.alive_entities,
-            diag.dead_entities,
-            diag.floor,
-            diag.turn,
-            diag.current_phase,
-            diag.weather,
-            diag.combo_count,
-            diag.concert_energy
-        );
-        for ch in &diag.characters {
+
+        if json_mode {
+            let output = serde_json::json!({
+                "seed": seed,
+                "steps": all_reports,
+                "diagnostics": diag,
+                "snapshot": game.snapshot(),
+                "outcome": format!("{:?}", game.outcome()),
+            });
+            match serde_json::to_string_pretty(&output) {
+                Ok(json) => println!("{}", json),
+                Err(e) => {
+                    eprintln!("error: failed to serialize JSON: {e}");
+                    std::process::exit(2);
+                }
+            }
+        } else if !quiet {
+            println!("--- diagnostics ---");
             println!(
-                "  {}: hp={}/{} ap={}/{} status={} alive={}",
-                ch.name, ch.hp, ch.max_hp, ch.ap, ch.max_ap, ch.status, ch.alive
+                "alive={} dead={} floor={} turn={} phase={:?} weather={} combo={} energy={}",
+                diag.alive_entities,
+                diag.dead_entities,
+                diag.floor,
+                diag.turn,
+                diag.current_phase,
+                diag.weather,
+                diag.combo_count,
+                diag.concert_energy
             );
+            for ch in &diag.characters {
+                println!(
+                    "  {}: hp={}/{} ap={}/{} status={} alive={}",
+                    ch.name, ch.hp, ch.max_hp, ch.ap, ch.max_ap, ch.status, ch.alive
+                );
+            }
+            print_battle_summary(&game);
         }
 
         if let Some(path) = verify_path {
             match run_verification(&path, &actual_outcomes) {
                 Ok(()) => {
-                    println!("--- verification PASSED ---");
+                    if !quiet && !json_mode {
+                        println!("--- verification PASSED ---");
+                    }
                     match game.outcome() {
                         Outcome::Victory | Outcome::Playing => std::process::exit(0),
                         Outcome::Defeat | Outcome::Quit => std::process::exit(1),
@@ -247,6 +342,7 @@ fn run_repl() {
 
         if !matches!(game.outcome(), Outcome::Playing) {
             println!("Game ended with outcome: {:?}", game.outcome());
+            print_battle_summary(&game);
             break;
         }
 

@@ -87,5 +87,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Show battle summary screen
+    let outcome = game
+        .world
+        .resource::<wuthering_terminal::components::GameState>()
+        .unwrap()
+        .outcome;
+    let (w, h) = verryte_tty::terminal_size();
+    let mut summary_grid = Grid::new(w, h);
+    wuthering_terminal::ui::render_battle_summary(&mut summary_grid, &game.world, outcome, w, h);
+    render(&summary_grid);
+
+    // Wait for any keypress to exit
+    loop {
+        if let Some(InputEvent::Key { .. } | InputEvent::Mouse { pressed: true, .. }) = poll_event()
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    }
+
     Ok(())
 }

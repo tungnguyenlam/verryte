@@ -45,6 +45,7 @@ pub enum Action {
     ViewPrestige,
     Rest,
     ToggleBestiary,
+    UpgradeEquipment(crate::components::EquipmentSlot),
 }
 
 impl Action {
@@ -324,6 +325,18 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
         };
         if let Some(skill) = combo {
             return Some(Action::ComboSkill(skill));
+        }
+    }
+
+    if let Some(upgrade_slot_str) = token.strip_prefix("equip_upgrade:") {
+        let slot = match upgrade_slot_str.to_lowercase().as_str() {
+            "weapon" => Some(crate::components::EquipmentSlot::Weapon),
+            "armor" => Some(crate::components::EquipmentSlot::Armor),
+            "accessory" => Some(crate::components::EquipmentSlot::Accessory),
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            return Some(Action::UpgradeEquipment(slot));
         }
     }
 

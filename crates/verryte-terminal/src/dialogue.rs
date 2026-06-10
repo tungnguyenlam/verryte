@@ -4,16 +4,18 @@ use crate::layout::{BorderStyle, Rect};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Default)]
 pub enum PortraitAnimation {
+    #[default]
     None,
-    Bob { speed: f32, amplitude: f32 },
-    Glow { speed: f32, color: Color },
-}
-
-impl Default for PortraitAnimation {
-    fn default() -> Self {
-        Self::None
-    }
+    Bob {
+        speed: f32,
+        amplitude: f32,
+    },
+    Glow {
+        speed: f32,
+        color: Color,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -569,7 +571,7 @@ mod tests {
         });
         portrait.tick(0.0);
         let alpha = portrait.glow_alpha();
-        assert!(alpha >= 0.0 && alpha <= 1.0);
+        assert!((0.0..=1.0).contains(&alpha));
         assert_eq!(portrait.glow_color(), Some(Color(100, 200, 255)));
     }
 

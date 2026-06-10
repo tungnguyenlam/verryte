@@ -1,9 +1,11 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    CharacterClass, GameState, Inventory, Outcome, Stats, TurnPhase,
+    CharacterClass, EquipmentSlot, EquippedItems, GameState, Inventory, Outcome, Stats, TurnPhase,
+    TurnTransition,
 };
+use wuthering_terminal::equipment;
 use wuthering_terminal::snapshot::ActionOutcome;
-use wuthering_terminal::{Action, Game, Position};
+use wuthering_terminal::{Action, Game, Position, Spawner};
 
 fn find_entity(game: &Game, class: CharacterClass) -> verryte_core::Entity {
     game.world
@@ -411,6 +413,80 @@ fn healing_does_not_exceed_max_hp() {
     );
 }
 
+#[test]
+fn starter_upgrade_kit_upgrades_equipped_weapon() {
+    let mut game = Game::new();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let kit = game.world.spawn_item(
+        "Upgrade Kit",
+        wuthering_terminal::components::ItemEffect::UpgradeKit,
+    );
+    game.world
+        .get_mut::<Inventory>(warrior)
+        .unwrap()
+        .items
+        .push(kit);
+    let items_before = game.world.get::<Inventory>(warrior).unwrap().items.len();
+    select_character(&mut game, Position::new(4, 4));
+
+    game.apply_action(
+        Action::UpgradeEquipment(EquipmentSlot::Weapon),
+        ActionSource::Script,
+    );
+
+    let equipped = game.world.get::<EquippedItems>(warrior).unwrap();
+    let weapon = equipped.weapon.as_ref().unwrap();
+    assert_eq!(weapon.upgrade_level, 1);
+    assert!(weapon.atk_bonus > weapon.base_atk);
+    assert_eq!(
+        game.world.get::<Inventory>(warrior).unwrap().items.len(),
+        items_before - 1
+    );
+}
+
+#[test]
+fn equipment_lifesteal_heals_after_damage_dealt() {
+    let mut game = Game::new();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let boss = find_entity(&game, CharacterClass::Boss);
+    game.world
+        .get_mut::<EquippedItems>(warrior)
+        .unwrap()
+        .equip(equipment::vampiric_ring());
+    game.world.get_mut::<Stats>(warrior).unwrap().hp = 50;
+
+    game.resolve_combat_hit(
+        warrior,
+        boss,
+        100,
+        "Kael",
+        "Blight Sovereign",
+        Position::new(12, 8),
+    );
+
+    assert!(game.world.get::<Stats>(warrior).unwrap().hp > 50);
+}
+
+#[test]
+fn equipment_hp_regen_applies_on_team_phase_start() {
+    let mut game = Game::new();
+
+    let healer = find_entity(&game, CharacterClass::Healer);
+    let max_hp = game.world.get::<Stats>(healer).unwrap().max_hp;
+    game.world.get_mut::<Stats>(healer).unwrap().hp = max_hp - 10;
+    game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    game.world
+        .resource_mut::<TurnTransition>()
+        .unwrap()
+        .request_end = true;
+
+    wuthering_terminal::systems::turn_management_system(&mut game.world);
+
+    assert_eq!(game.world.get::<Stats>(healer).unwrap().hp, max_hp - 5);
+}
+
 // ─── 7. Multi-Floor ──────────────────────────────────────────────────────────
 
 #[test]
@@ -576,7 +652,6 @@ fn snapshot_character_stats_internally_consistent() {
             stats.hp,
             stats.max_hp
         );
-        assert!(stats.hp > 0 || true, "HP can be 0 for defeated entities");
     }
 }
 

@@ -2074,3 +2074,598 @@ fn test_reachability_map() {
     let path = reach.path_to(Point::new(0, 1)).unwrap();
     assert_eq!(path, vec![Point::new(0, 0), Point::new(0, 1)]);
 }
+
+// ---------------------------------------------------------------------------
+// Pathfinding edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn shortest_path4_self_returns_single_point() {
+    let grid = TileGrid::new(5, 5, '.');
+    let path = grid
+        .shortest_path4(Point::new(2, 2), Point::new(2, 2), |_, _| true)
+        .unwrap();
+    assert_eq!(path, vec![Point::new(2, 2)]);
+}
+
+#[test]
+fn shortest_path4_weighted_self_returns_single_point() {
+    let grid = TileGrid::new(3, 3, '.');
+    let path = grid
+        .shortest_path4_weighted(Point::new(1, 1), Point::new(1, 1), |_, _| true, |_, _, _| 5)
+        .unwrap();
+    assert_eq!(path, vec![Point::new(1, 1)]);
+}
+
+#[test]
+fn shortest_path4_to_unreachable_surrounded_by_walls() {
+    let grid = TileGrid::from_vec(
+        5,
+        5,
+        vec![
+            '.', '.', '.', '.', '.', '.', '#', '#', '#', '.', '.', '#', '.', '#', '.', '.', '#',
+            '#', '#', '.', '.', '.', '.', '.', '.',
+        ],
+    )
+    .unwrap();
+    let path = grid.shortest_path4(Point::new(0, 0), Point::new(2, 2), |_, tile| *tile == '.');
+    assert_eq!(path, None);
+}
+
+#[test]
+fn shortest_path4_on_1x1_grid() {
+    let grid = TileGrid::new(1, 1, '.');
+    let path = grid
+        .shortest_path4(Point::new(0, 0), Point::new(0, 0), |_, _| true)
+        .unwrap();
+    assert_eq!(path, vec![Point::new(0, 0)]);
+}
+
+#[test]
+fn shortest_path4_long_narrow_corridor() {
+    let width: u16 = 1;
+    let height: u16 = 150;
+    let grid = TileGrid::new(width, height, '.');
+    let path = grid
+        .shortest_path4(Point::new(0, 0), Point::new(0, 149), |_, _| true)
+        .unwrap();
+    assert_eq!(path.len(), 150);
+    assert_eq!(path.first(), Some(&Point::new(0, 0)));
+    assert_eq!(path.last(), Some(&Point::new(0, 149)));
+    assert!(path
+        .windows(2)
+        .all(|pair| pair[0].manhattan_distance(pair[1]) == 1));
+}
+
+#[test]
+fn shortest_path4_all_tiles_blocked_returns_none() {
+    let grid = TileGrid::new(5, 5, '#');
+    let path = grid.shortest_path4(Point::new(0, 0), Point::new(4, 4), |_, tile| *tile == '.');
+    assert_eq!(path, None);
+}
+
+#[test]
+fn shortest_path4_start_blocked_still_works() {
+    let mut grid = TileGrid::new(5, 5, '.');
+    grid.set(Point::new(0, 0), '#');
+    let path = grid
+        .shortest_path4(Point::new(0, 0), Point::new(2, 0), |_, tile| *tile == '.')
+        .unwrap();
+    assert_eq!(path.first(), Some(&Point::new(0, 0)));
+    assert_eq!(path.last(), Some(&Point::new(2, 0)));
+}
+
+#[test]
+fn shortest_path4_end_blocked_returns_none() {
+    let mut grid = TileGrid::new(5, 5, '.');
+    grid.set(Point::new(4, 4), '#');
+    let path = grid.shortest_path4(Point::new(0, 0), Point::new(4, 4), |_, tile| *tile == '.');
+    assert_eq!(path, None);
+}
+
+#[test]
+fn shortest_path4_weighted_zero_cost_edges() {
+    let grid = TileGrid::new(3, 1, '.');
+    let path = grid
+        .shortest_path4_weighted(Point::new(0, 0), Point::new(2, 0), |_, _| true, |_, _, _| 0)
+        .unwrap();
+    assert_eq!(path.len(), 3);
+    assert_eq!(path.first(), Some(&Point::new(0, 0)));
+    assert_eq!(path.last(), Some(&Point::new(2, 0)));
+}
+
+#[test]
+fn shortest_path4_weighted_very_high_cost() {
+    let grid = TileGrid::new(3, 1, '.');
+    let path = grid
+        .shortest_path4_weighted(
+            Point::new(0, 0),
+            Point::new(2, 0),
+            |_, _| true,
+            |_, _, _| 1_000_000,
+        )
+        .unwrap();
+    assert_eq!(path.len(), 3);
+    assert_eq!(path.first(), Some(&Point::new(0, 0)));
+    assert_eq!(path.last(), Some(&Point::new(2, 0)));
+}
+
+#[test]
+fn shortest_path8_self_returns_single_point() {
+    let grid = TileGrid::new(3, 3, '.');
+    let path = grid
+        .shortest_path8(Point::new(1, 1), Point::new(1, 1), |_, _| true)
+        .unwrap();
+    assert_eq!(path, vec![Point::new(1, 1)]);
+}
+
+// ---------------------------------------------------------------------------
+// DijkstraMap edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dijkstra_map_multiple_goals() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(5, 5, &[Point::new(0, 0), Point::new(4, 4)], passable, false);
+    assert_eq!(map.get(Point::new(0, 0)), Some(0));
+    assert_eq!(map.get(Point::new(4, 4)), Some(0));
+    assert_eq!(map.get(Point::new(2, 2)), Some(4));
+    assert_eq!(map.get(Point::new(0, 4)), Some(4));
+}
+
+#[test]
+fn dijkstra_map_goal_at_edge() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(10, 10, &[Point::new(9, 9)], passable, false);
+    assert_eq!(map.get(Point::new(9, 9)), Some(0));
+    assert_eq!(map.get(Point::new(0, 0)), Some(18));
+    assert_eq!(map.get(Point::new(9, 0)), Some(9));
+}
+
+#[test]
+fn dijkstra_map_all_tiles_are_goals() {
+    let w = 3u16;
+    let h = 3u16;
+    let goals: Vec<Point> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| Point::new(x as i16, y as i16)))
+        .collect();
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(w, h, &goals, passable, false);
+    for y in 0..h {
+        for x in 0..w {
+            assert_eq!(
+                map.get(Point::new(x as i16, y as i16)),
+                Some(0),
+                "({x},{y}) should be distance 0 when all tiles are goals"
+            );
+        }
+    }
+}
+
+#[test]
+fn dijkstra_map_no_walkable_tiles() {
+    let passable = |_: Point| false;
+    let map = DijkstraMap::compute(3, 3, &[Point::new(1, 1)], passable, false);
+    assert_eq!(map.get(Point::new(1, 1)), Some(0));
+    assert_eq!(map.get(Point::new(0, 0)), None);
+    assert_eq!(map.get(Point::new(2, 2)), None);
+}
+
+#[test]
+fn dijkstra_map_100x100() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(100, 100, &[Point::new(50, 50)], passable, false);
+    assert_eq!(map.get(Point::new(50, 50)), Some(0));
+    assert_eq!(map.get(Point::new(0, 0)), Some(100));
+    assert_eq!(map.get(Point::new(99, 99)), Some(98));
+}
+
+#[test]
+fn dijkstra_flee_path_no_escape() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(1, 3, &[Point::new(0, 1)], passable, false);
+    let path = map.flee_path(Point::new(0, 1), 10, false);
+    assert_eq!(path[0], Point::new(0, 1));
+    assert_eq!(path.len(), 2);
+    let d_start = map.get(path[0]).unwrap();
+    let d_end = map.get(*path.last().unwrap()).unwrap();
+    assert!(d_end > d_start, "flee path should increase distance");
+}
+
+#[test]
+fn dijkstra_flee_path_already_at_max_distance() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(3, 3, &[Point::new(0, 0)], passable, false);
+    let path = map.flee_path(Point::new(2, 2), 10, false);
+    assert_eq!(path.len(), 1);
+    assert_eq!(path[0], Point::new(2, 2));
+}
+
+#[test]
+fn dijkstra_chase_direction_at_goal_returns_lowest_neighbor() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(3, 3, &[Point::new(1, 1)], passable, false);
+    let chase = map.chase_direction(Point::new(1, 1), false);
+    let neighbors: Vec<Point> = Point::new(1, 1).neighbors4().to_vec();
+    assert!(chase.is_some(), "should return a neighbor even at goal");
+    assert!(neighbors.contains(&chase.unwrap()));
+}
+
+#[test]
+fn dijkstra_path_to_at_goal_returns_single_point() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(3, 3, &[Point::new(1, 1)], passable, false);
+    let path = map.path_to(Point::new(1, 1), false);
+    assert_eq!(path, vec![Point::new(1, 1)]);
+}
+
+// ---------------------------------------------------------------------------
+// Visibility edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fov_from_corner_of_map() {
+    let grid = TileGrid::new(10, 10, '.');
+    let fov = grid.field_of_view(Point::new(0, 0), 5, |_| false);
+    assert!(fov.contains(&Point::new(0, 0)));
+    assert!(fov.contains(&Point::new(1, 0)));
+    assert!(fov.contains(&Point::new(0, 1)));
+    assert!(fov.contains(&Point::new(1, 1)));
+    assert!(!fov.contains(&Point::new(9, 9)));
+}
+
+#[test]
+fn fov_all_walls_sees_fewer_tiles_than_open() {
+    let all_wall = TileGrid::new(5, 5, '#');
+    let fov_wall = all_wall.field_of_view(Point::new(2, 2), 10, |_| true);
+    let all_open = TileGrid::new(5, 5, '.');
+    let fov_open = all_open.field_of_view(Point::new(2, 2), 10, |_| false);
+    assert!(fov_wall.len() <= fov_open.len());
+    assert!(fov_wall.contains(&Point::new(2, 2)));
+    assert_eq!(fov_open.len(), 25);
+}
+
+#[test]
+fn fov_no_walls_sees_all_within_radius() {
+    let grid = TileGrid::new(11, 11, '.');
+    let fov = grid.field_of_view(Point::new(5, 5), 5, |_| false);
+    // Close neighbors should definitely be visible
+    assert!(fov.contains(&Point::new(5, 5)));
+    assert!(fov.contains(&Point::new(6, 5)));
+    assert!(fov.contains(&Point::new(5, 6)));
+    assert!(fov.contains(&Point::new(4, 5)));
+    assert!(fov.contains(&Point::new(5, 4)));
+    // Far tiles should not be visible
+    assert!(!fov.contains(&Point::new(0, 0)));
+    assert!(!fov.contains(&Point::new(10, 10)));
+}
+
+#[test]
+fn fov_radius_zero_sees_only_self() {
+    let grid = TileGrid::new(5, 5, '.');
+    let fov = grid.field_of_view(Point::new(2, 2), 0, |_| false);
+    assert_eq!(fov, vec![Point::new(2, 2)]);
+}
+
+#[test]
+fn fov_very_large_radius_clips_to_grid() {
+    let grid = TileGrid::new(5, 5, '.');
+    let fov = grid.field_of_view(Point::new(2, 2), 1000, |_| false);
+    assert_eq!(fov.len(), 25);
+}
+
+#[test]
+fn fov_incremental_overlapping_viewers() {
+    let mut vm = VisibilityMap::new(10, 10);
+    vm.clear_visible();
+    vm.compute_fov_incremental(Point::new(2, 2), 3, |_| false);
+    vm.compute_fov_incremental(Point::new(7, 7), 3, |_| false);
+    assert!(vm.is_visible(Point::new(2, 2)));
+    assert!(vm.is_visible(Point::new(7, 7)));
+    assert!(vm.is_visible(Point::new(4, 2)));
+    assert!(vm.is_visible(Point::new(9, 7)));
+}
+
+#[test]
+fn visibility_map_radius_zero() {
+    let mut vm = VisibilityMap::new(5, 5);
+    vm.compute_fov(Point::new(2, 2), 0, |_| false);
+    assert!(vm.is_visible(Point::new(2, 2)));
+    assert!(!vm.is_visible(Point::new(2, 1)));
+    assert!(!vm.is_visible(Point::new(3, 2)));
+}
+
+#[test]
+fn visibility_map_all_walls() {
+    let mut vm = VisibilityMap::new(5, 5);
+    vm.compute_fov(Point::new(2, 2), 10, |_| true);
+    assert!(vm.is_visible(Point::new(2, 2)));
+    // Adjacent wall tiles are visible (blocking tiles are seen)
+    assert!(vm.is_visible(Point::new(1, 2)));
+    assert!(vm.is_visible(Point::new(3, 2)));
+    // But tiles behind walls should not be visible
+    assert!(!vm.is_visible(Point::new(0, 0)));
+    assert!(!vm.is_visible(Point::new(4, 4)));
+}
+
+// ---------------------------------------------------------------------------
+// Reachability edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reachable_from_corner_open_map() {
+    let grid = TileGrid::new(10, 10, '.');
+    let reachable = grid.reachable_points4(Point::new(0, 0), |_, _| true);
+    assert_eq!(reachable.len(), 100);
+}
+
+#[test]
+fn reachable_all_tiles_open() {
+    let grid = TileGrid::new(5, 5, '.');
+    let reachable = grid.reachable_points4(Point::new(2, 2), |_, _| true);
+    assert_eq!(reachable.len(), 25);
+}
+
+#[test]
+fn reachable_single_tile_no_neighbors() {
+    let grid = TileGrid::new(1, 1, '.');
+    let reachable = grid.reachable_points4(Point::new(0, 0), |_, _| true);
+    assert_eq!(reachable, vec![Point::new(0, 0)]);
+}
+
+#[test]
+fn reachable_with_mixed_terrain_costs() {
+    let mut grid = TileGrid::new(3, 3, '.');
+    grid.set(Point::new(1, 1), 'M');
+    let reach = ReachabilityMap::compute(
+        &grid,
+        Point::new(0, 0),
+        5,
+        |_, _| true,
+        |_, &tile| if tile == 'M' { 3 } else { 1 },
+    );
+    assert!(reach.is_reachable(Point::new(0, 0)));
+    assert_eq!(reach.cost_to(Point::new(0, 0)), Some(0));
+    assert!(reach.is_reachable(Point::new(0, 1)));
+    assert_eq!(reach.cost_to(Point::new(0, 1)), Some(1));
+    assert!(reach.is_reachable(Point::new(1, 1)));
+    assert_eq!(reach.cost_to(Point::new(1, 1)), Some(4));
+    assert!(reach.is_reachable(Point::new(2, 2)));
+}
+
+#[test]
+fn reachable_map_path_to_self_returns_single_point() {
+    let grid = TileGrid::new(3, 3, '.');
+    let reach = ReachabilityMap::compute(&grid, Point::new(1, 1), 5, |_, _| true, |_, _| 1);
+    let path = reach.path_to(Point::new(1, 1)).unwrap();
+    assert_eq!(path, vec![Point::new(1, 1)]);
+}
+
+#[test]
+fn reachable_map_unreachable_target_returns_none() {
+    let grid = TileGrid::new(3, 3, '#');
+    let reach = ReachabilityMap::compute(&grid, Point::new(0, 0), 10, |_, _| false, |_, _| 1);
+    assert_eq!(reach.path_to(Point::new(2, 2)), None);
+}
+
+// ---------------------------------------------------------------------------
+// Performance benchmarks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn benchmark_pathfinding_50x50() {
+    let grid = TileGrid::new(50, 50, '.');
+    let start = std::time::Instant::now();
+    for _ in 0..100 {
+        let _ = grid.shortest_path4(Point::new(0, 0), Point::new(49, 49), |_, _| true);
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_millis() < 5000,
+        "100 pathfinding calls on 50x50 took {}ms, expected <5000ms",
+        elapsed.as_millis()
+    );
+}
+
+#[test]
+fn benchmark_pathfinding_100x100() {
+    let grid = TileGrid::new(100, 100, '.');
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        let _ = grid.shortest_path4(Point::new(0, 0), Point::new(99, 99), |_, _| true);
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_millis() < 5000,
+        "10 pathfinding calls on 100x100 took {}ms, expected <5000ms",
+        elapsed.as_millis()
+    );
+}
+
+#[test]
+fn benchmark_dijkstra_100x100() {
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        let passable = |_: Point| true;
+        let _ = DijkstraMap::compute(100, 100, &[Point::new(50, 50)], passable, false);
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_millis() < 5000,
+        "10 DijkstraMap computations on 100x100 took {}ms, expected <5000ms",
+        elapsed.as_millis()
+    );
+}
+
+#[test]
+fn benchmark_fov_many_positions() {
+    let grid = TileGrid::new(50, 50, '.');
+    let start = std::time::Instant::now();
+    for y in 0..10 {
+        for x in 0..10 {
+            let _ = grid.field_of_view(Point::new(x, y), 10, |_| false);
+        }
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_millis() < 5000,
+        "100 FOV computations took {}ms, expected <5000ms",
+        elapsed.as_millis()
+    );
+}
+
+#[test]
+fn benchmark_dijkstra_weighted_50x50() {
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        let passable = |_: Point| true;
+        let cost = |_: Point, _: Point| 1;
+        let _ = DijkstraMap::compute_weighted(50, 50, &[Point::new(25, 25)], passable, cost, false);
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_millis() < 5000,
+        "10 weighted DijkstraMap on 50x50 took {}ms, expected <5000ms",
+        elapsed.as_millis()
+    );
+}
+
+#[test]
+fn benchmark_reachability_50x50() {
+    let grid = TileGrid::new(50, 50, '.');
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        let _ = ReachabilityMap::compute(&grid, Point::new(25, 25), 100, |_, _| true, |_, _| 1);
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_millis() < 5000,
+        "10 ReachabilityMap computations on 50x50 took {}ms, expected <5000ms",
+        elapsed.as_millis()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Additional DijkstraMap edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dijkstra_map_out_of_bounds_goal_ignored() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(3, 3, &[Point::new(10, 10)], passable, false);
+    assert_eq!(map.get(Point::new(0, 0)), None);
+    assert_eq!(map.get(Point::new(2, 2)), None);
+}
+
+#[test]
+fn dijkstra_map_empty_goals() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(3, 3, &[], passable, false);
+    for y in 0..3 {
+        for x in 0..3 {
+            assert_eq!(map.get(Point::new(x, y)), None);
+        }
+    }
+}
+
+#[test]
+fn dijkstra_flee_direction_at_dead_end() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(3, 1, &[Point::new(1, 0)], passable, false);
+    assert_eq!(map.get(Point::new(1, 0)), Some(0));
+    assert_eq!(map.get(Point::new(0, 0)), Some(1));
+    assert_eq!(map.get(Point::new(2, 0)), Some(1));
+    let flee = map.flee_direction(Point::new(0, 0), false);
+    // Only neighbor is (1,0) which has lower distance, flee_direction
+    // still returns it as the best available neighbor
+    assert!(flee.is_some());
+}
+
+#[test]
+fn dijkstra_chase_path_to_range_already_in_range() {
+    let passable = |_: Point| true;
+    let map = DijkstraMap::compute(5, 5, &[Point::new(2, 2)], passable, false);
+    let path = map
+        .chase_path_to_range(Point::new(3, 2), 1, 2, false)
+        .unwrap();
+    assert_eq!(path, vec![Point::new(3, 2)]);
+}
+
+// ---------------------------------------------------------------------------
+// Additional visibility edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fov_no_opaque_sees_entire_grid_within_radius() {
+    let grid = TileGrid::new(7, 7, '.');
+    let fov = grid.field_of_view(Point::new(3, 3), 10, |_| false);
+    assert_eq!(fov.len(), 49);
+}
+
+#[test]
+fn fov_wall_at_origin_doesnt_block_itself() {
+    let mut grid = TileGrid::new(5, 5, '.');
+    grid.set(Point::new(2, 2), '#');
+    let fov = grid.field_of_view(Point::new(2, 2), 3, |t| *t == '#');
+    assert!(fov.contains(&Point::new(2, 2)));
+}
+
+#[test]
+fn visibility_map_compute_fov_clears_previous() {
+    let mut vm = VisibilityMap::new(10, 10);
+    vm.compute_fov(Point::new(1, 1), 5, |_| false);
+    assert!(vm.is_visible(Point::new(3, 1)));
+    vm.compute_fov(Point::new(8, 8), 2, |_| false);
+    assert!(!vm.is_visible(Point::new(1, 1)));
+    assert!(vm.is_explored(Point::new(1, 1)));
+    assert!(vm.is_visible(Point::new(8, 8)));
+}
+
+// ---------------------------------------------------------------------------
+// Additional reachability edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reachable_points4_bounded_limits_range() {
+    let grid = TileGrid::new(10, 10, '.');
+    let reachable = grid.reachable_points4_bounded(Point::new(5, 5), 2, |_, _| true);
+    for &p in &reachable {
+        assert!(
+            p.manhattan_distance(Point::new(5, 5)) <= 2,
+            "{p:?} exceeds bounded range"
+        );
+    }
+    assert!(reachable.contains(&Point::new(5, 5)));
+    assert!(reachable.contains(&Point::new(7, 5)));
+    assert!(!reachable.contains(&Point::new(9, 5)));
+}
+
+#[test]
+fn reachable_points8_bounded_limits_range() {
+    let grid = TileGrid::new(10, 10, '.');
+    let reachable = grid.reachable_points8_bounded(Point::new(5, 5), 2, |_, _| true);
+    for &p in &reachable {
+        assert!(
+            p.chebyshev_distance(Point::new(5, 5)) <= 2,
+            "{p:?} exceeds bounded range"
+        );
+    }
+    assert!(reachable.contains(&Point::new(5, 5)));
+    assert!(reachable.contains(&Point::new(7, 5)));
+    assert!(reachable.contains(&Point::new(7, 7)));
+    assert!(!reachable.contains(&Point::new(9, 5)));
+}
+
+#[test]
+fn distance_to_nearest8_open_grid() {
+    let grid = TileGrid::new(10, 10, '.');
+    let d = grid.distance_to_nearest8(Point::new(0, 0), [Point::new(5, 5)], |_, _| true);
+    assert_eq!(d, Some(5));
+}
+
+#[test]
+fn reachable_points4_empty_for_out_of_bounds_start() {
+    let grid = TileGrid::new(5, 5, '.');
+    let reachable = grid.reachable_points4(Point::new(-1, -1), |_, _| true);
+    assert!(reachable.is_empty());
+}

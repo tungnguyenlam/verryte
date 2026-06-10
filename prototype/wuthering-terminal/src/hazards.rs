@@ -177,4 +177,18 @@ impl HazardSystem {
             }
         }
     }
+
+    pub fn apply_hazard_to_entity(
+        stats: &mut Stats,
+        map: &mut TacticalMap,
+        hazards: &mut ActiveHazards,
+        result: &HazardTriggerResult,
+        pos: Position,
+    ) {
+        stats.hp = (stats.hp - result.damage + result.healing).clamp(0, stats.max_hp);
+        if result.should_destroy_tile {
+            Self::process_cracked_floor(map, pos);
+        }
+        Self::decrement_trigger(hazards, pos);
+    }
 }

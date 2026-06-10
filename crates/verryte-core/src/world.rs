@@ -3506,7 +3506,7 @@ mod tests {
         assert_eq!(added_mut.len(), 1);
         added_mut[0].1 .0 = 30;
 
-        let mut changed_mut = world.query_changed_mut::<Counter>(t1);
+        let changed_mut = world.query_changed_mut::<Counter>(t1);
         assert_eq!(changed_mut.len(), 1);
         assert_eq!(changed_mut[0].1 .0, 30);
     }

@@ -10,6 +10,12 @@ pub enum Tile {
     Ice,
     Stairs,
     Mud,
+    SpikeTrap,
+    PoisonCloud,
+    HealingSpring,
+    CrackedFloor,
+    PressurePlate,
+    ThornBush,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -43,6 +49,12 @@ impl TacticalMap {
                     '-' => Tile::Ice,
                     '>' => Tile::Stairs,
                     '=' => Tile::Mud,
+                    '!' => Tile::SpikeTrap,
+                    'p' => Tile::PoisonCloud,
+                    '+' => Tile::HealingSpring,
+                    '%' => Tile::CrackedFloor,
+                    'T' => Tile::PressurePlate,
+                    '*' => Tile::ThornBush,
                     _ => Tile::Grass,
                 };
                 tiles.set(Point::new(x as i16, y as i16), tile);
@@ -66,7 +78,18 @@ impl TacticalMap {
     pub fn is_walkable(&self, pt: Point) -> bool {
         matches!(
             self.tile(pt.x, pt.y),
-            Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice | Tile::Stairs | Tile::Mud
+            Tile::Grass
+                | Tile::Water
+                | Tile::Lava
+                | Tile::Ice
+                | Tile::Stairs
+                | Tile::Mud
+                | Tile::SpikeTrap
+                | Tile::PoisonCloud
+                | Tile::HealingSpring
+                | Tile::CrackedFloor
+                | Tile::PressurePlate
+                | Tile::ThornBush
         )
     }
 
@@ -76,6 +99,12 @@ impl TacticalMap {
             Tile::Water | Tile::Lava => 2,
             Tile::Mud => 3,
             Tile::Wall => 999,
+            Tile::SpikeTrap
+            | Tile::PoisonCloud
+            | Tile::HealingSpring
+            | Tile::CrackedFloor
+            | Tile::PressurePlate => 1,
+            Tile::ThornBush => 2,
         }
     }
 

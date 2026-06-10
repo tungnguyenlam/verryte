@@ -610,6 +610,7 @@ pub fn render_help(grid: &mut Grid, term_w: u16, term_h: u16) {
         ("Q", "Quit game"),
     ];
 
+    #[allow(clippy::explicit_counter_loop)]
     for &(key, desc) in controls {
         if y >= bottom {
             break;
@@ -728,7 +729,7 @@ pub fn render_battle_summary(
     let left_x = panel_x + 3;
     let mut row = panel_y + 4;
     let label_color = Color(160, 180, 200);
-    let value_color = Color::WHITE;
+    let _value_color = Color::WHITE;
     let line_gap = 1u16;
 
     let rows: Vec<(&str, String, Color)> = vec![

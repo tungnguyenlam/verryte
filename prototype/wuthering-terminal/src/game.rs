@@ -1,6 +1,7 @@
 use crate::action::{default_bindings, Action};
 use crate::components::{
-    BattleStats, CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team, TurnPhase,
+    BattleStats, CharacterClass, EquippedItems, GameEvent, GameState, Outcome, Position, Stats,
+    Team, TurnPhase,
 };
 use crate::map::{TacticalMap, Tile};
 use crate::snapshot::ActionOutcome;
@@ -556,7 +557,18 @@ impl Game {
             }
         }
 
-        let mut boosted_base_damage = base_damage;
+        let equip_atk_bonus = self
+            .world
+            .get::<EquippedItems>(attacker)
+            .map(|e| e.total_atk_bonus())
+            .unwrap_or(0);
+        let equip_def_bonus = self
+            .world
+            .get::<EquippedItems>(target)
+            .map(|e| e.total_def_bonus())
+            .unwrap_or(0);
+        let mut boosted_base_damage = base_damage + equip_atk_bonus - equip_def_bonus;
+        boosted_base_damage = boosted_base_damage.max(1);
         let mut is_player = false;
         let mut new_combo = 0;
 
@@ -566,7 +578,7 @@ impl Game {
                 state.combo_count += 1;
                 new_combo = state.combo_count;
                 let mult = 1.0 + ((new_combo.saturating_sub(1)) as f32 * 0.05);
-                boosted_base_damage = (base_damage as f32 * mult) as i32;
+                boosted_base_damage = (boosted_base_damage as f32 * mult) as i32;
             }
         }
 
@@ -906,6 +918,27 @@ impl Game {
                         }
                     }
                 }
+            }
+        }
+
+        let equipment_lifesteal_percent = self
+            .world
+            .get::<EquippedItems>(attacker)
+            .map(|equipped| equipped.total_lifesteal_percent())
+            .unwrap_or(0);
+        let equipment_lifesteal = damage * equipment_lifesteal_percent as i32 / 100;
+        if equipment_lifesteal > 0 {
+            let mut healed = 0;
+            if let Some(stats) = self.world.get_mut::<Stats>(attacker) {
+                let before = stats.hp;
+                stats.hp = (stats.hp + equipment_lifesteal).min(stats.max_hp);
+                healed = stats.hp - before;
+            }
+            if healed > 0 {
+                self.log(format!(
+                    "{}'s equipment restored {} HP!",
+                    attacker_name, healed
+                ));
             }
         }
 
@@ -1393,6 +1426,25 @@ impl Game {
                     .build();
                 self.log(format!("{} dropped an Echo!", name));
             }
+            if class == CharacterClass::CursedSentinel || class == CharacterClass::GlacialGolem {
+                let kit = self
+                    .world
+                    .spawn_item("Upgrade Kit", crate::components::ItemEffect::UpgradeKit);
+                self.log(format!("{} dropped an Upgrade Kit!", name));
+                if let Some(player) = self
+                    .world
+                    .query2::<Team, crate::components::Inventory>()
+                    .iter()
+                    .find(|(_, team, _)| **team == Team::Player)
+                    .map(|(e, _, _)| *e)
+                {
+                    if let Some(inventory) =
+                        self.world.get_mut::<crate::components::Inventory>(player)
+                    {
+                        inventory.items.push(kit);
+                    }
+                }
+            }
         }
 
         let enemy_exists = self
@@ -1733,7 +1785,7 @@ impl Game {
         &mut self,
         skill: crate::components::ComboSkill,
         participants: &[Entity],
-        target_pos: Position,
+        _target_pos: Position,
     ) {
         use crate::components::{ComboSkill, ComboSkillDef};
 
@@ -1831,7 +1883,7 @@ impl Game {
                 for (e, p, team) in self.world.query2::<Position, Team>() {
                     if *team == Team::Enemy && *p == cursor {
                         let dist = participants.iter().any(|&pe| {
-                            self.world.get::<Position>(pe).map_or(false, |pp| {
+                            self.world.get::<Position>(pe).is_some_and(|pp| {
                                 (pp.x - cursor.x).abs() + (pp.y - cursor.y).abs() <= 2
                             })
                         });
@@ -2004,7 +2056,7 @@ impl Game {
                 for (e, p, team) in self.world.query2::<Position, Team>() {
                     if *team == Team::Enemy && *p == cursor {
                         let in_range = participants.iter().any(|&pe| {
-                            self.world.get::<Position>(pe).map_or(false, |pp| {
+                            self.world.get::<Position>(pe).is_some_and(|pp| {
                                 (pp.x - cursor.x).abs() + (pp.y - cursor.y).abs() <= 3
                             })
                         });
@@ -3693,6 +3745,7 @@ impl Game {
                 | Action::ToggleHelp
                 | Action::AutoBattle
                 | Action::ToggleBestiary
+                | Action::UpgradeEquipment(_)
         ) {
             return ActionOutcome::StateUpdated;
         }
@@ -4387,6 +4440,93 @@ impl Game {
                                             );
                                         }
 
+                                        // Check for Hazard terrain effects (SpikeTrap, PoisonCloud, etc.)
+                                        if final_dest_tile != Tile::Lava
+                                            && final_dest_tile != Tile::Ice
+                                        {
+                                            if let Some(hazards) =
+                                                self.world
+                                                    .resource::<crate::components::ActiveHazards>()
+                                            {
+                                                if let Some(stats) =
+                                                    self.world.get::<Stats>(sel_entity)
+                                                {
+                                                    let result = crate::hazards::HazardSystem::trigger_hazard(
+                                                        hazards, final_dest, stats,
+                                                    );
+                                                    if let Some(result) = result {
+                                                        self.log(&result.message);
+                                                        let dmg = result.damage;
+                                                        let heal = result.healing;
+                                                        let mut hp_after = 0;
+                                                        if let Some(stats_mut) =
+                                                            self.world.get_mut::<Stats>(sel_entity)
+                                                        {
+                                                            stats_mut.hp = (stats_mut.hp - dmg
+                                                                + heal)
+                                                                .clamp(0, stats_mut.max_hp);
+                                                            hp_after = stats_mut.hp;
+                                                        }
+                                                        if result.should_destroy_tile {
+                                                            if let Some(map) = self
+                                                                .world
+                                                                .resource_mut::<TacticalMap>()
+                                                            {
+                                                                crate::hazards::HazardSystem::process_cracked_floor(
+                                                                    map, final_dest,
+                                                                );
+                                                            }
+                                                        }
+                                                        if let Some(hazards_mut) = self
+                                                            .world
+                                                            .resource_mut::<crate::components::ActiveHazards>()
+                                                        {
+                                                            crate::hazards::HazardSystem::decrement_trigger(
+                                                                hazards_mut,
+                                                                final_dest,
+                                                            );
+                                                        }
+                                                        let (tcx, tcy) =
+                                                            self.get_tile_center_pixels(final_dest);
+                                                        if dmg > 0 {
+                                                            self.vfx_mut().particles.extend(
+                                                                verryte_terminal::vfx::emit_burst(
+                                                                    tcx,
+                                                                    tcy,
+                                                                    8,
+                                                                    Color(180, 40, 40),
+                                                                    &['*', '·', '✦'],
+                                                                ),
+                                                            );
+                                                        }
+                                                        if heal > 0 {
+                                                            self.vfx_mut().particles.extend(
+                                                                verryte_terminal::vfx::emit_heal(
+                                                                    tcx, tcy, 10,
+                                                                ),
+                                                            );
+                                                        }
+                                                        if hp_after <= 0 {
+                                                            self.handle_defeat(
+                                                                sel_entity, char_name, sel_class,
+                                                                final_dest,
+                                                            );
+                                                        }
+                                                        if let Some(status) = result.status_effect {
+                                                            if self
+                                                                .world
+                                                                .get::<Stats>(sel_entity)
+                                                                .is_some_and(|s| s.hp > 0)
+                                                            {
+                                                                self.world
+                                                                    .insert(sel_entity, status);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         self.try_absorb_echo(cursor);
 
                                         self.world
@@ -4692,6 +4832,9 @@ impl Game {
                                         {
                                             events.send(verryte_core::AudioEvent::play("shield"));
                                         }
+                                    }
+                                    crate::components::ItemEffect::UpgradeKit => {
+                                        self.log("Upgrade Kit used — no target selected.");
                                     }
                                 }
 
@@ -5136,6 +5279,66 @@ impl Game {
                     self.log("Select a character first!");
                 }
             }
+            Action::UpgradeEquipment(slot) => {
+                let selected = self.world.resource::<GameState>().unwrap().selected_entity;
+                let Some(entity) = selected else {
+                    self.log("Select a character first to upgrade equipment!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "Select a character first".to_string(),
+                    };
+                    return;
+                };
+
+                let upgrade_kit = self
+                    .world
+                    .get::<crate::components::Inventory>(entity)
+                    .and_then(|inventory| {
+                        inventory.items.iter().copied().find(|item_entity| {
+                            self.world
+                                .get::<crate::components::Item>(*item_entity)
+                                .is_some_and(|item| {
+                                    item.effect == crate::components::ItemEffect::UpgradeKit
+                                })
+                        })
+                    });
+                let Some(upgrade_kit) = upgrade_kit else {
+                    self.log("No Upgrade Kit available!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "No Upgrade Kit available".to_string(),
+                    };
+                    return;
+                };
+
+                let mut upgraded_name = None;
+                if let Some(equipped) = self.world.get_mut::<EquippedItems>(entity) {
+                    let item = match slot {
+                        crate::components::EquipmentSlot::Weapon => equipped.weapon.as_mut(),
+                        crate::components::EquipmentSlot::Armor => equipped.armor.as_mut(),
+                        crate::components::EquipmentSlot::Accessory => equipped.accessory.as_mut(),
+                    };
+                    if let Some(item) = item {
+                        if crate::equipment::upgrade_equipment(item) {
+                            upgraded_name = Some(format!("{} +{}", item.name, item.upgrade_level));
+                        }
+                    }
+                }
+
+                let Some(upgraded_name) = upgraded_name else {
+                    self.log("No upgradeable equipment in that slot!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "No upgradeable equipment in that slot".to_string(),
+                    };
+                    return;
+                };
+
+                if let Some(inventory) = self.world.get_mut::<crate::components::Inventory>(entity)
+                {
+                    inventory.items.retain(|&item| item != upgrade_kit);
+                }
+                self.world.despawn(upgrade_kit);
+                self.log(format!("Upgraded {}.", upgraded_name));
+                self.last_outcome = crate::snapshot::ActionOutcome::StateUpdated;
+            }
             Action::RerollModifiers => {
                 let cost = 1i32;
                 let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
@@ -5197,7 +5400,7 @@ impl Game {
                     let all_have_ap = participants.iter().all(|&e| {
                         self.world
                             .get::<Stats>(e)
-                            .map_or(false, |s| s.ap >= def.ap_cost)
+                            .is_some_and(|s| s.ap >= def.ap_cost)
                     });
                     if !all_have_ap {
                         self.log("Not enough AP from all participants for this combo!");
@@ -5228,7 +5431,7 @@ impl Game {
                     .filter(|(e, _, _)| {
                         self.world.get::<Team>(*e).copied().unwrap_or(Team::Enemy) == Team::Player
                     })
-                    .map(|(e, class, _)| (*e, (*class).clone()))
+                    .map(|(e, class, _)| (*e, *(*class)))
                     .collect::<Vec<_>>();
                 for (e, class) in entity_classes {
                     if let Some(progress) = self.world.get::<crate::components::PrestigeProgress>(e)
@@ -6264,6 +6467,27 @@ impl Game {
                         .collect()
                 })
                 .unwrap_or_default(),
+            active_set_bonuses: self
+                .world
+                .query2::<Team, crate::components::EquippedItems>()
+                .into_iter()
+                .filter(|(_, t, _)| **t == Team::Player)
+                .filter_map(|(_, _, eq)| {
+                    let stats = crate::equipment::check_set_bonuses(eq);
+                    if stats.active_sets.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            stats
+                                .active_sets
+                                .iter()
+                                .map(|s| s.display_name().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )
+                    }
+                })
+                .collect(),
         }
     }
 

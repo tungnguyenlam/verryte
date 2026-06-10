@@ -270,6 +270,7 @@ pub enum ItemEffect {
     RestoreShield(ShieldType, i32),
     Combined(i32, i32),  // heal, ap
     CleanseAndHeal(i32), // cleanse, heal amount
+    UpgradeKit,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -470,11 +471,89 @@ pub struct TacticalAssessment {
     pub safe_positions: Vec<Position>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EquipmentSlot {
     Weapon,
     Armor,
     Accessory,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EquipmentSet {
+    ShadowKnight,
+    ArcaneWeaver,
+    DivineGuardian,
+}
+
+impl EquipmentSet {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            EquipmentSet::ShadowKnight => "Shadow Knight",
+            EquipmentSet::ArcaneWeaver => "Arcane Weaver",
+            EquipmentSet::DivineGuardian => "Divine Guardian",
+        }
+    }
+
+    pub fn atk_multiplier(&self) -> f32 {
+        match self {
+            EquipmentSet::ShadowKnight => 1.15,
+            EquipmentSet::ArcaneWeaver => 1.10,
+            EquipmentSet::DivineGuardian => 1.05,
+        }
+    }
+
+    pub fn def_multiplier(&self) -> f32 {
+        match self {
+            EquipmentSet::ShadowKnight => 1.05,
+            EquipmentSet::ArcaneWeaver => 1.05,
+            EquipmentSet::DivineGuardian => 1.15,
+        }
+    }
+
+    pub fn hp_multiplier(&self) -> f32 {
+        match self {
+            EquipmentSet::ShadowKnight => 1.05,
+            EquipmentSet::ArcaneWeaver => 1.05,
+            EquipmentSet::DivineGuardian => 1.10,
+        }
+    }
+
+    pub fn spd_multiplier(&self) -> f32 {
+        match self {
+            EquipmentSet::ShadowKnight => 1.10,
+            EquipmentSet::ArcaneWeaver => 1.10,
+            EquipmentSet::DivineGuardian => 1.05,
+        }
+    }
+
+    pub fn required_items(&self) -> &'static [&'static str] {
+        match self {
+            EquipmentSet::ShadowKnight => &["DarkBlade", "ShadowArmor"],
+            EquipmentSet::ArcaneWeaver => &["ArcaneStaff", "ArcaneRobe"],
+            EquipmentSet::DivineGuardian => &["DivineStaff", "DivineVestments"],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SetBonusStats {
+    pub atk_multiplier: f32,
+    pub def_multiplier: f32,
+    pub hp_multiplier: f32,
+    pub spd_multiplier: f32,
+    pub active_sets: Vec<EquipmentSet>,
+}
+
+impl Default for SetBonusStats {
+    fn default() -> Self {
+        Self {
+            atk_multiplier: 1.0,
+            def_multiplier: 1.0,
+            hp_multiplier: 1.0,
+            spd_multiplier: 1.0,
+            active_sets: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -486,6 +565,12 @@ pub struct Equipment {
     pub hp_bonus: i32,
     pub spd_bonus: i32,
     pub special: Option<EquipmentSpecial>,
+    pub upgrade_level: u8,
+    pub set_id: Option<EquipmentSet>,
+    pub base_atk: i32,
+    pub base_def: i32,
+    pub base_hp: i32,
+    pub base_spd: i32,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -534,6 +619,28 @@ impl EquippedItems {
         self.weapon.as_ref().map_or(0, |e| e.spd_bonus)
             + self.armor.as_ref().map_or(0, |e| e.spd_bonus)
             + self.accessory.as_ref().map_or(0, |e| e.spd_bonus)
+    }
+
+    pub fn total_lifesteal_percent(&self) -> u32 {
+        [&self.weapon, &self.armor, &self.accessory]
+            .into_iter()
+            .flatten()
+            .filter_map(|equipment| match equipment.special {
+                Some(EquipmentSpecial::LifestealPercent(percent)) => Some(percent),
+                _ => None,
+            })
+            .sum()
+    }
+
+    pub fn total_hp_regen(&self) -> i32 {
+        [&self.weapon, &self.armor, &self.accessory]
+            .into_iter()
+            .flatten()
+            .filter_map(|equipment| match equipment.special {
+                Some(EquipmentSpecial::HpRegen(amount)) => Some(amount),
+                _ => None,
+            })
+            .sum()
     }
 
     pub fn equip(&mut self, item: Equipment) -> Option<Equipment> {

@@ -205,12 +205,13 @@ mod tests {
         }
         game.apply_action(Action::Confirm, ActionSource::Terminal);
 
-        // Warrior AP should be 2. Boss HP should be 500 - (20 - 20) capped at 1 = 499.
+        // Warrior AP should be 2. Boss HP should include Kael's +5 sword bonus:
+        // the deterministic combat roll deals 6 damage here.
         let warrior_stats = game.world.get::<Stats>(warrior).unwrap();
         assert_eq!(warrior_stats.ap, 2);
 
         let boss_stats = game.world.get::<Stats>(boss).unwrap();
-        assert_eq!(boss_stats.hp, 499);
+        assert_eq!(boss_stats.hp, 494);
     }
 
     #[test]
@@ -304,8 +305,8 @@ mod tests {
             assert_eq!(state.targeting, crate::components::TargetingMode::None);
         }
 
-        // Boss should have taken damage. Boss initial HP 500. Skill 1 Warrior value 45. Boss Def 20. Damage = 45 - 20 = 25.
-        // Boss HP should be 500 - 25 = 475.
+        // Boss should have taken damage. Boss initial HP 500. Skill 1 Warrior
+        // value 45 plus Kael's +5 sword bonus, minus Boss Def 20, deals 30.
         let mut boss_opt = None;
         for (e, _pos, _team, class) in game.world.query3::<Position, Team, CharacterClass>() {
             if *class == CharacterClass::Boss {
@@ -314,7 +315,7 @@ mod tests {
         }
         let boss = boss_opt.unwrap();
         let boss_stats = game.world.get::<Stats>(boss).unwrap();
-        assert_eq!(boss_stats.hp, 475);
+        assert_eq!(boss_stats.hp, 470);
 
         // Verify VFX are spawned
         assert!(
@@ -719,6 +720,7 @@ mod tests {
             game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
             let (damage, _defeated) = crate::systems::resolve_combat_hit(
                 &mut game.world,
+                None,
                 warrior,
                 100,
                 "Attacker",
@@ -1060,6 +1062,7 @@ mod tests {
         // Hit Warrior for 30 damage (which will result in at most 45 dmg, so it won't break the shield)
         let (damage_dealt, defeated) = crate::systems::resolve_combat_hit(
             &mut game.world,
+            None,
             warrior,
             30,
             "Attacker",
@@ -1083,6 +1086,7 @@ mod tests {
 
         let (damage_dealt_2, defeated_2) = crate::systems::resolve_combat_hit(
             &mut game.world,
+            None,
             warrior,
             100,
             "Attacker",
@@ -3375,8 +3379,8 @@ mod tests {
         );
 
         // Verify it moved closer to players or at least moved at all
-        let initial_dist = (initial_pos.x - 0).abs() + (initial_pos.y - 0).abs();
-        let final_dist = (final_pos.x - 0).abs() + (final_pos.y - 0).abs();
+        let initial_dist = initial_pos.x.abs() + initial_pos.y.abs();
+        let final_dist = final_pos.x.abs() + final_pos.y.abs();
         assert!(
             final_dist <= initial_dist,
             "Enemy should move toward players or wander. Initial dist: {}, Final dist: {}",
@@ -3897,6 +3901,7 @@ mod tests {
             game.world.get_mut::<Stats>(boss).unwrap().hp = 10000;
             let (damage, _) = crate::systems::resolve_combat_hit(
                 &mut game.world,
+                None,
                 boss,
                 50,
                 "Mage",
@@ -6127,15 +6132,26 @@ mod tests {
             Position::new(4, 4),
         );
 
-        let boss_hp_after = game.world.get::<Stats>(boss).unwrap().hp;
-        let shadow_hp_after = game.world.get::<Stats>(shadow).unwrap().hp;
+        let boss_alive = game.world.get::<Stats>(boss).is_some();
+        let shadow_alive = game.world.get::<Stats>(shadow).is_some();
+
+        if boss_alive {
+            let boss_hp_after = game.world.get::<Stats>(boss).unwrap().hp;
+            assert!(
+                boss_hp_after < boss_hp_before,
+                "Boss should take BladeStorm damage"
+            );
+        }
+        if shadow_alive {
+            let shadow_hp_after = game.world.get::<Stats>(shadow).unwrap().hp;
+            assert!(
+                shadow_hp_after < shadow_hp_before,
+                "Shadow should take BladeStorm damage"
+            );
+        }
         assert!(
-            boss_hp_after < boss_hp_before,
-            "Boss should take BladeStorm damage"
-        );
-        assert!(
-            shadow_hp_after < shadow_hp_before,
-            "Shadow should take BladeStorm damage"
+            boss_alive || shadow_alive,
+            "At least one enemy should survive BladeStorm"
         );
     }
 
@@ -6293,6 +6309,15 @@ mod tests {
     #[test]
     fn test_trinity_strike_stun_chance() {
         let mut game = Game::new();
+
+        // Use a CursedSentinel as target (no Vanish, no phase transition)
+        let sentinel = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::CursedSentinel)
+            .map(|(e, _)| e)
+            .unwrap();
         let warrior = game
             .world
             .query::<CharacterClass>()
@@ -6315,42 +6340,32 @@ mod tests {
             .map(|(e, _)| e)
             .unwrap();
 
-        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
-        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(4, 5);
-        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(5, 4);
-
-        // Place enemy at cursor
-        let shadow = game
-            .world
-            .query::<CharacterClass>()
-            .into_iter()
-            .find(|(_, c)| **c == CharacterClass::ShadowStalker)
-            .map(|(e, _)| e)
-            .unwrap();
-        *game.world.get_mut::<Position>(shadow).unwrap() = Position::new(4, 3);
-        game.world.get_mut::<Stats>(shadow).unwrap().hp = 10000;
+        // Place all 3 players close to sentinel
+        *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(16, 2);
+        *game.world.get_mut::<Position>(mage).unwrap() = Position::new(16, 3);
+        *game.world.get_mut::<Position>(healer).unwrap() = Position::new(17, 2);
+        *game.world.get_mut::<Position>(sentinel).unwrap() = Position::new(17, 3);
+        game.world.get_mut::<Stats>(sentinel).unwrap().hp = 100000;
+        game.world.get_mut::<Stats>(sentinel).unwrap().max_hp = 100000;
 
         // Move other enemies far away
         let others: Vec<_> = game
             .world
             .query::<Team>()
             .into_iter()
-            .filter(|(e, t)| **t == Team::Enemy && *e != shadow)
+            .filter(|(e, t)| **t == Team::Enemy && *e != sentinel)
             .map(|(e, _)| e)
             .collect();
         for e in others {
-            *game.world.get_mut::<Position>(e).unwrap() = Position::new(20, 20);
+            *game.world.get_mut::<Position>(e).unwrap() = Position::new(0, 0);
         }
 
-        game.world.get_mut::<Stats>(warrior).unwrap().ap = 10;
-        game.world.get_mut::<Stats>(mage).unwrap().ap = 10;
-        game.world.get_mut::<Stats>(healer).unwrap().ap = 10;
-        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 3);
+        game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(17, 3);
 
         let mut stun_count = 0;
-        for _ in 0..20 {
-            game.world.get_mut::<Stats>(shadow).unwrap().hp = 10000;
-            game.world.remove::<crate::components::Stunned>(shadow);
+        for _ in 0..100 {
+            game.world.get_mut::<Stats>(sentinel).unwrap().hp = 100000;
+            game.world.remove::<crate::components::Stunned>(sentinel);
             game.world.get_mut::<Stats>(warrior).unwrap().ap = 10;
             game.world.get_mut::<Stats>(mage).unwrap().ap = 10;
             game.world.get_mut::<Stats>(healer).unwrap().ap = 10;
@@ -6359,12 +6374,12 @@ mod tests {
             game.execute_combo_skill(
                 crate::components::ComboSkill::TrinityStrike,
                 &participants,
-                Position::new(4, 3),
+                Position::new(17, 3),
             );
 
             if game
                 .world
-                .get::<crate::components::Stunned>(shadow)
+                .get::<crate::components::Stunned>(sentinel)
                 .is_some()
             {
                 stun_count += 1;
@@ -6372,7 +6387,8 @@ mod tests {
         }
         assert!(
             stun_count > 0,
-            "TrinityStrike should stun at least once in 20 attempts"
+            "TrinityStrike should stun at least once in 100 attempts (got {})",
+            stun_count
         );
     }
 
@@ -6433,7 +6449,7 @@ mod tests {
         assert_eq!(mods1.turns_remaining, mods2.turns_remaining);
         assert!(!mods1.modifiers.is_empty());
         for &d in &mods1.turns_remaining {
-            assert!(d >= 3 && d <= 8, "Duration {} out of range [3, 8]", d);
+            assert!((3..=8).contains(&d), "Duration {} out of range [3, 8]", d);
         }
     }
 
@@ -6993,8 +7009,8 @@ mod tests {
             Position::new(2, 3),
         );
         assert!(
-            damage <= 90,
-            "Stressed state should reduce damage by 10%, got {}",
+            damage <= 95,
+            "Stressed state should reduce damage after equipment bonuses, got {}",
             damage
         );
     }

@@ -1,6 +1,6 @@
-use crate::components::{
-    AIAction, AIArchetype, AIBehavior, Position, Stats, TacticalAssessment, Team,
-};
+#[cfg(test)]
+use crate::components::AIBehavior;
+use crate::components::{AIAction, AIArchetype, Position, Stats, TacticalAssessment, Team};
 use crate::map::{TacticalMap, Tile};
 use verryte_core::{Entity, World};
 
@@ -500,6 +500,7 @@ impl TacticalAI {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::CharacterClass;
 
     fn make_test_map() -> TacticalMap {
         TacticalMap::from_ascii(
@@ -512,22 +513,31 @@ mod tests {
         )
     }
 
-    fn dummy_entity(_index: u32) -> Entity {
-        Entity::INVALID
-    }
-
-    fn basic_stats(hp: i32, max_hp: i32, atk: i32) -> Stats {
-        Stats {
-            hp,
-            max_hp,
-            atk,
-            def: 10,
-            spd: 5,
-            ap: 3,
-            max_ap: 3,
-            level: 1,
-            xp: 0,
-        }
+    fn spawn_test_entity(
+        world: &mut World,
+        pos: Position,
+        team: Team,
+        hp: i32,
+        max_hp: i32,
+        atk: i32,
+    ) -> Entity {
+        world
+            .builder()
+            .with(pos)
+            .with(team)
+            .with(CharacterClass::ShadowStalker)
+            .with(Stats {
+                hp,
+                max_hp,
+                atk,
+                def: 10,
+                spd: 5,
+                ap: 3,
+                max_ap: 3,
+                level: 1,
+                xp: 0,
+            })
+            .build()
     }
 
     #[test]
@@ -592,11 +602,12 @@ mod tests {
     #[test]
     fn test_threat_map() {
         let map = make_test_map();
-        let stats = basic_stats(100, 100, 20);
-        let players = vec![(dummy_entity(0), Position::new(4, 2), stats)];
+        let mut world = World::new();
+        let pe = spawn_test_entity(&mut world, Position::new(4, 2), Team::Player, 100, 100, 20);
+        let stats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(4, 2), stats)];
 
         let threat_map = TacticalAI::calculate_threat_map(&map, &players);
-
         let threat_at_player = threat_map
             .iter()
             .find(|(p, _)| *p == Position::new(4, 2))
@@ -610,7 +621,7 @@ mod tests {
 
         assert!(
             threat_at_player > threat_far,
-            "Threat at player position ({}) should exceed far position ({})",
+            "Threat at player ({}) should exceed far ({})",
             threat_at_player,
             threat_far
         );
@@ -620,12 +631,21 @@ mod tests {
     fn test_chaser_strategy_pursues_nearest() {
         let map = make_test_map();
         let enemy_pos = Position::new(0, 0);
-        let stats = basic_stats(80, 80, 20);
-        let players = vec![(
-            dummy_entity(1),
-            Position::new(3, 0),
-            basic_stats(100, 100, 20),
-        )];
+        let stats = Stats {
+            hp: 80,
+            max_hp: 80,
+            atk: 20,
+            def: 5,
+            spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+        let mut world = World::new();
+        let pe = spawn_test_entity(&mut world, Position::new(3, 0), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(3, 0), pstats)];
 
         let threat_map = TacticalAI::calculate_threat_map(&map, &players);
         let assessment = TacticalAssessment {
@@ -638,8 +658,8 @@ mod tests {
         let action = TacticalAI::chaser_strategy(enemy_pos, &stats, &players, &assessment);
         match action {
             AIAction::MoveTo(pos) => {
-                let dist_before = (enemy_pos.x - 3).abs() + (enemy_pos.y - 0).abs();
-                let dist_after = (pos.x - 3).abs() + (pos.y - 0).abs();
+                let dist_before = (enemy_pos.x - 3).abs() + enemy_pos.y.abs();
+                let dist_after = (pos.x - 3).abs() + pos.y.abs();
                 assert!(
                     dist_after <= dist_before,
                     "Chaser should move closer to player"
@@ -653,19 +673,28 @@ mod tests {
     #[test]
     fn test_cleric_strategy_heals_low_hp_ally() {
         let enemy_pos = Position::new(2, 2);
-        let stats = basic_stats(55, 55, 12);
-        let mut ally_stats = basic_stats(100, 500, 40);
-        ally_stats.def = 20;
-        let allies = vec![(dummy_entity(10), Position::new(2, 3), ally_stats)];
-        let players = vec![(
-            dummy_entity(1),
-            Position::new(5, 5),
-            basic_stats(100, 100, 20),
-        )];
+        let stats = Stats {
+            hp: 55,
+            max_hp: 55,
+            atk: 12,
+            def: 6,
+            spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 2,
+            xp: 0,
+        };
+        let mut world = World::new();
+        let ally = spawn_test_entity(&mut world, Position::new(2, 3), Team::Enemy, 100, 500, 40);
+        let ally_stats = world.get::<Stats>(ally).unwrap().clone();
+        let allies = vec![(ally, Position::new(2, 3), ally_stats)];
+        let pe = spawn_test_entity(&mut world, Position::new(5, 5), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(5, 5), pstats)];
 
         let action = TacticalAI::cleric_strategy(enemy_pos, &stats, &allies, &players);
         match action {
-            AIAction::HealAlly(e) => assert_eq!(e, dummy_entity(10)),
+            AIAction::HealAlly(e) => assert_eq!(e, ally),
             AIAction::MoveTo(pos) => assert_eq!(pos, Position::new(2, 3)),
             other => panic!("Expected HealAlly or MoveTo, got {:?}", other),
         }
@@ -675,12 +704,21 @@ mod tests {
     fn test_coward_strategy_retreats_when_low_hp() {
         let map = make_test_map();
         let enemy_pos = Position::new(2, 2);
-        let stats = basic_stats(20, 80, 15);
-        let players = vec![(
-            dummy_entity(1),
-            Position::new(2, 1),
-            basic_stats(100, 100, 20),
-        )];
+        let stats = Stats {
+            hp: 20,
+            max_hp: 80,
+            atk: 15,
+            def: 0,
+            spd: 10,
+            ap: 2,
+            max_ap: 2,
+            level: 1,
+            xp: 0,
+        };
+        let mut world = World::new();
+        let pe = spawn_test_entity(&mut world, Position::new(2, 1), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(2, 1), pstats)];
 
         let threat_map = TacticalAI::calculate_threat_map(&map, &players);
         let cover_positions = TacticalAI::find_cover_positions(&map, &[], &[Position::new(2, 1)]);
@@ -700,36 +738,28 @@ mod tests {
 
     #[test]
     fn test_focus_fire_targets_lowest_hp() {
-        let players = vec![
-            (
-                dummy_entity(1),
-                Position::new(4, 4),
-                basic_stats(100, 100, 20),
-            ),
-            (
-                dummy_entity(2),
-                Position::new(4, 8),
-                basic_stats(30, 60, 35),
-            ),
-        ];
+        let mut world = World::new();
+        let e1 = spawn_test_entity(&mut world, Position::new(4, 4), Team::Player, 100, 100, 20);
+        let s1 = world.get::<Stats>(e1).unwrap().clone();
+        let e2 = spawn_test_entity(&mut world, Position::new(4, 8), Team::Player, 30, 60, 35);
+        let s2 = world.get::<Stats>(e2).unwrap().clone();
+        let players = vec![(e1, Position::new(4, 4), s1), (e2, Position::new(4, 8), s2)];
 
         let result = TacticalAI::focus_fire_target(&players);
         assert!(result.is_some());
-        let (ent, _) = result.unwrap();
-        assert_eq!(ent, dummy_entity(2), "Should target lowest HP player");
+        let (ent, pos) = result.unwrap();
+        assert_eq!(ent, e2, "Should target lowest HP player");
+        assert_eq!(pos, Position::new(4, 8));
     }
 
     #[test]
     fn test_safest_move_target() {
-        let map = TacticalMap::from_ascii(
-            "\
-...\n\
-...\n\
-...",
-        );
+        let map = TacticalMap::from_ascii("...\n...\n...");
         let pos = Position::new(1, 1);
-        let stats = basic_stats(100, 100, 20);
-        let players = vec![(dummy_entity(1), Position::new(2, 1), stats)];
+        let mut world = World::new();
+        let pe = spawn_test_entity(&mut world, Position::new(2, 1), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(2, 1), pstats)];
 
         let threat_map = TacticalAI::calculate_threat_map(&map, &players);
         let assessment = TacticalAssessment {
@@ -765,14 +795,14 @@ mod tests {
     fn test_cover_positions_adjacent_to_wall() {
         let map = TacticalMap::from_ascii(
             "\
-#..\n\
 ...\n\
+.#.\n\
 ...",
         );
-        let cover = TacticalAI::find_cover_positions(&map, &[], &[Position::new(0, 0)]);
+        let cover = TacticalAI::find_cover_positions(&map, &[], &[Position::new(0, 1)]);
         assert!(
-            cover.iter().any(|p| *p == Position::new(1, 0)),
-            "Tile adjacent to wall should be candidate for cover"
+            cover.iter().any(|p| *p == Position::new(2, 1)),
+            "Position (2,1) adjacent to wall at (1,1) and blocking LOS from (0,1) should be cover"
         );
     }
 

@@ -163,7 +163,9 @@ those pieces.
   `terminal_size()` for querying the current terminal dimensions.
 - `prototype/wuthering-terminal` - a 2D turn-based tactical RPG prototype.
   Features team-swapping, Echo absorption, telegraphed enemy attacks with
-  parry/dodge, an alchemy crafting system for item combinations, floor-by-floor progression with procedural BSP dungeon generation, and an adaptive resolution sprite system that scales visual
+  parry/dodge, an alchemy crafting system for item combinations, equipment
+  upgrades and special effects (lifesteal and per-turn HP regeneration),
+  floor-by-floor progression with procedural BSP dungeon generation, and an adaptive resolution sprite system that scales visual
   fidelity to the user's terminal size. Sprites are compiled from PNG pixel
   art into static Rust arrays at build time using half-block sub-pixel packing.
 - `prototype/vfx-demo` - interactive terminal VFX demo proving real-time
