@@ -94,6 +94,19 @@ impl<A> ActionRecord<A> {
         self.metadata.insert(key.to_string(), value.to_string());
         self
     }
+
+    /// Read a metadata value by key without exposing the backing map shape.
+    pub fn metadata_value(&self, key: &str) -> Option<&str> {
+        self.metadata.get(key).map(String::as_str)
+    }
+
+    /// Parse a metadata value into a caller-owned type.
+    pub fn parse_metadata<T>(&self, key: &str) -> Option<Result<T, T::Err>>
+    where
+        T: std::str::FromStr,
+    {
+        self.metadata_value(key).map(str::parse)
+    }
 }
 
 /// A linear history of all actions applied during a game session.
@@ -395,6 +408,10 @@ mod tests {
         assert_eq!(record.timestamp, 1.5);
         assert_eq!(record.metadata.get("turn").unwrap(), "3");
         assert_eq!(record.metadata.get("phase").unwrap(), "combat");
+        assert_eq!(record.metadata_value("turn"), Some("3"));
+        assert_eq!(record.parse_metadata::<u32>("turn").unwrap().unwrap(), 3);
+        assert!(record.metadata_value("missing").is_none());
+        assert!(record.parse_metadata::<u32>("phase").unwrap().is_err());
     }
 
     #[test]

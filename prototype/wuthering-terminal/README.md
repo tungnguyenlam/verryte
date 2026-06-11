@@ -101,9 +101,10 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "confirm skil
 
 The script runner accepts action tokens separated by spaces. It prints
 rendered frames, state summaries, and event outcomes after each action.
-Item use, crafting, equipment upgrades, set rewards, and invalid inventory or
-floor-transition attempts are reported through structured `ActionOutcome`
-values so scripts and replays do not need to scrape log text.
+Item use, crafting, equipment upgrades, set rewards, echo absorption, boss phase
+transitions, and invalid inventory or floor-transition attempts are reported
+through structured `ActionOutcome` values so scripts and replays do not need to
+scrape log text.
 
 ### Script tokens
 

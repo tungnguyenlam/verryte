@@ -1,7 +1,7 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    CharacterClass, EquipmentSlot, EquippedItems, GameState, Inventory, ItemEffect, Outcome, Stats,
-    TurnPhase, TurnTransition, UIState,
+    CharacterClass, EchoItem, EquipmentSlot, EquippedEchoes, EquippedItems, GameState, Inventory,
+    ItemEffect, Outcome, Stats, TurnPhase, TurnTransition, UIState,
 };
 use wuthering_terminal::equipment;
 use wuthering_terminal::snapshot::{ActionOutcome, FailureCategory};
@@ -26,6 +26,18 @@ fn end_turn(game: &mut Game) {
     game.update(0.1);
     game.update(0.1);
     game.update(0.1);
+}
+
+fn last_recorded_outcome(game: &Game) -> ActionOutcome {
+    let history = game
+        .world
+        .resource::<verryte_input::ActionHistory<Action>>()
+        .unwrap();
+    let outcome = history
+        .last()
+        .and_then(|record| record.metadata_value("outcome"))
+        .expect("last action should record serialized outcome metadata");
+    serde_json::from_str(outcome).unwrap()
 }
 
 // ─── 1. Game Initialization ──────────────────────────────────────────────────
@@ -567,6 +579,7 @@ fn starter_upgrade_kit_upgrades_equipped_weapon() {
         game.world.get::<Inventory>(warrior).unwrap().items.len(),
         items_before - 1
     );
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
 }
 
 #[test]
@@ -653,6 +666,99 @@ fn defeating_set_reward_enemies_auto_equips_shadow_knight_set() {
         .snapshot()
         .active_set_bonuses
         .contains(&"Shadow Knight".to_string()));
+}
+
+#[test]
+fn defeating_set_reward_enemy_reports_structured_outcome_from_action_path() {
+    let mut game = Game::new();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let stalker = find_entity(&game, CharacterClass::ShadowStalker);
+    *game.world.get_mut::<Position>(stalker).unwrap() = Position::new(4, 5);
+    game.world.get_mut::<Stats>(stalker).unwrap().hp = 1;
+
+    select_character(&mut game, Position::new(4, 4));
+    game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 5);
+    let report = game.apply_action(Action::Confirm, ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::EquipmentRewarded {
+            item_name: "ShadowArmor".to_string(),
+            hero: "Kael".to_string(),
+        }
+    );
+    assert_eq!(
+        game.world
+            .get::<EquippedItems>(warrior)
+            .unwrap()
+            .armor
+            .as_ref()
+            .unwrap()
+            .name,
+        "ShadowArmor"
+    );
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
+fn echo_absorption_reports_structured_outcome_and_metadata() {
+    let mut game = Game::new();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let warrior_pos = *game.world.get::<Position>(warrior).unwrap();
+    game.world
+        .builder()
+        .with(warrior_pos)
+        .with(EchoItem {
+            class: CharacterClass::ShadowStalker,
+        })
+        .build();
+    game.world.resource_mut::<GameState>().unwrap().cursor = warrior_pos;
+
+    let report = game.apply_action(Action::Confirm, ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Absorbed {
+            echo_name: "Frostbite".to_string(),
+        }
+    );
+    assert!(game
+        .world
+        .resource::<EquippedEchoes>()
+        .unwrap()
+        .abilities
+        .contains(&wuthering_terminal::components::EchoAbility::Frostbite));
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
+fn boss_phase_transition_reports_structured_outcome_from_action_path() {
+    let mut game = Game::new();
+
+    let boss = find_entity(&game, CharacterClass::Boss);
+    *game.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+    let threshold = game
+        .world
+        .resource::<wuthering_terminal::components::BossConfig>()
+        .unwrap()
+        .phase2_hp_threshold;
+    let boss_stats = game.world.get_mut::<Stats>(boss).unwrap();
+    boss_stats.hp = threshold + 1;
+    boss_stats.def = 0;
+
+    select_character(&mut game, Position::new(4, 4));
+    game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 5);
+    let report = game.apply_action(Action::Confirm, ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::BossPhaseChanged {
+            phase: "Phase2".to_string(),
+        }
+    );
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
 }
 
 #[test]

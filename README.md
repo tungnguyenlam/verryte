@@ -65,6 +65,8 @@ those pieces.
   into `ActionTrace` without disk I/O,
   `InputRouter::recorded_actions` for borrowing recorded actions without stopping,
   `Bindings::get_keys_for_action` for retrieving key mappings bound to an action,
+  `ActionRecord::metadata_value` / `parse_metadata` for inspecting replay and
+  agent metadata without depending on the backing map layout,
   `TextInput` for terminal text entry (prompts, naming, chat) with cursor
   movement, insertion, deletion, max length, dirty tracking, undo/redo,
   autocomplete cycling, word jumps (Ctrl+Left/Right), word deletion
@@ -202,6 +204,8 @@ In practice:
 - games drain actions and apply normal systems;
 - snapshots and per-step reports expose observable state, action source, action
   result, and game events for tests, scripts, and future tooling.
+- action histories can attach string metadata such as serialized outcomes, and
+  replay/agent tools can inspect those values through `ActionRecord` helpers.
 
 ## Wuthering Terminal
 
@@ -217,7 +221,7 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "inspect:4,4 
 cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
-`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, and precise failure reports for invalid inventory/crafting/floor actions.
+`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, echo absorption, boss phase transition, and precise failure reports for invalid inventory/crafting/floor actions.
 The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
 
 ## Verification

@@ -4764,3 +4764,24 @@ per-turn schedule.
 **Gotchas.** Inventory number hotkeys are represented as `Skill1`/`Skill2`/`Skill3` before delegating to `UseItem`, so `compute_outcome()` must preserve `ItemUsed` for those actions too. The starter inventory contains a valid potion+elixir recipe, so invalid recipe tests must choose an actually unmatched pair.
 
 **Follow-ups.** Consider replacing more log-derived outcome parsing with explicit action-handler outcomes, especially for echo absorption, set rewards, and boss phase transitions. A later cleanup could centralize the explicit-outcome handoff so action handlers do not set `last_outcome` directly.
+
+## 2026-06-11 - Explicit progression outcomes and metadata helpers
+
+**Goal.** Continue the autonomous engine run by improving script/replay/agent observability without splitting Wuthering Terminal away from the shared `Action` -> `apply_action()` path.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/game.rs` - Echo absorption now sets `ActionOutcome::Absorbed` directly in `try_absorb_echo()` instead of relying on log-text parsing in `compute_outcome()`.
+- `prototype/wuthering-terminal/src/game.rs` - Boss phase transitions now set `ActionOutcome::BossPhaseChanged` in both the lethal phase-1 defeat path and the threshold-crossing `check_boss_phase_transition()` path.
+- `prototype/wuthering-terminal/src/game.rs` - Equipment set rewards now set `ActionOutcome::EquipmentRewarded` when the reward is actually equipped, and the obsolete reward/echo log-scraping branches were removed from `compute_outcome()`.
+- `crates/verryte-input/src/action.rs` - Added `ActionRecord::metadata_value()` and `ActionRecord::parse_metadata()` so replay/agent tools can inspect metadata through a small API instead of reaching into the backing `HashMap`.
+- `crates/verryte-input/src/router.rs` - Removed the non-serde unused `ActionHistory` import by qualifying the serde-only use in the recording loader.
+- `prototype/wuthering-terminal/tests/integration.rs` - Added action-path regression coverage for set rewards, echo absorption, boss phase transitions, and serialized outcome metadata using the new `ActionRecord` helper.
+- `README.md` and `prototype/wuthering-terminal/README.md` - Documented the metadata helper and the expanded structured outcome set.
+
+**Reasoning.** The previous outcome work made item, crafting, and equipment-upgrade actions explicit, but echo absorption, set rewards, and boss phase transitions still depended partly on human-facing log messages. Moving those outcomes to the gameplay handlers keeps scripts, terminal input, replays, and tests on the same path while reducing fragile string coupling. The metadata helper belongs in `verryte-input` because outcome metadata is a general action-history pattern even though Wuthering currently stores the serialized `ActionOutcome` payload.
+
+**Assumptions.** `last_outcome` remains the action-scoped handoff point because `apply_action()` resets it before each top-level action and serializes the final report outcome into the current `ActionHistory` record. Combat actions still expose one primary outcome; when a hit also awards equipment or changes boss phase, the progression outcome keeps precedence as it already did through prior log-derived inference.
+
+**Gotchas.** Boss phase transitions can happen through two paths: `handle_defeat()` for a lethal phase-1 hit, and `check_boss_phase_transition()` for threshold crossing while the boss remains alive. Both need explicit outcomes. The pre-existing `AGENTS.md` modification was left untouched and uncommitted.
+
+**Follow-ups.** Consider replacing the remaining craft/upgrade log-parsing fallback in `compute_outcome()` with purely explicit handlers once older tests or replay fixtures no longer depend on it. A future report model could also carry secondary outcomes so combat damage and progression rewards do not compete for one primary `ActionOutcome`.

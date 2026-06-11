@@ -2,7 +2,7 @@
 
 use std::collections::{vec_deque, VecDeque};
 
-use crate::action::{ActionHistory, ActionSource, QueuedAction};
+use crate::action::{ActionSource, QueuedAction};
 
 use crate::bindings::{Bindings, CommandBindings, CommandParseError};
 use crate::key::{InputEvent, Key, KeyEventKind, MouseButton, ScrollDirection};
@@ -724,7 +724,7 @@ impl<A: Clone> InputRouter<A> {
         A: serde::Serialize + serde::de::DeserializeOwned,
     {
         let content = std::fs::read_to_string(path)?;
-        let history: ActionHistory<A> = serde_json::from_str(&content)?;
+        let history: crate::action::ActionHistory<A> = serde_json::from_str(&content)?;
         let steps = history
             .records
             .into_iter()

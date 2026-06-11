@@ -1210,6 +1210,9 @@ impl Game {
 
             if class == CharacterClass::Boss {
                 self.log("Absorbed Blight Sovereign Echo! Echo absorbed successfully.");
+                self.last_outcome = ActionOutcome::Absorbed {
+                    echo_name: "Blight Sovereign".to_string(),
+                };
                 if let Some(echoes) = self
                     .world
                     .resource_mut::<crate::components::EquippedEchoes>()
@@ -1253,8 +1256,14 @@ impl Game {
                     if !echoes.abilities.contains(&ability) {
                         echoes.abilities.push(ability);
                         self.log(format!("Absorbed {} Echo! Ability granted.", name));
+                        self.last_outcome = ActionOutcome::Absorbed {
+                            echo_name: name.to_string(),
+                        };
                     } else {
                         self.log(format!("Absorbed {} Echo, but already have it.", name));
+                        self.last_outcome = ActionOutcome::Absorbed {
+                            echo_name: name.to_string(),
+                        };
                     }
                 }
             }
@@ -1341,6 +1350,9 @@ impl Game {
                 }
 
                 self.log("Blight Sovereign enters Phase 2! Its power intensifies, and Celestial Ruin is unleashed!");
+                self.last_outcome = ActionOutcome::BossPhaseChanged {
+                    phase: "Phase2".to_string(),
+                };
 
                 let (bx, by) = self.get_tile_center_pixels(pos);
 
@@ -1498,12 +1510,15 @@ impl Game {
         };
         if let Some(equipped) = self.world.get_mut::<EquippedItems>(hero) {
             equipped.equip(equipment);
+            let hero_name = Game::get_class_name(hero_class).to_string();
             self.log(format!(
                 "{} equipped {} from {}.",
-                Game::get_class_name(hero_class),
-                item_name,
-                defeated_name
+                hero_name, item_name, defeated_name
             ));
+            self.last_outcome = ActionOutcome::EquipmentRewarded {
+                item_name,
+                hero: hero_name,
+            };
         }
     }
 
@@ -2679,6 +2694,9 @@ impl Game {
                 }
 
                 self.log("Blight Sovereign enters Phase 2! Its power intensifies, and Celestial Ruin is unleashed!");
+                self.last_outcome = ActionOutcome::BossPhaseChanged {
+                    phase: "Phase2".to_string(),
+                };
 
                 crate::systems::apply_boss_phase_morale(&mut self.world);
 
@@ -3649,7 +3667,10 @@ impl Game {
                 Action::UseItem(_) | Action::Skill1 | Action::Skill2 | Action::Skill3,
             )
             | (ActionOutcome::Crafted { .. }, Action::CraftItem(_, _))
-            | (ActionOutcome::EquipmentUpgraded { .. }, Action::UpgradeEquipment(_)) => {
+            | (ActionOutcome::EquipmentUpgraded { .. }, Action::UpgradeEquipment(_))
+            | (ActionOutcome::EquipmentRewarded { .. }, _)
+            | (ActionOutcome::Absorbed { .. }, Action::Confirm)
+            | (ActionOutcome::BossPhaseChanged { .. }, _) => {
                 return self.last_outcome.clone();
             }
             _ => {}
@@ -3687,15 +3708,6 @@ impl Game {
         }
 
         for msg in &new_log_messages {
-            if msg.contains("Absorbed") && msg.contains("Echo") {
-                let echo_name = msg
-                    .split("Absorbed ")
-                    .nth(1)
-                    .and_then(|s| s.split(" Echo").next())
-                    .unwrap_or("Unknown")
-                    .to_string();
-                return ActionOutcome::Absorbed { echo_name };
-            }
             if msg.contains("crafted") || msg.contains("Crafted") {
                 let item_name = msg
                     .split("crafted ")
@@ -3716,16 +3728,6 @@ impl Game {
                             item_name: item_name.to_string(),
                             slot,
                             level,
-                        };
-                    }
-                }
-            }
-            if let Some(reward) = msg.strip_suffix('.') {
-                if let Some((hero, rest)) = reward.split_once(" equipped ") {
-                    if let Some((item_name, _source)) = rest.split_once(" from ") {
-                        return ActionOutcome::EquipmentRewarded {
-                            item_name: item_name.to_string(),
-                            hero: hero.to_string(),
                         };
                     }
                 }
