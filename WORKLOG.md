@@ -4828,3 +4828,47 @@ per-turn schedule.
 **Gotchas.** `StepReplay` calls `apply_action()` recursively for the replayed action, so it must set `last_outcome` after the inner action returns. The existing end-of-trace branch cleared `ReplayState.active` before checking whether the trace had just ended; the new test caught this and the handler now reports a disabled replay outcome with action/error counts.
 
 **Follow-ups.** Consider moving persistence paths behind a configurable save root so tests do not touch the prototype `saves/` directory. A future report model could carry nested replay-step outcomes so `ReplayStepped` can include the inner action's structured outcome without replacing the outer control outcome.
+
+## 2026-06-11 - weather danger zone rendering, Snowing combat modifiers, system wiring, tests
+
+**Goal.** Close 5 small gaps identified during autonomous exploration: implement the
+`render_weather_danger_zones` stub, add Snowing weather damage modifiers, register
+two orphaned systems in the game schedule, and add test coverage.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/ui.rs:936-1002` - Replaced no-op stub with full
+  `render_weather_danger_zones` that reads `Weather` resource and renders colored
+  overlays per weather type: LightningStorm (flashing yellow/red + `!` glyph),
+  Rainy (blue tint + `~` glyph), Snowing (white tint + sparkle `*` glyph).
+  Added `Weather, WeatherType` to imports.
+- `prototype/wuthering-terminal/src/systems/combat.rs:21-34` - Extended
+  `weather_damage_modifier` to detect Ice-elemental attackers (GlacialGolem, Ice,
+  Frost, Chill name prefixes). Snowing now reduces fire damage to 85% and boosts
+  Ice damage to 115%. Rainy fire reduction unchanged.
+- `prototype/wuthering-terminal/src/game.rs:118-119` - Registered
+  `morale_fatigue_system` and `weather_ambient_system` in the game schedule so
+  they run each tick instead of only being callable from tests.
+- `prototype/wuthering-terminal/src/lib.rs:3964-4017` - Added
+  `test_weather_snowing_damage_modifiers` covering fire reduction (100→85), ice
+  boost (100→115), non-elemental no-op, and Frost/Chill name prefix detection.
+
+**Reasoning.** The `render_weather_danger_zones` stub was the last visually
+noticed gap in weather UX — danger zones were generated and tracked but invisible.
+Snowing had zero combat impact despite extending ice duration; adding damage
+modifiers makes it gameplay-relevant like Rainy. Both orphaned systems had full
+implementations but were not hooked into the main loop, making them dead code in
+practice.
+
+**Assumptions.** Ice-element detection via name prefix matching follows the same
+pattern as fire detection. The existing name-based heuristic is broad enough for
+current enemies (GlacialGolem, FrostWraith, ChillWeaver). A proper elemental tag
+system would be more robust but is a larger refactor.
+
+**Gotchas.** clippy suggested `.is_multiple_of(2)` over `% 2 == 0` for evenness
+checks in the new render code. The `weather_ambient_system` was only callable
+from a dedicated test before this change.
+
+**Follow-ups.** Consider adding a proper `Element` component to entities instead
+of name-based element detection. The `render_weather_danger_zones` function could
+benefit from a smoke test that verifies grid cells change under different weather
+types.

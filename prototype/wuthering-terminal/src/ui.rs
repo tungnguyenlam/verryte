@@ -1,6 +1,6 @@
 use crate::components::{
     BattleStats, CharacterClass, ElementalStatus, GameState, Outcome, Rooted, Stats, Team,
-    TurnPhase,
+    TurnPhase, Weather, WeatherType,
 };
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
@@ -933,11 +933,78 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
 }
 
 pub fn render_weather_danger_zones(
-    _grid: &mut Grid,
-    _world: &World,
-    _viewport: &verryte_terminal::TileViewport,
-    _tile_w: u16,
-    _tile_h: u16,
-    _ticks: u64,
+    grid: &mut Grid,
+    world: &World,
+    viewport: &verryte_terminal::TileViewport,
+    tile_w: u16,
+    tile_h: u16,
+    ticks: u64,
 ) {
+    let weather = match world.resource::<Weather>() {
+        Some(w) => w,
+        None => return,
+    };
+    for pos in &weather.danger_zones {
+        let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
+        for dy in 0..tile_h {
+            for dx in 0..tile_w {
+                let tx = sx + dx as i32;
+                let ty = sy + dy as i32;
+                if !viewport.rect.contains(tx as u16, ty as u16) {
+                    continue;
+                }
+                if let Some(cell) = grid.get_mut(tx as u16, ty as u16) {
+                    match weather.current {
+                        WeatherType::LightningStorm => {
+                            let flash = (ticks / 8).is_multiple_of(2);
+                            cell.bg = verryte_terminal::vfx::blend_color(
+                                cell.bg,
+                                if flash {
+                                    Color(255, 255, 100)
+                                } else {
+                                    Color(200, 50, 50)
+                                },
+                                0.5,
+                            );
+                            if dx == 0 && dy == 0 {
+                                cell.fg = if flash {
+                                    Color(200, 50, 50)
+                                } else {
+                                    Color(255, 255, 100)
+                                };
+                                cell.glyph = '!';
+                            }
+                        }
+                        WeatherType::Rainy => {
+                            cell.bg = verryte_terminal::vfx::blend_color(
+                                cell.bg,
+                                Color(30, 60, 150),
+                                0.3,
+                            );
+                            if dx == 0 && dy == 0 {
+                                cell.fg = Color(180, 200, 255);
+                                cell.glyph = '~';
+                            }
+                        }
+                        WeatherType::Snowing => {
+                            cell.bg = verryte_terminal::vfx::blend_color(
+                                cell.bg,
+                                Color(180, 200, 220),
+                                0.25,
+                            );
+                            if dx == 0 && dy == 0 {
+                                let sparkle = (ticks.wrapping_add((pos.x + pos.y * 7) as u64) / 12)
+                                    .is_multiple_of(2);
+                                if sparkle {
+                                    cell.fg = Color(220, 230, 255);
+                                    cell.glyph = '*';
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
 }

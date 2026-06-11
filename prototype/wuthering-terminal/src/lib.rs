@@ -3962,6 +3962,48 @@ mod tests {
     }
 
     #[test]
+    fn test_weather_snowing_damage_modifiers() {
+        use crate::components::WeatherType;
+
+        let mut game = Game::new();
+
+        game.world
+            .resource_mut::<crate::components::Weather>()
+            .unwrap()
+            .current = WeatherType::Snowing;
+
+        let snow_fire = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        assert_eq!(
+            snow_fire, 85,
+            "Snowing should reduce fire damage by 15% (100 -> 85)"
+        );
+
+        let snow_ice = crate::systems::weather_damage_modifier(&game.world, 100, "GlacialGolem");
+        assert_eq!(
+            snow_ice, 115,
+            "Snowing should boost ice damage by 15% (100 -> 115)"
+        );
+
+        let snow_non_elemental = crate::systems::weather_damage_modifier(&game.world, 100, "Mage");
+        assert_eq!(
+            snow_non_elemental, 100,
+            "Snowing should not modify non-elemental damage"
+        );
+
+        let frost_ice = crate::systems::weather_damage_modifier(&game.world, 100, "FrostWraith");
+        assert_eq!(
+            frost_ice, 115,
+            "Snowing should boost Frost-prefix damage by 15% (100 -> 115)"
+        );
+
+        let chill_ice = crate::systems::weather_damage_modifier(&game.world, 100, "ChillWeaver");
+        assert_eq!(
+            chill_ice, 115,
+            "Snowing should boost Chill-prefix damage by 15% (100 -> 115)"
+        );
+    }
+
+    #[test]
     fn test_weather_rainy_water_movement_cost() {
         let mut game = Game::new();
 

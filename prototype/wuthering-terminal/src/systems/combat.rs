@@ -26,8 +26,14 @@ pub fn weather_damage_modifier(world: &World, base_damage: i32, attacker_name: &
     let is_fire = attacker_name.contains("Warrior")
         || attacker_name.contains("Kael")
         || attacker_name.contains("Dragon");
-    let modifier: f32 = match (weather, is_fire) {
-        (WeatherType::Rainy, true) => 0.80,
+    let is_ice = attacker_name.contains("GlacialGolem")
+        || attacker_name.contains("Ice")
+        || attacker_name.contains("Frost")
+        || attacker_name.contains("Chill");
+    let modifier: f32 = match (weather, is_fire, is_ice) {
+        (WeatherType::Rainy, true, _) => 0.80,
+        (WeatherType::Snowing, true, _) => 0.85,
+        (WeatherType::Snowing, _, true) => 1.15,
         _ => 1.0,
     };
     (base_damage as f32 * modifier) as i32

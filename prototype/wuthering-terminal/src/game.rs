@@ -115,6 +115,8 @@ impl Game {
         schedule.add_named("weather_cycle", crate::systems::weather_cycle_system);
         schedule.add_named("combo_detection", crate::systems::combo_detection_system);
         schedule.add_named("prestige", crate::systems::prestige_system);
+        schedule.add_named("morale_fatigue", crate::systems::morale_fatigue_system);
+        schedule.add_named("weather_ambient", crate::systems::weather_ambient_system);
 
         let mut audio_stream = None;
         if let Ok((mut player, stream)) = verryte_audio::AudioPlayer::try_new() {
