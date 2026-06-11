@@ -102,10 +102,11 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "confirm skil
 The script runner accepts action tokens separated by spaces. It prints
 rendered frames, state summaries, and event outcomes after each action.
 Item use, crafting, equipment upgrades, set rewards, echo absorption, boss phase
-transitions, UI/tool toggles, prestige status views, rest recovery, floor
-modifier rerolls, and invalid inventory or floor-transition attempts are
-reported through structured `ActionOutcome` values so scripts and replays do not
-need to scrape log text.
+transitions, save/load, action recording, replay mode changes, replay steps,
+UI/tool toggles, prestige status views, rest recovery, floor modifier rerolls,
+and invalid inventory, floor-transition, or replay attempts are reported through
+structured `ActionOutcome` values so scripts and replays do not need to scrape
+log text.
 
 ### Script tokens
 
@@ -115,7 +116,7 @@ Combat: `skill1`, `skill2`, `skill3`, `confirm`, `cancel`, `end`, `wait`, `craft
 
 Swap: `swap1`, `swap2`, `swap3` (or `4`, `5`, `6`)
 
-Other: `autobattle`, `inventory`, `bestiary`/`lore`, `prestige`, `reroll`, `rest`, `safety`, `stairs`/`next_floor`/`>`, `quit`
+Other: `autobattle`, `inventory`, `bestiary`/`lore`, `prestige`, `reroll`, `rest`, `safety`, `save`/`quicksave`, `load`/`quickload`, `record`/`recording`, `replay`, `replay_auto`/`auto_replay`, `step_replay`/`replay_step`, `stairs`/`next_floor`/`>`, `quit`
 
 ## Adaptive Sprites
 
@@ -147,9 +148,11 @@ The prototype uses the `verryte-terminal::vfx` system for:
 
 ## Save/Load
 
-Press F5 to save, F9 to load. Save files are stored in the `saves/` directory
-as JSON. The full game state (entities, components, map, RNG, clock) is
-serialized.
+Press F5 to save, F9 to load, or use script tokens `save` and `load`. Save
+files are stored in the `saves/` directory as JSON. The full game state
+(entities, components, map, RNG, clock) is serialized, and save/load actions
+report `ActionOutcome::GameSaved` or `ActionOutcome::GameLoaded` with the
+quicksave path.
 
 ## Architecture
 

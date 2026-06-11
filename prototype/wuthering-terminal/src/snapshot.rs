@@ -139,6 +139,26 @@ pub enum ActionOutcome {
     },
     /// Active floor modifiers were rerolled.
     ModifiersRerolled { modifiers: Vec<String> },
+    /// The current game state was saved.
+    GameSaved { path: String },
+    /// A saved game state was loaded.
+    GameLoaded { path: String },
+    /// Action recording was started or stopped.
+    RecordingChanged { enabled: bool, records: usize },
+    /// Replay mode was started or stopped.
+    ReplayChanged {
+        enabled: bool,
+        actions: usize,
+        errors: usize,
+    },
+    /// A replay action was applied through the normal action path.
+    ReplayStepped {
+        index: usize,
+        action: String,
+        verified: bool,
+    },
+    /// Replay auto-step mode was toggled.
+    ReplayAutoChanged { enabled: bool },
     /// The action triggered a state-only change (selection, cursor, inventory).
     StateUpdated,
     /// The action failed (e.g. out of AP, out of range, invalid target).
@@ -183,6 +203,9 @@ impl ActionOutcome {
                     Some(FailureCategory::InvalidRecipe)
                 } else if reason.starts_with("Inventory must be open")
                     || reason.starts_with("You must stand on")
+                    || reason.starts_with("No save file")
+                    || reason.starts_with("Replay mode")
+                    || reason.starts_with("Enable Replay")
                 {
                     Some(FailureCategory::WrongContext)
                 } else {

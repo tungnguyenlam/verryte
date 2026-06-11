@@ -1,7 +1,7 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
     CharacterClass, EchoItem, EquipmentSlot, EquippedEchoes, EquippedItems, Fatigue, GameState,
-    Inventory, ItemEffect, Morale, Outcome, Stats, TurnPhase, TurnTransition, UIState,
+    Inventory, ItemEffect, Morale, Outcome, ReplayState, Stats, TurnPhase, TurnTransition, UIState,
 };
 use wuthering_terminal::equipment;
 use wuthering_terminal::snapshot::{ActionOutcome, FailureCategory};
@@ -573,6 +573,160 @@ fn reroll_modifiers_reports_active_modifier_names() {
         other => panic!("expected modifier reroll outcome, got {other:?}"),
     }
     assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
+fn save_and_load_report_structured_outcomes() {
+    let mut game = Game::new();
+
+    let save = game.apply_action(Action::Save, ActionSource::Script);
+    let saved_path = match &save.outcome {
+        ActionOutcome::GameSaved { path } => path.clone(),
+        other => panic!("expected game saved outcome, got {other:?}"),
+    };
+    assert!(saved_path.ends_with("quicksave.json"));
+    assert_eq!(last_recorded_outcome(&game), save.outcome);
+
+    game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(9, 9);
+    let load = game.apply_action(Action::Load, ActionSource::Script);
+
+    assert_eq!(load.outcome, ActionOutcome::GameLoaded { path: saved_path });
+    assert_eq!(last_recorded_outcome(&game), load.outcome);
+}
+
+#[test]
+fn recording_reports_structured_outcomes() {
+    let mut game = Game::new();
+
+    let start = game.apply_action(Action::ToggleRecording, ActionSource::Terminal);
+    assert_eq!(
+        start.outcome,
+        ActionOutcome::RecordingChanged {
+            enabled: true,
+            records: 0,
+        }
+    );
+    assert!(game.world.resource::<GameState>().unwrap().is_recording);
+
+    game.apply_action(Action::Inspect(Position::new(4, 4)), ActionSource::Terminal);
+    let stop = game.apply_action(Action::ToggleRecording, ActionSource::Terminal);
+    match stop.outcome {
+        ActionOutcome::RecordingChanged {
+            enabled: false,
+            records,
+        } => assert!(records >= 1, "stop should report recorded actions"),
+        other => panic!("expected recording stopped outcome, got {other:?}"),
+    }
+    assert!(!game.world.resource::<GameState>().unwrap().is_recording);
+}
+
+#[test]
+fn replay_controls_report_structured_outcomes() {
+    let mut recorder = Game::new();
+    recorder.apply_action(Action::ToggleRecording, ActionSource::Terminal);
+    recorder.apply_action(Action::Inspect(Position::new(4, 4)), ActionSource::Terminal);
+    recorder.apply_action(Action::ToggleRecording, ActionSource::Terminal);
+
+    let mut game = Game::new();
+    let enabled = game.apply_action(Action::ToggleReplay, ActionSource::Terminal);
+    let actions = match enabled.outcome {
+        ActionOutcome::ReplayChanged {
+            enabled: true,
+            actions,
+            errors: 0,
+        } => actions,
+        other => panic!("expected replay enabled outcome, got {other:?}"),
+    };
+    assert!(actions >= 1, "replay should load the recorded trace");
+
+    let auto = game.apply_action(Action::ToggleReplayAuto, ActionSource::Terminal);
+    assert_eq!(
+        auto.outcome,
+        ActionOutcome::ReplayAutoChanged { enabled: true }
+    );
+
+    let step = game.apply_action(Action::StepReplay, ActionSource::Terminal);
+    match &step.outcome {
+        ActionOutcome::ReplayStepped {
+            index,
+            action,
+            verified,
+        } => {
+            assert_eq!(*index, 0);
+            assert!(!action.is_empty());
+            assert!(*verified);
+        }
+        other => panic!("expected replay step outcome, got {other:?}"),
+    }
+    assert_eq!(last_recorded_outcome(&game), step.outcome);
+
+    let disabled = game.apply_action(Action::ToggleReplay, ActionSource::Terminal);
+    assert!(matches!(
+        disabled.outcome,
+        ActionOutcome::ReplayChanged {
+            enabled: false,
+            actions: _,
+            errors: _
+        }
+    ));
+}
+
+#[test]
+fn replay_step_without_active_replay_reports_context_failure() {
+    let mut game = Game::new();
+
+    let report = game.apply_action(Action::StepReplay, ActionSource::Terminal);
+
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::WrongContext)
+    );
+}
+
+#[test]
+fn replay_end_reports_disabled_outcome() {
+    let mut game = Game::new();
+    let replay = game.world.resource_mut::<ReplayState>().unwrap();
+    replay.active = true;
+    replay
+        .trace
+        .push(Action::Inspect(Position::new(4, 4)), ActionSource::Replay);
+    replay.next_index = replay.trace.steps().len();
+
+    let report = game.apply_action(Action::StepReplay, ActionSource::Terminal);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::ReplayChanged {
+            enabled: false,
+            actions: 1,
+            errors: 0,
+        }
+    );
+}
+
+#[test]
+fn script_tokens_resolve_persistence_and_replay_controls() {
+    assert_eq!(
+        wuthering_terminal::resolve_command_token("save"),
+        Some(Action::Save)
+    );
+    assert_eq!(
+        wuthering_terminal::resolve_command_token("quickload"),
+        Some(Action::Load)
+    );
+    assert_eq!(
+        wuthering_terminal::resolve_command_token("recording"),
+        Some(Action::ToggleRecording)
+    );
+    assert_eq!(
+        wuthering_terminal::resolve_command_token("replay_auto"),
+        Some(Action::ToggleReplayAuto)
+    );
+    assert_eq!(
+        wuthering_terminal::resolve_command_token("replay_step"),
+        Some(Action::StepReplay)
+    );
 }
 
 #[test]

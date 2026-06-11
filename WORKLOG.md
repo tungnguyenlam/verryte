@@ -4808,3 +4808,23 @@ per-turn schedule.
 **Gotchas.** Actions issued while an overlay is open are intentionally ignored unless they close that overlay or quit; tests must close bestiary/help before checking unrelated actions like auto-battle. Some older generic state-update fallbacks remain for selection/cursor style actions where a richer outcome would add little value.
 
 **Follow-ups.** Consider adding explicit structured outcomes for save/load and replay-mode toggles. Equipment upgrade success still relies on the log-parsing fallback after setting `StateUpdated`; it could be simplified by setting `EquipmentUpgraded` directly in the handler.
+
+## 2026-06-11 - Structured persistence and replay outcomes
+
+**Goal.** Continue the autonomous engine run by improving Wuthering Terminal observability for save/load, action recording, and replay controls without splitting terminal, script, replay, or test action paths.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/snapshot.rs` - Added structured `ActionOutcome` variants for `GameSaved`, `GameLoaded`, `RecordingChanged`, `ReplayChanged`, `ReplayStepped`, and `ReplayAutoChanged`, and classified replay/save context failures under `FailureCategory::WrongContext`.
+- `prototype/wuthering-terminal/src/game.rs` - Save/load now report precise success/failure outcomes, recording start/stop reports enabled state and record counts, replay enable/disable reports loaded actions and validation errors, replay stepping reports index/action/verification status, and replay auto-toggle reports enabled state.
+- `prototype/wuthering-terminal/src/action.rs` - Added script command tokens for `save`, `load`, `record`, `replay`, `replay_auto`, and `step_replay` aliases so automation can drive these controls through the same `Action` enum as keyboard input.
+- `prototype/wuthering-terminal/tests/integration.rs` - Added action-path regression coverage for save/load metadata, recording reports, replay mode controls, replay stepping, inactive replay failures, end-of-trace behavior, and script token resolution.
+- `prototype/wuthering-terminal/tests/save_load.rs` - Added serde roundtrip coverage for the new outcome variants.
+- `README.md` and `prototype/wuthering-terminal/README.md` - Documented persistence/replay script tokens and structured outcomes.
+
+**Reasoning.** Persistence and replay controls were still collapsing to generic state/no-op reports, which forced tools to infer behavior from logs or internal resources. Setting explicit outcomes inside the existing action handlers keeps the shared `Action` -> `apply_action()` -> `StepReport` path intact and makes automation/replay validation more inspectable.
+
+**Assumptions.** Reporting quicksave paths in outcomes is acceptable because the current runners already use deterministic `saves/quicksave.json` / `prototype/wuthering-terminal/saves/quicksave.json` paths. `ReplayStepped.action` uses `Debug` text for now because it is intended as human-readable report metadata, not a replacement for the replay trace's typed action.
+
+**Gotchas.** `StepReplay` calls `apply_action()` recursively for the replayed action, so it must set `last_outcome` after the inner action returns. The existing end-of-trace branch cleared `ReplayState.active` before checking whether the trace had just ended; the new test caught this and the handler now reports a disabled replay outcome with action/error counts.
+
+**Follow-ups.** Consider moving persistence paths behind a configurable save root so tests do not touch the prototype `saves/` directory. A future report model could carry nested replay-step outcomes so `ReplayStepped` can include the inner action's structured outcome without replacing the outer control outcome.

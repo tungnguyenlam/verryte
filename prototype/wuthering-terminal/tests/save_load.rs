@@ -945,6 +945,27 @@ fn action_outcome_variants_roundtrip() {
         ActionOutcome::ModifiersRerolled {
             modifiers: vec!["Darkness".to_string(), "Frenzy".to_string()],
         },
+        ActionOutcome::GameSaved {
+            path: "saves/quicksave.json".to_string(),
+        },
+        ActionOutcome::GameLoaded {
+            path: "saves/quicksave.json".to_string(),
+        },
+        ActionOutcome::RecordingChanged {
+            enabled: false,
+            records: 4,
+        },
+        ActionOutcome::ReplayChanged {
+            enabled: true,
+            actions: 4,
+            errors: 0,
+        },
+        ActionOutcome::ReplayStepped {
+            index: 2,
+            action: "Confirm".to_string(),
+            verified: true,
+        },
+        ActionOutcome::ReplayAutoChanged { enabled: true },
         ActionOutcome::StateUpdated,
         ActionOutcome::Failed {
             reason: "Not enough AP".to_string(),

@@ -172,6 +172,12 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("skill3", Action::Skill3);
     c.bind_name("quit", Action::Quit);
     c.bind_name("end", Action::EndTurn);
+    c.bind_name("save", Action::Save);
+    c.bind_name("load", Action::Load);
+    c.bind_name("record", Action::ToggleRecording);
+    c.bind_name("replay", Action::ToggleReplay);
+    c.bind_name("replay_auto", Action::ToggleReplayAuto);
+    c.bind_name("step_replay", Action::StepReplay);
     c.bind_name("autobattle", Action::AutoBattle);
     c.bind_name("safety", Action::StepToSafety);
     c.bind_name("undo", Action::Undo);
@@ -255,6 +261,30 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
 
     if token == "redo" {
         return Some(Action::Redo);
+    }
+
+    if token == "save" || token == "quicksave" {
+        return Some(Action::Save);
+    }
+
+    if token == "load" || token == "quickload" {
+        return Some(Action::Load);
+    }
+
+    if token == "record" || token == "recording" {
+        return Some(Action::ToggleRecording);
+    }
+
+    if token == "replay" {
+        return Some(Action::ToggleReplay);
+    }
+
+    if token == "replay_auto" || token == "auto_replay" {
+        return Some(Action::ToggleReplayAuto);
+    }
+
+    if token == "step_replay" || token == "replay_step" {
+        return Some(Action::StepReplay);
     }
 
     if token == "stairs" || token == "next_floor" {

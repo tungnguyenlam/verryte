@@ -3674,7 +3674,13 @@ impl Game {
             | (ActionOutcome::ToggleChanged { .. }, _)
             | (ActionOutcome::StatusViewed { .. }, Action::ViewPrestige)
             | (ActionOutcome::Rested { .. }, Action::Rest)
-            | (ActionOutcome::ModifiersRerolled { .. }, Action::RerollModifiers) => {
+            | (ActionOutcome::ModifiersRerolled { .. }, Action::RerollModifiers)
+            | (ActionOutcome::GameSaved { .. }, Action::Save)
+            | (ActionOutcome::GameLoaded { .. }, Action::Load)
+            | (ActionOutcome::RecordingChanged { .. }, Action::ToggleRecording)
+            | (ActionOutcome::ReplayChanged { .. }, Action::ToggleReplay | Action::StepReplay)
+            | (ActionOutcome::ReplayStepped { .. }, Action::StepReplay)
+            | (ActionOutcome::ReplayAutoChanged { .. }, Action::ToggleReplayAuto) => {
                 return self.last_outcome.clone();
             }
             _ => {}
@@ -5042,18 +5048,29 @@ impl Game {
                 if let Ok(state) = self.save_state() {
                     let filename = "quicksave.json";
                     let path = format!("{}/{}", base_path, filename);
-                    let _ = std::fs::write(&path, &state);
-                    self.log(format!("Game saved to {}", path));
+                    match std::fs::write(&path, &state) {
+                        Ok(()) => {
+                            self.log(format!("Game saved to {}", path));
+                            self.last_outcome = ActionOutcome::GameSaved { path: path.clone() };
 
-                    // Also save a timestamped version
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    let ts_path = format!("{}/save_{}.json", base_path, now);
-                    let _ = std::fs::write(&ts_path, &state);
+                            // Also save a timestamped version for manual play history.
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            let ts_path = format!("{}/save_{}.json", base_path, now);
+                            let _ = std::fs::write(&ts_path, &state);
+                        }
+                        Err(err) => {
+                            let reason = format!("Failed to save game: {}", err);
+                            self.log(reason.clone());
+                            self.last_outcome = ActionOutcome::Failed { reason };
+                        }
+                    }
                 } else {
-                    self.log("Failed to save game!");
+                    let reason = "Failed to serialize save state".to_string();
+                    self.log(reason.clone());
+                    self.last_outcome = ActionOutcome::Failed { reason };
                 }
             }
             Action::Load => {
@@ -5062,11 +5079,16 @@ impl Game {
                 if let Ok(state_str) = std::fs::read_to_string(&path) {
                     if self.load_state(&state_str).is_ok() {
                         self.log(format!("Game loaded from {}", path));
+                        self.last_outcome = ActionOutcome::GameLoaded { path };
                     } else {
-                        self.log("Failed to load game state!");
+                        let reason = "Failed to load game state".to_string();
+                        self.log(reason.clone());
+                        self.last_outcome = ActionOutcome::Failed { reason };
                     }
                 } else {
-                    self.log("No save file found!");
+                    let reason = "No save file found".to_string();
+                    self.log(reason.clone());
+                    self.last_outcome = ActionOutcome::Failed { reason };
                 }
             }
             Action::TogglePerf => {
@@ -5111,6 +5133,11 @@ impl Game {
             }
             Action::ToggleRecording => {
                 if self.router.is_recording() {
+                    let records = self
+                        .world
+                        .resource::<verryte_input::ActionHistory<Action>>()
+                        .map(|history| history.len())
+                        .unwrap_or(0);
                     self.router.stop_recording();
                     self.world.resource_mut::<GameState>().unwrap().is_recording = false;
                     self.log("Action recording STOPPED.");
@@ -5132,6 +5159,10 @@ impl Game {
                             self.log("Failed to save action history!");
                         }
                     }
+                    self.last_outcome = ActionOutcome::RecordingChanged {
+                        enabled: false,
+                        records,
+                    };
                 } else {
                     self.router.clear_history();
                     if let Some(history) = self
@@ -5145,18 +5176,24 @@ impl Game {
                     self.router.start_recording(path);
                     self.world.resource_mut::<GameState>().unwrap().is_recording = true;
                     self.log("Action recording STARTED.");
+                    self.last_outcome = ActionOutcome::RecordingChanged {
+                        enabled: true,
+                        records: 0,
+                    };
                 }
             }
 
             Action::ToggleReplay => {
-                let (active, msg) = {
+                let (active, actions, errors, msg) = {
                     let replay = self
                         .world
                         .resource_mut::<crate::components::ReplayState>()
                         .unwrap();
                     if replay.active {
+                        let actions = replay.trace.steps().len();
+                        let errors = replay.verification_errors.len();
                         replay.active = false;
-                        (false, "Replay mode DISABLED.".to_string())
+                        (false, actions, errors, "Replay mode DISABLED.".to_string())
                     } else {
                         // Try to load last_recording.json
                         let base_path = saves_dir();
@@ -5182,15 +5219,20 @@ impl Game {
                             replay.active = true;
                             replay.next_index = 0;
                             replay.auto = false;
+                            let actions = replay.trace.steps().len();
                             (
                                 true,
-                                format!(
-                                    "Replay mode ENABLED. Trace loaded ({} actions).",
-                                    replay.trace.steps().len()
-                                ),
+                                actions,
+                                0,
+                                format!("Replay mode ENABLED. Trace loaded ({} actions).", actions),
                             )
                         } else {
-                            (false, "No last_recording.json found to replay!".to_string())
+                            (
+                                false,
+                                0,
+                                0,
+                                "No last_recording.json found to replay!".to_string(),
+                            )
                         }
                     }
                 };
@@ -5198,6 +5240,21 @@ impl Game {
                 self.log(msg);
                 if active {
                     self.log("Press F12 to step through replay.");
+                    self.last_outcome = ActionOutcome::ReplayChanged {
+                        enabled: true,
+                        actions,
+                        errors,
+                    };
+                } else if actions > 0 || errors > 0 {
+                    self.last_outcome = ActionOutcome::ReplayChanged {
+                        enabled: false,
+                        actions,
+                        errors,
+                    };
+                } else {
+                    self.last_outcome = ActionOutcome::Failed {
+                        reason: "No last_recording.json found to replay".to_string(),
+                    };
                 }
             }
             Action::StepReplay => {
@@ -5226,6 +5283,7 @@ impl Game {
                     Some((index, action, source)) => {
                         self.log(format!("Replaying action {}: {:?}", index, action));
                         let report = self.apply_action(action, source);
+                        let mut verified = true;
                         let expected = {
                             let replay = self
                                 .world
@@ -5235,6 +5293,7 @@ impl Game {
                         };
                         if let Some(expected) = expected {
                             if expected != report.outcome {
+                                verified = false;
                                 let err = format!(
                                     "Replay step {} outcome mismatch: expected {:?}, got {:?}",
                                     index, expected, report.outcome
@@ -5247,22 +5306,42 @@ impl Game {
                                 replay.verification_errors.push(err);
                             }
                         }
+                        self.last_outcome = ActionOutcome::ReplayStepped {
+                            index,
+                            action: format!("{:?}", action),
+                            verified,
+                        };
                     }
 
                     None => {
-                        let active = self
-                            .world
-                            .resource::<crate::components::ReplayState>()
-                            .unwrap()
-                            .active;
-                        if active {
+                        let (was_active, actions, errors) = {
+                            let replay = self
+                                .world
+                                .resource::<crate::components::ReplayState>()
+                                .unwrap();
+                            (
+                                replay.next_index >= replay.trace.steps().len()
+                                    && !replay.trace.steps().is_empty(),
+                                replay.trace.steps().len(),
+                                replay.verification_errors.len(),
+                            )
+                        };
+                        if was_active {
                             self.log("End of replay trace reached.");
                             self.world
                                 .resource_mut::<crate::components::ReplayState>()
                                 .unwrap()
                                 .active = false;
+                            self.last_outcome = ActionOutcome::ReplayChanged {
+                                enabled: false,
+                                actions,
+                                errors,
+                            };
                         } else {
                             self.log("Enable Replay mode first (F11)!");
+                            self.last_outcome = ActionOutcome::Failed {
+                                reason: "Enable Replay mode first".to_string(),
+                            };
                         }
                     }
                 }
@@ -5287,6 +5366,13 @@ impl Game {
                 };
                 if let Some(m) = msg {
                     self.log(m);
+                    self.last_outcome = ActionOutcome::ReplayAutoChanged {
+                        enabled: m.contains("enabled"),
+                    };
+                } else {
+                    self.last_outcome = ActionOutcome::Failed {
+                        reason: "Replay mode must be active to toggle auto-play".to_string(),
+                    };
                 }
             }
             Action::NextFloor => {
