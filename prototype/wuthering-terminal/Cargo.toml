@@ -20,6 +20,10 @@ path = "src/bin/script.rs"
 name = "bake-assets"
 path = "src/bin/bake_assets.rs"
 
+[[bin]]
+name = "wuthering-terminal-agent"
+path = "src/bin/agent.rs"
+
 [dependencies]
 verryte-core = { path = "../../crates/verryte-core", features = ["serde"] }
 verryte-input = { path = "../../crates/verryte-input", features = ["serde"] }

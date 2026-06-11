@@ -5021,3 +5021,46 @@ extending beyond the current roadmap:
 **Gotchas.** The `spawn_character_scaled` returns `Entity` like `spawn_character`, but the trait default implementation calls `spawn_character_scaled(pos, team, class, 1)` which preserves Floor 1 behavior. The `base_stats` function needed to be made public so tests could compare scaled vs base stats. The borrow checker required restructuring the bonus items loop to collect spawned items before mutating the inventory.
 
 **Follow-ups.** Floor 3+ could feature unique enemy spawns (e.g., Shadow Stalker pair encounters) or environmental modifiers beyond the existing floor modifier system. The stat scaling curve could be made data-driven per enemy type instead of a flat multiplier. A "New Game+" mode that restarts at higher difficulty would add replayability. Level-up skill point spending could trigger a skill tree UI overlay via the existing skill tree system.
+
+## 2026-06-11 - add agent REPL binary for AI-driven game interaction
+
+**Goal.** Build a step-by-step interactive runner that AI agents can use to
+play the game over stdin/stdout with structured JSON responses containing
+the rendered frame (plain text) and full game state.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/game.rs:6256` - refactored `render()` to
+  delegate to new `render_sized(w, h)` method, decoupling rendering from
+  `verryte_tty::terminal_size()` so headless runners can specify dimensions.
+- `prototype/wuthering-terminal/src/bin/agent.rs` - new binary implementing
+  the agent REPL protocol: reads action tokens from stdin, emits JSON with
+  `frame`, `snapshot`, `reports`, `logs`, `game_over` fields, followed by
+  `READY` sentinel. Supports `--size WxH` and `--seed N` flags. Meta-commands:
+  `help`, `snapshot`, `diagnostics`, `reset`, `quit`.
+- `prototype/wuthering-terminal/Cargo.toml` - registered
+  `wuthering-terminal-agent` binary target.
+- `AGENTS.md` - documented the agent REPL protocol, usage, and smoke commands.
+
+**Reasoning.** GOAL.md specifies agent control (Reset, Inject, Observe, Batch)
+as a first-class engine capability, and the existing script runner had an
+interactive REPL mode, but it was human-oriented (ANSI output, no structured
+JSON). An AI agent needs plain-text frames it can read in context plus
+structured JSON for programmatic reasoning. The `render_sized` extraction is
+the minimal change to decouple from a real terminal. The `READY` sentinel
+protocol lets a driving tool know when to send the next command without
+parsing JSON boundaries.
+
+**Assumptions.** 80×24 fallback from `terminal_size()` is acceptable for
+the existing `render()` callers (script runner, TTY runner). The 120×36
+default for the agent binary gives SMALL resolution tier which is readable
+in text form.
+
+**Gotchas.** `to_plain_string()` strips all color/attribute information —
+agents see only glyphs and layout. This is intentional: agents reason about
+spatial structure, not ANSI escape codes. If color matters for agent
+decision-making, `to_ansi_string()` could be added as an option later.
+
+**Follow-ups.** Could add `--ansi` flag to emit ANSI-colored frame instead
+of plain text. Could add `--pretty` flag for pretty-printed JSON. The
+agent binary could eventually support a `--batch` mode that reads all
+commands upfront (like the script runner) but still emits per-step JSON.

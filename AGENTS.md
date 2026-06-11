@@ -192,6 +192,32 @@ cargo run -p wuthering-terminal --bin wuthering-terminal
 
 The script runner executes a sequence of action tokens for smoke testing. The TTY runner needs a real terminal.
 
+### Agent REPL
+
+The agent REPL (`wuthering-terminal-agent`) is an interactive step-by-step
+runner designed for AI agents. It reads action tokens from stdin (one line at a
+time), applies them, and emits a JSON response to stdout containing:
+
+- `frame` — plain-text rendered grid (readable by text-based agents)
+- `snapshot` — full structured game state
+- `reports` — action outcomes and events
+- `logs` — game log messages
+- `game_over` — whether the game has ended
+
+Each response is followed by a `READY` sentinel line. Meta-commands: `help`,
+`snapshot`, `diagnostics`, `reset`, `quit`.
+
+```sh
+# Interactive agent session:
+cargo run -p wuthering-terminal --bin wuthering-terminal-agent
+
+# With explicit virtual terminal size and RNG seed:
+cargo run -p wuthering-terminal --bin wuthering-terminal-agent -- --size 120x36 --seed 42
+
+# Pipe commands:
+echo -e "north\nconfirm\nsnapshot\nquit" | cargo run -p wuthering-terminal --bin wuthering-terminal-agent
+```
+
 If a Rust toolchain is unavailable or a command cannot be run in the current
 environment, say so in the final response and record the limitation in the
 worklog for non-trivial work.

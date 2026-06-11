@@ -6253,7 +6253,17 @@ impl Game {
         }
     }
 
+    /// Render using the current terminal size.
     pub fn render(&self) -> Grid {
+        let (term_w, term_h) = verryte_tty::terminal_size();
+        self.render_sized(term_w, term_h)
+    }
+
+    /// Render into a grid of explicit `(cols, rows)` dimensions.
+    ///
+    /// This decouples rendering from having a real terminal attached,
+    /// allowing headless runners and agent tools to specify the size.
+    pub fn render_sized(&self, term_w: u16, term_h: u16) -> Grid {
         let map = self.world.resource::<TacticalMap>().unwrap();
         let state = self.world.resource::<GameState>().unwrap();
         let registry = self.world.resource::<VisualRegistry>().unwrap();
@@ -6261,7 +6271,6 @@ impl Game {
         let clock = self.world.resource::<GameClock>().unwrap();
 
         // Determine resolution tier and tile dimensions dynamically
-        let (term_w, term_h) = verryte_tty::terminal_size();
         let tier = verryte_terminal::ResolutionTier::from_size(term_w, term_h);
         let (tile_w, tile_h) = tier.tile_dimensions();
 
