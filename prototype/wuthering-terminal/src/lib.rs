@@ -3426,7 +3426,7 @@ mod tests {
 
     #[test]
     fn test_weather_damage_modifiers() {
-        use crate::components::{CharacterClass, WeatherType};
+        use crate::components::{CharacterClass, CharacterElement, Element, WeatherType};
 
         let mut game = Game::new();
         let warrior = game
@@ -3444,30 +3444,39 @@ mod tests {
             .map(|(e, _)| e)
             .unwrap();
 
-        game.world.get_mut::<Stats>(warrior).unwrap().hp = 1000;
-        game.world.get_mut::<Stats>(warrior).unwrap().max_hp = 1000;
-        game.world.get_mut::<Stats>(mage).unwrap().hp = 1000;
-        game.world.get_mut::<Stats>(mage).unwrap().max_hp = 1000;
+        // Verify CharacterElement is attached during spawn
+        let warrior_element = game.world.get::<CharacterElement>(warrior).unwrap();
+        assert_eq!(
+            warrior_element.element,
+            Element::Fire,
+            "Warrior should be Fire element"
+        );
+        let mage_element = game.world.get::<CharacterElement>(mage).unwrap();
+        assert_eq!(
+            mage_element.element,
+            Element::Lightning,
+            "Mage should be Lightning element"
+        );
 
         game.world
             .resource_mut::<crate::components::Weather>()
             .unwrap()
             .current = WeatherType::Sunny;
-        let sunny_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        let sunny_mod = crate::systems::weather_damage_modifier(&game.world, 100, Some(warrior));
         assert_eq!(sunny_mod, 100, "Sunny should not modify fire damage");
 
         game.world
             .resource_mut::<crate::components::Weather>()
             .unwrap()
             .current = WeatherType::Rainy;
-        let rainy_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        let rainy_mod = crate::systems::weather_damage_modifier(&game.world, 100, Some(warrior));
         assert_eq!(rainy_mod, 80, "Rainy should reduce fire damage by 20%");
 
         game.world
             .resource_mut::<crate::components::Weather>()
             .unwrap()
             .current = WeatherType::LightningStorm;
-        let storm_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Mage");
+        let storm_mod = crate::systems::weather_damage_modifier(&game.world, 100, Some(mage));
         assert_eq!(
             storm_mod, 100,
             "LightningStorm no longer applies a multiplier (uses 25% bonus chance instead)"
@@ -3840,7 +3849,15 @@ mod tests {
 
         game.world.get_mut::<Stats>(boss).unwrap().hp = 10000;
 
-        let sunny_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let sunny_mod = crate::systems::weather_damage_modifier(&game.world, 100, Some(warrior));
         assert_eq!(
             sunny_mod, 100,
             "Sunny weather should not modify fire damage"
@@ -3854,13 +3871,21 @@ mod tests {
             weather.current = crate::components::WeatherType::Rainy;
         }
 
-        let rainy_mod = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        let rainy_mod = crate::systems::weather_damage_modifier(&game.world, 100, Some(warrior));
         assert_eq!(
             rainy_mod, 80,
             "Rainy weather should reduce fire damage by 20% (100 -> 80)"
         );
 
-        let rainy_non_fire = crate::systems::weather_damage_modifier(&game.world, 100, "Mage");
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let rainy_non_fire = crate::systems::weather_damage_modifier(&game.world, 100, Some(mage));
         assert_eq!(
             rainy_non_fire, 100,
             "Rainy weather should not modify non-fire damage"
@@ -3963,7 +3988,8 @@ mod tests {
 
     #[test]
     fn test_weather_snowing_damage_modifiers() {
-        use crate::components::WeatherType;
+        use crate::components::{CharacterClass, CharacterElement, Element, Team, WeatherType};
+        use crate::spawn::Spawner;
 
         let mut game = Game::new();
 
@@ -3972,35 +3998,62 @@ mod tests {
             .unwrap()
             .current = WeatherType::Snowing;
 
-        let snow_fire = crate::systems::weather_damage_modifier(&game.world, 100, "Warrior");
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let snow_fire = crate::systems::weather_damage_modifier(&game.world, 100, Some(warrior));
         assert_eq!(
             snow_fire, 85,
             "Snowing should reduce fire damage by 15% (100 -> 85)"
         );
 
-        let snow_ice = crate::systems::weather_damage_modifier(&game.world, 100, "GlacialGolem");
+        let glacial = game.world.spawn_character(
+            Position { x: 0, y: 0 },
+            Team::Enemy,
+            CharacterClass::GlacialGolem,
+        );
+
+        let snow_ice = crate::systems::weather_damage_modifier(&game.world, 100, Some(glacial));
         assert_eq!(
             snow_ice, 115,
             "Snowing should boost ice damage by 15% (100 -> 115)"
         );
 
-        let snow_non_elemental = crate::systems::weather_damage_modifier(&game.world, 100, "Mage");
+        let mage = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let snow_non_elemental =
+            crate::systems::weather_damage_modifier(&game.world, 100, Some(mage));
         assert_eq!(
             snow_non_elemental, 100,
-            "Snowing should not modify non-elemental damage"
+            "Snowing should not modify lightning (non-fire/non-ice) damage"
         );
 
-        let frost_ice = crate::systems::weather_damage_modifier(&game.world, 100, "FrostWraith");
+        // Test with None (no attacker entity)
+        let snow_none = crate::systems::weather_damage_modifier(&game.world, 100, None);
         assert_eq!(
-            frost_ice, 115,
-            "Snowing should boost Frost-prefix damage by 15% (100 -> 115)"
+            snow_none, 100,
+            "Snowing should not modify damage when no attacker element"
         );
 
-        let chill_ice = crate::systems::weather_damage_modifier(&game.world, 100, "ChillWeaver");
-        assert_eq!(
-            chill_ice, 115,
-            "Snowing should boost Chill-prefix damage by 15% (100 -> 115)"
-        );
+        // Test CharacterElement helper methods directly
+        assert!(CharacterElement::fire().is_fire());
+        assert!(!CharacterElement::fire().is_ice());
+        assert!(CharacterElement::ice().is_ice());
+        assert!(!CharacterElement::ice().is_fire());
+        assert_eq!(CharacterElement::lightning().element, Element::Lightning);
+        assert_eq!(CharacterElement::nature().element, Element::Nature);
+        assert_eq!(CharacterElement::physical().element, Element::Physical);
     }
 
     #[test]

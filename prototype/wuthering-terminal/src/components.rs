@@ -583,10 +583,60 @@ pub enum EquipmentSpecial {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Element {
+    Fire,
     Ice,
     Lightning,
     Nature,
     Physical,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CharacterElement {
+    pub element: Element,
+}
+
+impl CharacterElement {
+    pub fn fire() -> Self {
+        Self {
+            element: Element::Fire,
+        }
+    }
+    pub fn ice() -> Self {
+        Self {
+            element: Element::Ice,
+        }
+    }
+    pub fn lightning() -> Self {
+        Self {
+            element: Element::Lightning,
+        }
+    }
+    pub fn nature() -> Self {
+        Self {
+            element: Element::Nature,
+        }
+    }
+    pub fn physical() -> Self {
+        Self {
+            element: Element::Physical,
+        }
+    }
+
+    pub fn is_fire(&self) -> bool {
+        self.element == Element::Fire
+    }
+
+    pub fn is_ice(&self) -> bool {
+        self.element == Element::Ice
+    }
+}
+
+impl Default for CharacterElement {
+    fn default() -> Self {
+        Self {
+            element: Element::Physical,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]

@@ -2,9 +2,9 @@
 
 use crate::action::Action;
 use crate::components::{
-    BattleStats, CharacterClass, DamagePreview, EchoItem, ElementalShield, ElementalStatus,
-    GameEvent, GameState, Inventory, Item, Outcome, Position, Rooted, Stats, Stunned, Team,
-    TelegraphZone, TurnPhase, WeatherType,
+    BattleStats, CharacterClass, CharacterElement, DamagePreview, EchoItem, ElementalShield,
+    ElementalStatus, GameEvent, GameState, Inventory, Item, Outcome, Position, Rooted, Stats,
+    Stunned, Team, TelegraphZone, TurnPhase, WeatherType,
 };
 use verryte_core::snapshot::{WorldRegistry, WorldSnapshot};
 use verryte_input::ActionSource;
@@ -226,6 +226,7 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_component::<Stats>("Stats");
     reg.register_component::<Position>("Position");
     reg.register_component::<ElementalStatus>("ElementalStatus");
+    reg.register_component::<CharacterElement>("CharacterElement");
     reg.register_component::<ElementalShield>("ElementalShield");
     reg.register_component::<Rooted>("Rooted");
     reg.register_component::<Stunned>("Stunned");

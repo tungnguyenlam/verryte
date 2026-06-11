@@ -4872,3 +4872,62 @@ from a dedicated test before this change.
 of name-based element detection. The `render_weather_danger_zones` function could
 benefit from a smoke test that verifies grid cells change under different weather
 types.
+
+## 2026-06-11 - Replace name-based element detection with CharacterElement component
+
+**Goal.** Replace brittle name-based string matching for element detection in
+`weather_damage_modifier` and SFX selection with a proper ECS `CharacterElement`
+component, add `Fire` to the `Element` enum, register in snapshot, and update
+all tests.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/components.rs` — Added `CharacterElement`
+  struct with `element: Element` field, `fire()`/`ice()`/`lightning()`/
+  `nature()`/`physical()` constructors, `is_fire()`/`is_ice()` helper methods,
+  and `Default` impl (Physical). Extended `Element` enum with `Fire` variant.
+- `prototype/wuthering-terminal/src/spawn.rs` — Each character now spawns with
+  a `CharacterElement` matching their class: Warrior/Boss → Fire, Mage →
+  Lightning, Healer → Nature, GlacialGolem → Ice, others → Physical.
+- `prototype/wuthering-terminal/src/systems/combat.rs` — Replaced
+  `weather_damage_modifier(world, base_damage, attacker_name: &str)` with
+  `weather_damage_modifier(world, base_damage, attacker: Option<Entity>)` that
+  reads `CharacterElement` from the entity instead of matching name substrings.
+  Replaced SFX name detection (`attacker_name.contains("Warrior")`) with
+  `CharacterClass` enum matching via `world.get::<CharacterClass>(attacker)`.
+- `prototype/wuthering-terminal/src/game.rs` — Updated call site to pass
+  `Some(attacker)` instead of `attacker_name` string.
+- `prototype/wuthering-terminal/src/snapshot.rs` — Registered `CharacterElement`
+  in `create_registry()` for save/load fidelity.
+- `prototype/wuthering-terminal/src/lib.rs` — Rewrote `test_weather_damage_modifiers`
+  and `test_weather_snowing_damage_modifiers` to use entity-based element lookup
+  instead of string names. Added `CharacterElement`::{
+  is_fire,is_ice,element} assertions and `None` attacker edge case. Spawns
+  GlacialGolem via `spawn_character()` in snowing test.
+
+**Reasoning.** Name-based element detection (`attacker_name.contains("Warrior")`,
+`attacker_name.contains("GlacialGolem")`) was brittle, missed characters whose
+display names change, and couldn't handle enemies added by future content without
+updating the string match list. The `CharacterElement` component follows Verryte's
+ECS pattern: data-first, observable, serializable for save/load. The `Element`
+enum already existed but lacked `Fire`; weather_damage_modifier needed to
+distinguish fire from non-fire characters. Replacing SFX name matching with
+`CharacterClass` lookup eliminates a second set of brittle string checks.
+
+**Assumptions.** Boss is Fire element (matching its Dragon Fire skill). Default
+element is Physical for enemies without specialized elemental mechanics. The
+`CharacterElement` component is always attached during spawn, so `None` attacker
+(anonymous/environmental damage) falls back to no modifier.
+
+**Gotchas.** The `GlacialGolem` entity doesn't exist in `Game::new()` by default
+(it only spawns on Floor 2), so the snowing test manually spawns one via
+`spawn_character()`. The old `test_weather_snowing_damage_modifiers` used
+`"FrostWraith"` and `"ChillWeaver"` name strings for characters that don't exist
+in the game — these name-based lookups were always returning `false` for the
+ice check, meaning those assertions were testing the "no match" path, not a
+real ice element path. The new test properly tests the `GlacialGolem` entity
+which has the `Ice` element.
+
+**Follow-ups.** The `resolve_combat_hit` duplication between `game.rs` and
+`systems/combat.rs` remains the primary technical debt. Consider merging the
+two into a single shared function or having `game.rs` delegate to the
+`combat.rs` version.

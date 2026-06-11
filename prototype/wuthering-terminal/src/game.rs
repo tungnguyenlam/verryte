@@ -587,7 +587,7 @@ impl Game {
         boosted_base_damage = crate::systems::weather_damage_modifier(
             &self.world,
             boosted_base_damage,
-            attacker_name,
+            Some(attacker),
         );
 
         let attacker_morale_state = self

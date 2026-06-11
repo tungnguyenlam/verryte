@@ -1,7 +1,7 @@
 use crate::components::{
-    AvailableCombos, BossConfig, BossPhase, CharacterClass, ComboSkill, ComboSkillDef, EchoItem,
-    ElementalShield, ElementalStatus, EquippedItems, GameEvent, GameState, Outcome, Position,
-    Rooted, ShieldType, Stats, Team, Weather, WeatherType,
+    AvailableCombos, BossConfig, BossPhase, CharacterClass, CharacterElement, ComboSkill,
+    ComboSkillDef, EchoItem, ElementalShield, ElementalStatus, EquippedItems, GameEvent, GameState,
+    Outcome, Position, Rooted, ShieldType, Stats, Team, Weather, WeatherType,
 };
 use crate::game::Game;
 
@@ -18,18 +18,19 @@ pub fn log(world: &mut World, msg: impl Into<String>) {
     }
 }
 
-pub fn weather_damage_modifier(world: &World, base_damage: i32, attacker_name: &str) -> i32 {
+pub fn weather_damage_modifier(world: &World, base_damage: i32, attacker: Option<Entity>) -> i32 {
     let weather = match world.resource::<Weather>() {
         Some(w) => w.current,
         None => return base_damage,
     };
-    let is_fire = attacker_name.contains("Warrior")
-        || attacker_name.contains("Kael")
-        || attacker_name.contains("Dragon");
-    let is_ice = attacker_name.contains("GlacialGolem")
-        || attacker_name.contains("Ice")
-        || attacker_name.contains("Frost")
-        || attacker_name.contains("Chill");
+    let is_fire = attacker
+        .and_then(|e| world.get::<CharacterElement>(e))
+        .map(|ce| ce.is_fire())
+        .unwrap_or(false);
+    let is_ice = attacker
+        .and_then(|e| world.get::<CharacterElement>(e))
+        .map(|ce| ce.is_ice())
+        .unwrap_or(false);
     let modifier: f32 = match (weather, is_fire, is_ice) {
         (WeatherType::Rainy, true, _) => 0.80,
         (WeatherType::Snowing, true, _) => 0.85,
@@ -66,20 +67,16 @@ pub fn resolve_combat_hit(
     target_name: &str,
     pos: Position,
 ) -> (i32, bool) {
-    let sfx_name = if attacker_name.contains("Warrior") || attacker_name.contains("Kael") {
-        "warrior_attack"
-    } else if attacker_name.contains("Mage") || attacker_name.contains("Lyra") {
-        "mage_attack"
-    } else if attacker_name.contains("Healer") || attacker_name.contains("Mira") {
-        "healer_attack"
-    } else if attacker_name.contains("Boss") || attacker_name.contains("Blight") {
-        "boss_attack"
-    } else {
-        "enemy_attack"
+    let sfx_name = match attacker.and_then(|e| world.get::<CharacterClass>(e)) {
+        Some(CharacterClass::Warrior) => "warrior_attack",
+        Some(CharacterClass::Mage) => "mage_attack",
+        Some(CharacterClass::Healer) => "healer_attack",
+        Some(CharacterClass::Boss) => "boss_attack",
+        _ => "enemy_attack",
     };
     play_spatial_sfx(world, sfx_name, pos);
 
-    let base_damage = weather_damage_modifier(world, base_damage, attacker_name);
+    let base_damage = weather_damage_modifier(world, base_damage, attacker);
 
     let (is_crit, is_block, damage) = {
         let rng = world.resource_mut::<Rng>().expect("Rng must be registered");

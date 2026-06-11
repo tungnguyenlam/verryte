@@ -140,6 +140,15 @@ impl Spawner for World {
             _ => None,
         };
 
+        let element = match class {
+            CharacterClass::Warrior => crate::components::CharacterElement::fire(),
+            CharacterClass::Mage => crate::components::CharacterElement::lightning(),
+            CharacterClass::Healer => crate::components::CharacterElement::nature(),
+            CharacterClass::GlacialGolem => crate::components::CharacterElement::ice(),
+            CharacterClass::Boss => crate::components::CharacterElement::fire(),
+            _ => crate::components::CharacterElement::physical(),
+        };
+
         let mut builder = self
             .builder()
             .with(pos)
@@ -147,6 +156,7 @@ impl Spawner for World {
             .with(class)
             .with(stats)
             .with(ElementalStatus::None)
+            .with(element)
             .with(Inventory::default());
 
         if let Some(t) = trait_opt {
