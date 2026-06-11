@@ -40,8 +40,9 @@ Characters can have unique traits that modify gameplay:
 - **Inventory**: healing potions, energy elixirs, cleanse remedies, aegis elixirs
 - **Equipment**: class starter gear, enemy-awarded set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration. Equipment upgrades and set rewards are exposed as structured `ActionOutcome` values for scripts and replays. Upgrade Kits are used through `equip_upgrade:<slot>` and are not consumed by direct inventory use.
 - **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`. Successful crafts report `ActionOutcome::Crafted`; invalid recipes and slots report structured failures.
-- **Floor progression**: stairs spawn upon defeating enemies, triggering descent to Floor 2 (using `Action::NextFloor` or keyboard key `>`) which features a procedural BSP dungeon layout
+- **Floor progression**: stairs spawn upon defeating enemies, triggering descent to deeper floors (using `Action::NextFloor` or keyboard key `>`). Floor 2+ features a procedural BSP dungeon layout, scaled enemy stats (+15% per floor), bonus loot, and an elite Glacial Golem encounter on Floor 3+. Boss shields scale with floor depth.
 - **Elemental shields**: absorb damage before HP
+- **Level-up system**: defeating enemies awards XP (scaled by floor depth). Level-ups grant +10 HP, +2 ATK, +1 DEF, and a skill point. Prestige classes (BladeMaster, Archmage, DivineHealer) unlock at milestones with VFX feedback.
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
 - **Battle stats**: tracks total damage dealt, taken, healing done, kills, swaps, turns, and maximum combo reached, serialized in snapshots for agent observability.
 

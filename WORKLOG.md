@@ -5003,3 +5003,21 @@ extending beyond the current roadmap:
 **Gotchas.** The `ActiveHazards` resource is not initialized by default on a fresh game until a dungeon floor generates them, so integration tests must initialize it fallback-safely.
 
 **Follow-ups.** None. All 254+ tests pass cleanly.
+
+## 2026-06-11 - Level-up VFX, floor-scaling difficulty, and scaled enemy spawning
+
+**Goal.** Add visible progression feedback and deeper-floor replayability by adding level-up VFX, floor-based XP scaling, enemy stat scaling per floor, and bonus loot on deeper floors.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/systems/progression.rs:10-88` - Enhanced `award_xp` with floor-based XP scaling (+15% per floor beyond 1), floating "+{XP}XP" text over each player character, and per-entity level-up VFX (gold particle burst, screen shake, flash overlay, "LVL {n}!" floating text). Level-up now tracks entity position for spatial VFX.
+- `prototype/wuthering-terminal/src/spawn.rs:8-22` - Added `spawn_character_scaled(world, pos, team, class, floor)` method to `Spawner` trait that scales enemy stats by 15% per floor beyond 1 (HP, max_hp, ATK, DEF increase; SPD/AP unchanged). Enemy morale also scales (+5 per floor). Extracted `base_stats(class)` as a public function for reuse in tests and floor transition. Boss shields also scale (+50 per floor beyond 1).
+- `prototype/wuthering-terminal/src/game.rs:3340-3460` - Updated `transition_to_next_floor` to use `spawn_character_scaled` instead of `spawn_character` for all enemy spawning on Floor 2+, with boss shield scaling. Added floor-based elite encounter (GlacialGolem on Floor 3+ every 7th room) and bonus item drops per floor depth (Healing Potion on Floor 2, Greater Potion on Floor 3+, Mega Potion + Elixir of the Gods on Floor 4+). Updated welcome message to reflect escalating difficulty.
+- `prototype/wuthering-terminal/src/lib.rs:7826-7930` - Added 3 new tests: `test_floor_scaling_xp` verifies XP scales by floor depth (Floor 3 gives 30% bonus), `test_scale_stats_by_floor` validates the stat scaling function (floor 1 unchanged, floor 2 is +15%, floor 5 is +60%, SPD/AP unmodified), and `test_floor_transition_spawn_scaling` validates transition creates scaled enemies on floor 2+.
+
+**Reasoning.** The level-up system existed but had no visual or audio feedback — the prestige system had VFX but leveling up was silent. Adding floating text and screen effects makes progression feel satisfying and visible. Floor-scaling difficulty was the most impactful missing gameplay feature: deeper floors should feel harder, not identical to Floor 1. The 15% per floor scaling curve keeps early floors approachable while making Floor 3+ noticeably harder. Bonus loot on deeper floors rewards risk and makes extended runs feel worthwhile. Boss shields scaling by +50 per floor prevent bosses from feeling trivially easy after the first descent.
+
+**Assumptions.** The 15% stat scaling per floor is a reasonable starting curve that can be tuned later. XP scaling at 15% per floor matches enemy difficulty scaling, so players gain proportionally more XP on harder floors. Bonus loot is given to the first player character found, which is consistent with how other loot drops work. Elite encounters (extra GlacialGolem on Floor 3+) add varied composition without overcomplicating the spawn logic.
+
+**Gotchas.** The `spawn_character_scaled` returns `Entity` like `spawn_character`, but the trait default implementation calls `spawn_character_scaled(pos, team, class, 1)` which preserves Floor 1 behavior. The `base_stats` function needed to be made public so tests could compare scaled vs base stats. The borrow checker required restructuring the bonus items loop to collect spawned items before mutating the inventory.
+
+**Follow-ups.** Floor 3+ could feature unique enemy spawns (e.g., Shadow Stalker pair encounters) or environmental modifiers beyond the existing floor modifier system. The stat scaling curve could be made data-driven per enemy type instead of a flat multiplier. A "New Game+" mode that restarts at higher difficulty would add replayability. Level-up skill point spending could trigger a skill tree UI overlay via the existing skill tree system.

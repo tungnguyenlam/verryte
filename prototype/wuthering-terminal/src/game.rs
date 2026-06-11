@@ -3337,11 +3337,15 @@ impl Game {
             }
         }
 
-        // 5. Spawn enemies in other rooms
+        // 5. Spawn enemies in other rooms (scaled by floor)
         for (i, &room_center) in room_centers.iter().enumerate().skip(1) {
             if i == room_centers.len() - 1 {
-                self.world
-                    .spawn_character(room_center, Team::Enemy, CharacterClass::Boss);
+                self.world.spawn_character_scaled(
+                    room_center,
+                    Team::Enemy,
+                    CharacterClass::Boss,
+                    floor,
+                );
                 if let Some(boss_ent) = self
                     .world
                     .query2::<CharacterClass, Team>()
@@ -3351,53 +3355,31 @@ impl Game {
                     })
                     .map(|(e, _, _)| e)
                 {
+                    let shield_amount = 150 + (floor as i32 - 1) * 50;
                     self.world.insert(
                         boss_ent,
                         crate::components::ElementalShield {
                             shield_type: crate::components::ShieldType::Ice,
-                            amount: 150,
-                            max_amount: 150,
+                            amount: shield_amount,
+                            max_amount: shield_amount,
                         },
                     );
                 }
             } else {
-                match i % 5 {
-                    0 => {
-                        self.world.spawn_character(
-                            room_center,
-                            Team::Enemy,
-                            CharacterClass::ShadowStalker,
-                        );
+                // Floor 3+: add elite enemy variants with higher frequency
+                let class = if floor >= 3 && i % 7 == 0 {
+                    CharacterClass::GlacialGolem
+                } else {
+                    match i % 5 {
+                        0 => CharacterClass::ShadowStalker,
+                        1 => CharacterClass::CorruptedSpore,
+                        2 => CharacterClass::GlacialGolem,
+                        3 => CharacterClass::EnemyCleric,
+                        _ => CharacterClass::CursedSentinel,
                     }
-                    1 => {
-                        self.world.spawn_character(
-                            room_center,
-                            Team::Enemy,
-                            CharacterClass::CorruptedSpore,
-                        );
-                    }
-                    2 => {
-                        self.world.spawn_character(
-                            room_center,
-                            Team::Enemy,
-                            CharacterClass::GlacialGolem,
-                        );
-                    }
-                    3 => {
-                        self.world.spawn_character(
-                            room_center,
-                            Team::Enemy,
-                            CharacterClass::EnemyCleric,
-                        );
-                    }
-                    _ => {
-                        self.world.spawn_character(
-                            room_center,
-                            Team::Enemy,
-                            CharacterClass::CursedSentinel,
-                        );
-                    }
-                }
+                };
+                self.world
+                    .spawn_character_scaled(room_center, Team::Enemy, class, floor);
             }
         }
 
@@ -3431,8 +3413,12 @@ impl Game {
                 }
             }
             if let Some(pos) = ice_adjacent {
-                self.world
-                    .spawn_character(pos, Team::Enemy, CharacterClass::GlacialGolem);
+                self.world.spawn_character_scaled(
+                    pos,
+                    Team::Enemy,
+                    CharacterClass::GlacialGolem,
+                    floor,
+                );
             }
         }
 
@@ -3444,6 +3430,51 @@ impl Game {
             state.turn = 1;
         }
 
+        // 7. Grant bonus items on deeper floors
+        if floor > 1 {
+            let bonus_items: Vec<(&str, crate::components::ItemEffect)> = if floor >= 4 {
+                vec![
+                    ("Mega Potion", crate::components::ItemEffect::Heal(60)),
+                    (
+                        "Elixir of the Gods",
+                        crate::components::ItemEffect::Heal(100),
+                    ),
+                ]
+            } else if floor >= 3 {
+                vec![("Greater Potion", crate::components::ItemEffect::Heal(45))]
+            } else {
+                vec![("Healing Potion", crate::components::ItemEffect::Heal(30))]
+            };
+
+            let first_player: Option<Entity> = self
+                .world
+                .query::<Team>()
+                .iter()
+                .find(|(_, t)| **t == Team::Player)
+                .map(|(e, _)| *e);
+
+            if let Some(p_ent) = first_player {
+                let mut item_entities = Vec::new();
+                for (name, effect) in &bonus_items {
+                    let item = self.world.spawn_item(name, effect.clone());
+                    item_entities.push(item);
+                }
+                if let Some(inv) = self.world.get_mut::<crate::components::Inventory>(p_ent) {
+                    for item_ent in item_entities {
+                        inv.items.push(item_ent);
+                    }
+                }
+            }
+
+            if !bonus_items.is_empty() {
+                self.log(format!(
+                    "[fg:32CD32]Found {} bonus item(s) for Floor {}![/fg]",
+                    bonus_items.len(),
+                    floor
+                ));
+            }
+        }
+
         self.world
             .insert_resource(verryte_map::VisibilityMap::new(width, height));
         let (cx, cy) = self.get_tile_center_pixels(player_spawn);
@@ -3452,7 +3483,7 @@ impl Game {
         crate::systems::select_floor_modifiers(&mut self.world);
 
         self.log(format!(
-            "Welcome to Floor {}! Conquer this final level.",
+            "Welcome to Floor {}! Enemies grow stronger the deeper you go.",
             floor
         ));
     }

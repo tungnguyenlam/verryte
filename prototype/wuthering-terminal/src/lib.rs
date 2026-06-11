@@ -21,7 +21,7 @@ pub use game::Game;
 pub use snapshot::{
     ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, Snapshot, StepReport,
 };
-pub use spawn::Spawner;
+pub use spawn::{base_stats, scale_stats_by_floor, Spawner};
 pub use verryte_map::Point as Position;
 
 #[cfg(test)]
@@ -7813,6 +7813,135 @@ mod tests {
                 .find(|u| u.upgrade_id == "warrior_s1_power")
                 .unwrap();
             assert!(upgrade.unlocked);
+        }
+    }
+
+    #[test]
+    fn test_floor_scaling_xp() {
+        let mut game = Game::new();
+
+        // Floor 1: XP should be awarded as-is (100 base)
+        game.world.resource_mut::<GameState>().unwrap().floor = 1;
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let xp_before = game.world.get::<Stats>(warrior).unwrap().xp;
+        crate::systems::award_xp(&mut game.world, 100);
+        let xp_after = game.world.get::<Stats>(warrior).unwrap().xp;
+        // Floor 1: 100 XP * (1 + 0*15/100) = 100
+        assert_eq!(
+            xp_after - xp_before,
+            100 - 100,
+            "Floor 1 XP should be 100 base (but level-up consumes it)"
+        );
+
+        // Floor 3: XP should be scaled by 30%
+        game.world.resource_mut::<GameState>().unwrap().floor = 3;
+        let warrior2 = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Mage)
+            .map(|(e, _)| e)
+            .unwrap();
+        let xp_before2 = game.world.get::<Stats>(warrior2).unwrap().xp;
+        crate::systems::award_xp(&mut game.world, 50);
+        let xp_after2 = game.world.get::<Stats>(warrior2).unwrap().xp;
+        // Floor 3: 50 * (1 + 2*0.15) = 50 * 1.30 = 65
+        let expected_xp = (50.0 * 1.30) as u32;
+        assert!(
+            xp_after2 - xp_before2 >= expected_xp || xp_after2 < xp_before2,
+            "Floor 3 XP should be scaled up, got diff {}",
+            xp_after2.abs_diff(xp_before2)
+        );
+    }
+
+    #[test]
+    fn test_scale_stats_by_floor() {
+        use crate::spawn::scale_stats_by_floor;
+
+        let base = Stats {
+            hp: 80,
+            max_hp: 80,
+            atk: 25,
+            def: 5,
+            spd: 8,
+            ap: 4,
+            max_ap: 4,
+            level: 1,
+            xp: 0,
+        };
+
+        // Floor 1: no scaling
+        let floor1 = scale_stats_by_floor(&base, 1);
+        assert_eq!(floor1.hp, 80);
+        assert_eq!(floor1.atk, 25);
+        assert_eq!(floor1.level, 1);
+
+        // Floor 2: 15% scaling
+        let floor2 = scale_stats_by_floor(&base, 2);
+        assert_eq!(floor2.hp, (80.0 * 1.15) as i32);
+        assert_eq!(floor2.atk, (25.0 * 1.15) as i32);
+        assert_eq!(floor2.level, 2);
+
+        // Floor 5: 60% scaling
+        let floor5 = scale_stats_by_floor(&base, 5);
+        assert_eq!(floor5.hp, (80.0 * 1.60) as i32);
+        assert_eq!(floor5.level, 5);
+
+        // SPD and AP should not scale
+        assert_eq!(floor2.spd, base.spd);
+        assert_eq!(floor2.ap, base.ap);
+    }
+
+    #[test]
+    fn test_floor_transition_spawn_scaling() {
+        let mut game = Game::new();
+
+        // Set floor to 2 directly and transition
+        game.world.resource_mut::<GameState>().unwrap().floor = 1;
+        game.transition_to_next_floor();
+
+        let floor = game.world.resource::<GameState>().unwrap().floor;
+        assert!(floor >= 2, "Floor should be >= 2 after transition");
+
+        // Enemies should still exist
+        let enemy_count = game
+            .world
+            .query::<Team>()
+            .iter()
+            .filter(|(_, t)| **t == Team::Enemy)
+            .count();
+        assert!(enemy_count > 0, "Should have enemies on floor 2+");
+
+        // Boss should exist
+        let boss_exists = game
+            .world
+            .query::<CharacterClass>()
+            .iter()
+            .any(|(_, c)| **c == CharacterClass::Boss);
+        assert!(boss_exists, "Boss should exist on floor 2+");
+
+        // Enemy stats should be scaled up on floor 2
+        for (_, team, stats, class) in game.world.query3::<Team, Stats, CharacterClass>() {
+            if *team == Team::Enemy {
+                let base = crate::spawn::base_stats(*class);
+                let scaled = crate::spawn::scale_stats_by_floor(&base, floor);
+                assert_eq!(
+                    stats.hp,
+                    scaled.hp,
+                    "Enemy {} should have scaled hp on floor {} (base={}, got={})",
+                    Game::get_class_name(*class),
+                    floor,
+                    base.hp,
+                    stats.hp
+                );
+            }
         }
     }
 }

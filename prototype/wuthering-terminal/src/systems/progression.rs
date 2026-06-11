@@ -15,13 +15,37 @@ pub fn award_xp(world: &mut World, amount: u32) {
         .map(|(e, _)| *e)
         .collect();
 
+    let floor = world
+        .resource::<crate::components::GameState>()
+        .map(|s| s.floor)
+        .unwrap_or(1);
+
+    let scaled_amount = amount + (amount * floor.saturating_sub(1) * 15) / 100;
+
+    for e in &players {
+        let pos = world.get::<Position>(*e).copied();
+        if let Some(p) = pos {
+            let (cx, cy) = get_tile_center_pixels(world, p);
+            if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                vfx.floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        cx - 2.0,
+                        cy - 4.0,
+                        &format!("+{}XP", scaled_amount),
+                        Color(100, 200, 255),
+                        false,
+                    ));
+            }
+        }
+    }
+
     let mut level_ups = Vec::new();
     for e in players {
         let class = *world
             .get::<CharacterClass>(e)
             .expect("player must have CharacterClass");
         if let Some(stats) = world.get_mut::<Stats>(e) {
-            stats.xp += amount;
+            stats.xp += scaled_amount;
             let needed = stats.level * 100;
             if stats.xp >= needed {
                 stats.xp -= needed;
@@ -30,7 +54,7 @@ pub fn award_xp(world: &mut World, amount: u32) {
                 stats.hp = stats.max_hp;
                 stats.atk += 2;
                 stats.def += 1;
-                level_ups.push((class, stats.level));
+                level_ups.push((e, class, stats.level));
 
                 if let Some(tree) = world.get_mut::<crate::components::SkillTree>(e) {
                     tree.skill_points += 1;
@@ -48,7 +72,7 @@ pub fn award_xp(world: &mut World, amount: u32) {
         }
     }
 
-    for (class, level) in level_ups {
+    for (entity, class, level) in level_ups {
         log(
             world,
             format!(
@@ -57,6 +81,42 @@ pub fn award_xp(world: &mut World, amount: u32) {
                 level
             ),
         );
+
+        let pos = world
+            .get::<Position>(entity)
+            .copied()
+            .unwrap_or(Position::new(0, 0));
+        let (cx, cy) = get_tile_center_pixels(world, pos);
+
+        if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+            vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                cx,
+                cy,
+                30,
+                Color(255, 215, 0),
+                &['✦', '✧', '*', '★'],
+            ));
+            vfx.shakes
+                .push(verryte_terminal::vfx::ScreenShake::new_eased(
+                    3.0,
+                    0.5,
+                    verryte_terminal::vfx::EasingMode::ExpoOut,
+                ));
+            vfx.flashes
+                .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                    Color(255, 215, 0),
+                    0.3,
+                    verryte_terminal::EasingMode::ExpoOut,
+                ));
+            vfx.floating_texts
+                .push(verryte_terminal::vfx::FloatingText::new(
+                    cx - 3.0,
+                    cy - 6.0,
+                    &format!("LVL {}!", level),
+                    Color(255, 215, 0),
+                    true,
+                ));
+        }
     }
 }
 
