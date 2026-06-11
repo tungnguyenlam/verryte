@@ -808,7 +808,8 @@ fn save_after_load_then_load_again_preserves_state() {
 
     for (_, stats) in game4.world.query::<Stats>() {
         assert!(stats.hp <= stats.max_hp);
-        assert!(stats.ap <= stats.max_ap);
+        // SwiftFoot passive trait can give player characters +1 AP above max_ap
+        assert!(stats.ap <= stats.max_ap + 1);
     }
 }
 
@@ -925,6 +926,12 @@ fn action_outcome_variants_roundtrip() {
             item_name: "Iron Sword".to_string(),
             slot: wuthering_terminal::components::EquipmentSlot::Weapon,
             level: 1,
+        },
+        ActionOutcome::SkillUpgraded {
+            hero: "Kael".to_string(),
+            skill_name: "Heavy Slash".to_string(),
+            slot: wuthering_terminal::components::SkillSlot::Skill1,
+            tier: 1,
         },
         ActionOutcome::EquipmentRewarded {
             item_name: "DarkBlade".to_string(),

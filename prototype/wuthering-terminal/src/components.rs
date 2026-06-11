@@ -101,6 +101,7 @@ pub enum UIState {
     Inventory,
     Help,
     Bestiary,
+    SkillTree,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

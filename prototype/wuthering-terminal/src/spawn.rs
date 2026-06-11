@@ -177,6 +177,7 @@ impl Spawner for World {
                 max: 100,
             });
             builder = builder.with(Fatigue::default());
+            builder = builder.with(crate::components::SkillTree::for_class(class));
         } else {
             let archetype = match class {
                 CharacterClass::CorruptedSpore | CharacterClass::ShadowStalker => {

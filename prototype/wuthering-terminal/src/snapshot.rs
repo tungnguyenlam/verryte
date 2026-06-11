@@ -125,6 +125,13 @@ pub enum ActionOutcome {
         slot: crate::components::EquipmentSlot,
         level: u8,
     },
+    /// A character skill was upgraded.
+    SkillUpgraded {
+        hero: String,
+        skill_name: String,
+        slot: crate::components::SkillSlot,
+        tier: u8,
+    },
     /// Defeating an enemy awarded and equipped a set item.
     EquipmentRewarded { item_name: String, hero: String },
     /// A UI/tooling toggle changed a boolean or panel state.
@@ -236,6 +243,12 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_component::<crate::components::PrestigeProgress>("PrestigeProgress");
     reg.register_component::<crate::components::Morale>("Morale");
     reg.register_component::<crate::components::Fatigue>("Fatigue");
+    reg.register_component::<crate::components::EquippedItems>("EquippedItems");
+    reg.register_component::<crate::components::CharacterTrait>("CharacterTrait");
+    reg.register_component::<crate::components::Threat>("Threat");
+    reg.register_component::<crate::components::AIArchetype>("AIArchetype");
+    reg.register_component::<crate::components::Destructible>("Destructible");
+    reg.register_component::<crate::components::SkillTree>("SkillTree");
 
     // Resources
     reg.register_resource::<GameState>("GameState");
@@ -256,6 +269,7 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_resource::<crate::components::Bestiary>("Bestiary");
     reg.register_resource::<crate::components::LoreJournal>("LoreJournal");
     reg.register_resource::<crate::components::ActiveFloorModifiers>("ActiveFloorModifiers");
+    reg.register_resource::<crate::components::ActiveHazards>("ActiveHazards");
 
     reg
 }

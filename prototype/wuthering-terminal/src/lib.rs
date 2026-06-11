@@ -7631,4 +7631,188 @@ mod tests {
         let action = resolve_command_token("prestige").unwrap();
         assert_eq!(action, Action::ViewPrestige);
     }
+
+    #[test]
+    fn test_save_load_preserves_new_components() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // 1. Check/Modify equipped items
+        {
+            let equipped = game
+                .world
+                .get_mut::<crate::components::EquippedItems>(warrior)
+                .unwrap();
+            equipped.weapon = Some(crate::equipment::iron_sword());
+        }
+
+        // 2. Check character trait
+        let char_trait = game
+            .world
+            .get::<crate::components::CharacterTrait>(warrior)
+            .unwrap()
+            .clone();
+
+        // 3. Set threat
+        game.world
+            .insert(warrior, crate::components::Threat { value: 42 });
+
+        // 4. Set active hazards
+        {
+            if game
+                .world
+                .resource::<crate::components::ActiveHazards>()
+                .is_none()
+            {
+                game.world
+                    .insert_resource(crate::components::ActiveHazards::default());
+            }
+            let active_hazards = game
+                .world
+                .resource_mut::<crate::components::ActiveHazards>()
+                .unwrap();
+            active_hazards.hazards.push((
+                Position::new(3, 3),
+                crate::components::HazardEffect {
+                    hazard_type: crate::components::HazardType::SpikeTrap,
+                    damage: 10,
+                    healing: 0,
+                    status: None,
+                    duration: 0,
+                    trigger_count: 5,
+                },
+            ));
+        }
+
+        let serialized = game.save_state().unwrap();
+
+        let mut game2 = Game::new();
+        game2.load_state(&serialized).unwrap();
+
+        let warrior2 = game2
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Verify EquippedItems preserved
+        let equipped2 = game2
+            .world
+            .get::<crate::components::EquippedItems>(warrior2)
+            .unwrap();
+        assert_eq!(equipped2.weapon.as_ref().unwrap().name, "Iron Sword");
+
+        // Verify CharacterTrait preserved
+        let char_trait2 = game2
+            .world
+            .get::<crate::components::CharacterTrait>(warrior2)
+            .unwrap();
+        assert_eq!(char_trait2.trait_type, char_trait.trait_type);
+
+        // Verify Threat preserved
+        let threat2 = game2
+            .world
+            .get::<crate::components::Threat>(warrior2)
+            .unwrap();
+        assert_eq!(threat2.value, 42);
+
+        // Verify ActiveHazards preserved
+        let active_hazards2 = game2
+            .world
+            .resource::<crate::components::ActiveHazards>()
+            .unwrap();
+        let found_hazard = active_hazards2
+            .hazards
+            .iter()
+            .find(|(pos, _)| *pos == Position::new(3, 3));
+        assert!(found_hazard.is_some());
+        assert_eq!(
+            found_hazard.unwrap().1.hazard_type,
+            crate::components::HazardType::SpikeTrap
+        );
+    }
+
+    #[test]
+    fn test_skill_points_on_level_up_and_upgrade() {
+        let mut game = Game::new();
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Initial skill points
+        {
+            let skill_tree = game
+                .world
+                .get::<crate::components::SkillTree>(warrior)
+                .unwrap();
+            assert_eq!(skill_tree.skill_points, 0);
+        }
+
+        // Award XP to level up (from lvl 1 to lvl 2)
+        crate::systems::award_xp(&mut game.world, 100);
+
+        // Verify level and skill points
+        {
+            let stats = game.world.get::<Stats>(warrior).unwrap();
+            assert_eq!(stats.level, 2);
+            let skill_tree = game
+                .world
+                .get::<crate::components::SkillTree>(warrior)
+                .unwrap();
+            assert_eq!(skill_tree.skill_points, 1);
+        }
+
+        // Select Kael
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+        }
+
+        // Open Skill Tree UI first
+        game.apply_action(Action::ToggleSkillTree, ActionSource::Terminal);
+
+        // Upgrade Skill 1 (Slash) Tier 1
+        use crate::components::SkillSlot;
+        let report = game.apply_action(
+            Action::UpgradeSkill(SkillSlot::Skill1, 1),
+            ActionSource::Terminal,
+        );
+
+        assert!(
+            !matches!(report.outcome, ActionOutcome::Failed { .. }),
+            "Upgrade should succeed, got outcome: {:?}",
+            report.outcome
+        );
+
+        // Verify skill points decremented and upgrade unlocked
+        {
+            let skill_tree = game
+                .world
+                .get::<crate::components::SkillTree>(warrior)
+                .unwrap();
+            assert_eq!(skill_tree.skill_points, 0);
+            assert_eq!(skill_tree.unlocked_count(), 1);
+
+            let upgrade = skill_tree
+                .upgrades
+                .iter()
+                .find(|u| u.upgrade_id == "warrior_s1_power")
+                .unwrap();
+            assert!(upgrade.unlocked);
+        }
+    }
 }

@@ -2465,6 +2465,36 @@ impl Game {
                         .collect();
                     aoe_tiles.extend(extra);
                 }
+
+                let mut extra_aoe = 0;
+                if let Some(skill_slot) = match skill {
+                    crate::components::TargetingMode::Skill1 => {
+                        Some(crate::components::SkillSlot::Skill1)
+                    }
+                    crate::components::TargetingMode::Skill2 => {
+                        Some(crate::components::SkillSlot::Skill2)
+                    }
+                    crate::components::TargetingMode::Skill3 => {
+                        Some(crate::components::SkillSlot::Skill3)
+                    }
+                    _ => None,
+                } {
+                    if let Some(tree) = self.world.get::<crate::components::SkillTree>(caster) {
+                        extra_aoe = tree.total_aoe_bonus(skill_slot);
+                    }
+                }
+                if extra_aoe > 0 {
+                    let mut expanded = aoe_tiles.clone();
+                    for _ in 0..extra_aoe {
+                        let neighbors: Vec<Position> = expanded
+                            .iter()
+                            .flat_map(|p| p.neighbors4())
+                            .filter(|p| !expanded.contains(p))
+                            .collect();
+                        expanded.extend(neighbors);
+                    }
+                    aoe_tiles = expanded;
+                }
                 for (e, p, team) in self.world.query2::<Position, Team>() {
                     if *team
                         == (if class == CharacterClass::Healer {
@@ -2624,6 +2654,115 @@ impl Game {
         }
 
         self.build_concert_energy(30);
+    }
+
+    pub fn upgrade_character_skill(&mut self, slot: crate::components::SkillSlot, tier: u8) {
+        let selected_entity = self.world.resource::<GameState>().unwrap().selected_entity;
+        let Some(sel_entity) = selected_entity else {
+            self.log("Select a character first!");
+            self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                reason: "Select a character first".to_string(),
+            };
+            return;
+        };
+
+        let class = *self.world.get::<CharacterClass>(sel_entity).unwrap();
+        let char_name = Self::get_class_name(class);
+
+        let (unlocked, upgrade_effect, upgrade_name) = {
+            let skill_tree = match self
+                .world
+                .get_mut::<crate::components::SkillTree>(sel_entity)
+            {
+                Some(tree) => tree,
+                None => {
+                    self.log("This character does not have a skill tree!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "This character does not have a skill tree".to_string(),
+                    };
+                    return;
+                }
+            };
+
+            let upgrade_id_to_find = skill_tree
+                .upgrades
+                .iter()
+                .find(|u| u.skill_slot == slot && u.tier == tier as u32)
+                .map(|u| u.upgrade_id.clone());
+
+            let Some(upgrade_id) = upgrade_id_to_find else {
+                self.log(format!("No upgrade found for tier {} of {:?}", tier, slot));
+                self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                    reason: format!("No upgrade found for tier {} of {:?}", tier, slot),
+                };
+                return;
+            };
+
+            let upgrade = skill_tree
+                .upgrades
+                .iter()
+                .find(|u| u.upgrade_id == upgrade_id)
+                .cloned();
+
+            let upgrade_name = upgrade.as_ref().map(|u| u.name.clone()).unwrap_or_default();
+
+            if skill_tree.unlock(&upgrade_id) {
+                let effect = upgrade.map(|u| u.effect);
+                (true, effect, upgrade_name)
+            } else {
+                (false, None, upgrade_name)
+            }
+        };
+
+        // Early return if not found (would have set outcome already)
+        if upgrade_name.is_empty() && !unlocked {
+            return;
+        }
+
+        if unlocked {
+            self.log(format!("{} unlocked upgrade: {}!", char_name, upgrade_name));
+
+            if let Some(crate::components::UpgradeEffect::Passive { atk, def, hp, spd }) =
+                upgrade_effect
+            {
+                if let Some(stats) = self.world.get_mut::<Stats>(sel_entity) {
+                    stats.atk += atk;
+                    stats.def += def;
+                    stats.max_hp += hp;
+                    stats.hp = (stats.hp + hp).min(stats.max_hp);
+                    stats.spd += spd;
+                }
+            }
+
+            self.last_outcome = crate::snapshot::ActionOutcome::SkillUpgraded {
+                hero: char_name.to_string(),
+                skill_name: upgrade_name,
+                slot,
+                tier,
+            };
+
+            let pos = self
+                .world
+                .get::<Position>(sel_entity)
+                .copied()
+                .unwrap_or(Position::new(0, 0));
+            let (cx, cy) = self.get_tile_center_pixels(pos);
+            let vfx = self.vfx_mut();
+            vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                cx,
+                cy,
+                20,
+                Color(0, 191, 255),
+                &['✦', '·', '◦'],
+            ));
+        } else {
+            self.log(
+                "Failed to unlock upgrade: prerequisite not met or insufficient skill points!",
+            );
+            self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                reason: "Prerequisite not met or insufficient skill points".to_string(),
+            };
+        }
     }
 
     pub fn outcome(&self) -> Outcome {
@@ -3222,24 +3361,42 @@ impl Game {
                     );
                 }
             } else {
-                if i % 3 == 0 {
-                    self.world.spawn_character(
-                        room_center,
-                        Team::Enemy,
-                        CharacterClass::ShadowStalker,
-                    );
-                } else if i % 3 == 1 {
-                    self.world.spawn_character(
-                        room_center,
-                        Team::Enemy,
-                        CharacterClass::CorruptedSpore,
-                    );
-                } else {
-                    self.world.spawn_character(
-                        room_center,
-                        Team::Enemy,
-                        CharacterClass::GlacialGolem,
-                    );
+                match i % 5 {
+                    0 => {
+                        self.world.spawn_character(
+                            room_center,
+                            Team::Enemy,
+                            CharacterClass::ShadowStalker,
+                        );
+                    }
+                    1 => {
+                        self.world.spawn_character(
+                            room_center,
+                            Team::Enemy,
+                            CharacterClass::CorruptedSpore,
+                        );
+                    }
+                    2 => {
+                        self.world.spawn_character(
+                            room_center,
+                            Team::Enemy,
+                            CharacterClass::GlacialGolem,
+                        );
+                    }
+                    3 => {
+                        self.world.spawn_character(
+                            room_center,
+                            Team::Enemy,
+                            CharacterClass::EnemyCleric,
+                        );
+                    }
+                    _ => {
+                        self.world.spawn_character(
+                            room_center,
+                            Team::Enemy,
+                            CharacterClass::CursedSentinel,
+                        );
+                    }
                 }
             }
         }
@@ -3981,6 +4138,29 @@ impl Game {
             }
         }
 
+        if self.world.resource::<GameState>().unwrap().ui_state
+            == crate::components::UIState::SkillTree
+        {
+            match action {
+                Action::Cancel | Action::ToggleSkillTree => {
+                    self.world.resource_mut::<GameState>().unwrap().ui_state =
+                        crate::components::UIState::Normal;
+                    self.log("Skill Tree closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "skill_tree".to_string(),
+                        enabled: false,
+                    };
+                    return;
+                }
+                Action::UpgradeSkill(slot, tier) => {
+                    self.upgrade_character_skill(slot, tier);
+                    return;
+                }
+                Action::Quit => {}
+                _ => return,
+            }
+        }
+
         if self.outcome() != Outcome::Playing && action != Action::Quit {
             return;
         }
@@ -4036,6 +4216,31 @@ impl Game {
                     )
                     .unwrap_or(("Unknown".to_string(), 1, 1, false, 0));
 
+                    let mut extra_damage = 0;
+                    let mut extra_range = 0;
+                    if let Some(skill_slot) = match state_clone.targeting {
+                        crate::components::TargetingMode::Skill1 => {
+                            Some(crate::components::SkillSlot::Skill1)
+                        }
+                        crate::components::TargetingMode::Skill2 => {
+                            Some(crate::components::SkillSlot::Skill2)
+                        }
+                        crate::components::TargetingMode::Skill3 => {
+                            Some(crate::components::SkillSlot::Skill3)
+                        }
+                        _ => None,
+                    } {
+                        if let Some(tree) =
+                            self.world.get::<crate::components::SkillTree>(sel_entity)
+                        {
+                            extra_damage = tree.total_damage_bonus(skill_slot);
+                            extra_range = tree.total_range_bonus(skill_slot) as i16;
+                        }
+                    }
+
+                    let effective_range = range + extra_range;
+                    let effective_damage = damage_or_heal + extra_damage;
+
                     let is_archmage = self
                         .world
                         .get::<crate::components::PrestigeProgress>(sel_entity)
@@ -4049,7 +4254,7 @@ impl Game {
                     };
 
                     let dist = (caster_pos.x - cursor.x).abs() + (caster_pos.y - cursor.y).abs();
-                    if range > 0 && dist > range {
+                    if effective_range > 0 && dist > effective_range {
                         self.log("Target is out of skill range!");
                         return;
                     }
@@ -4074,7 +4279,7 @@ impl Game {
                         caster_class,
                         state_clone.targeting,
                         cursor,
-                        damage_or_heal,
+                        effective_damage,
                         is_aoe,
                     );
 
@@ -5587,6 +5792,30 @@ impl Game {
                 self.log(format!("Upgraded {}.", upgraded_name));
                 self.last_outcome = crate::snapshot::ActionOutcome::StateUpdated;
             }
+            Action::ToggleSkillTree => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.ui_state == crate::components::UIState::Normal {
+                    state.ui_state = crate::components::UIState::SkillTree;
+                    self.log("Skill Tree opened.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "skill_tree".to_string(),
+                        enabled: true,
+                    };
+                } else if state.ui_state == crate::components::UIState::SkillTree {
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.log("Skill Tree closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "skill_tree".to_string(),
+                        enabled: false,
+                    };
+                }
+            }
+            Action::UpgradeSkill(_slot, _tier) => {
+                self.log("Skill Tree must be open to upgrade skills!");
+                self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                    reason: "Skill Tree must be open to upgrade skills!".to_string(),
+                };
+            }
             Action::RerollModifiers => {
                 let cost = 1i32;
                 let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
@@ -6725,7 +6954,70 @@ impl Game {
                         }
                     })
             }),
-            aoe_preview: Vec::new(),
+            aoe_preview: {
+                if state.targeting != crate::components::TargetingMode::None {
+                    if let Some(sel) = state.selected_entity {
+                        if let Some(class) = self.world.get::<CharacterClass>(sel) {
+                            let mut aoe =
+                                Self::get_skill_aoe(*class, state.targeting, state.cursor);
+                            let is_archmage_aoe = *class == CharacterClass::Mage
+                                && self
+                                    .world
+                                    .get::<crate::components::PrestigeProgress>(sel)
+                                    .is_some_and(|p| {
+                                        p.class == crate::components::PrestigeClass::Archmage
+                                            && p.promoted
+                                    });
+                            if is_archmage_aoe {
+                                let extra: Vec<Position> = aoe
+                                    .iter()
+                                    .flat_map(|p| p.neighbors4())
+                                    .filter(|p| !aoe.contains(p))
+                                    .collect();
+                                aoe.extend(extra);
+                            }
+                            let mut extra_aoe = 0;
+                            if let Some(skill_slot) = match state.targeting {
+                                crate::components::TargetingMode::Skill1 => {
+                                    Some(crate::components::SkillSlot::Skill1)
+                                }
+                                crate::components::TargetingMode::Skill2 => {
+                                    Some(crate::components::SkillSlot::Skill2)
+                                }
+                                crate::components::TargetingMode::Skill3 => {
+                                    Some(crate::components::SkillSlot::Skill3)
+                                }
+                                _ => None,
+                            } {
+                                if let Some(tree) =
+                                    self.world.get::<crate::components::SkillTree>(sel)
+                                {
+                                    extra_aoe = tree.total_aoe_bonus(skill_slot);
+                                }
+                            }
+                            if extra_aoe > 0 {
+                                let mut expanded = aoe.clone();
+                                for _ in 0..extra_aoe {
+                                    let neighbors: Vec<Position> = expanded
+                                        .iter()
+                                        .flat_map(|p| p.neighbors4())
+                                        .filter(|p| !expanded.contains(p))
+                                        .collect();
+                                    expanded.extend(neighbors);
+                                }
+                                aoe = expanded;
+                            }
+                            aoe
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            },
             available_combos: self
                 .world
                 .resource::<crate::components::AvailableCombos>()

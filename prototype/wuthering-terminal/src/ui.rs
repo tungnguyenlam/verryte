@@ -474,6 +474,16 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     if state.ui_state == crate::components::UIState::Help {
         render_help(grid, term_w, term_h);
     }
+
+    // Render Overlay if in Bestiary state
+    if state.ui_state == crate::components::UIState::Bestiary {
+        render_bestiary(grid, world, term_w, term_h);
+    }
+
+    // Render Overlay if in SkillTree state
+    if state.ui_state == crate::components::UIState::SkillTree {
+        render_skill_tree(grid, world, term_w, term_h);
+    }
 }
 
 pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
@@ -1006,5 +1016,248 @@ pub fn render_weather_danger_zones(
                 }
             }
         }
+    }
+}
+
+pub fn render_skill_tree(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
+    let state = world.resource::<GameState>().unwrap();
+    let Some(selected) = state.selected_entity else {
+        return;
+    };
+    let Some(skill_tree) = world.get::<crate::components::SkillTree>(selected) else {
+        return;
+    };
+    let Some(class) = world.get::<CharacterClass>(selected) else {
+        return;
+    };
+    let char_name = Game::get_class_name(*class);
+
+    let layout = verryte_terminal::Layout::vertical()
+        .add_percent(15)
+        .add_percent(70)
+        .add_percent(15)
+        .split(verryte_terminal::Rect::new(0, 0, term_w, term_h));
+
+    let main_rect = layout[1];
+    let sub_layout = verryte_terminal::Layout::horizontal()
+        .add_percent(15)
+        .add_percent(70)
+        .add_percent(15)
+        .split(main_rect);
+
+    let panel_rect = sub_layout[1];
+    let panel_bg = Color(15, 25, 35);
+    grid.fill_rect(panel_rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        panel_rect,
+        &format!(
+            " SKILL TREE: {} (SP: {}) ",
+            char_name.to_uppercase(),
+            skill_tree.skill_points
+        ),
+        Color(0, 191, 255), // Deep sky blue
+        panel_bg,
+        Color::WHITE,
+    );
+
+    use crate::components::SkillSlot;
+    let slots = [
+        (SkillSlot::Skill1, "Skill 1 (Skill1)"),
+        (SkillSlot::Skill2, "Skill 2 (Skill2)"),
+        (SkillSlot::Skill3, "Skill 3 (Skill3)"),
+        (SkillSlot::Passive, "Passive (Passive)"),
+    ];
+
+    let start_x = panel_rect.x + 2;
+    let mut current_y = panel_rect.y + 2;
+
+    for (slot, slot_name) in slots {
+        if current_y + 4 >= panel_rect.y + panel_rect.height {
+            break;
+        }
+
+        let _ = grid.write_rich(
+            start_x,
+            current_y,
+            &format!("[fg:00BFFF][b]{}[/fg][/b]", slot_name),
+        );
+        current_y += 1;
+
+        let mut slot_upgrades: Vec<_> = skill_tree
+            .upgrades
+            .iter()
+            .filter(|u| u.skill_slot == slot)
+            .collect();
+        slot_upgrades.sort_by_key(|u| u.tier);
+
+        for u in slot_upgrades {
+            let status = if u.unlocked {
+                "[fg:50FF50]UNLOCKED[/fg]"
+            } else if skill_tree.can_unlock(&u.upgrade_id) {
+                &format!("[fg:FFFF50]AVAILABLE (Cost: {})[/fg]", u.cost)
+            } else {
+                &format!("[fg:888888]LOCKED (Cost: {})[/fg]", u.cost)
+            };
+
+            let line = format!(
+                "  Tier {}: {} - {} - {}",
+                u.tier, u.name, u.description, status
+            );
+            let _ = grid.write_rich(start_x, current_y, &line);
+            current_y += 1;
+        }
+        current_y += 1; // spacer
+    }
+
+    let help_y = panel_rect.y + panel_rect.height - 2;
+    let _ = grid.write_rich(
+        start_x,
+        help_y,
+        "[fg:FFFFFF]Use script command: `upgrade:<s1|s2|s3|passive>_<tier>` | Press T/ESC to close[/fg]",
+    );
+}
+
+pub fn render_bestiary(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
+    let bestiary = world.resource::<crate::components::Bestiary>();
+    let lore_journal = world.resource::<crate::components::LoreJournal>();
+
+    let layout = verryte_terminal::Layout::vertical()
+        .add_percent(10)
+        .add_percent(80)
+        .add_percent(10)
+        .split(verryte_terminal::Rect::new(0, 0, term_w, term_h));
+
+    let main_rect = layout[1];
+    let panel_bg = Color(20, 15, 25);
+    grid.fill_rect(main_rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        main_rect,
+        " BESTIARY & LORE JOURNAL ",
+        Color::MAGENTA,
+        panel_bg,
+        Color::WHITE,
+    );
+
+    let columns = verryte_terminal::Layout::horizontal()
+        .add_percent(50)
+        .add_percent(50)
+        .split(verryte_terminal::Rect::new(
+            main_rect.x + 1,
+            main_rect.y + 1,
+            main_rect.width - 2,
+            main_rect.height - 2,
+        ));
+
+    let bestiary_rect = columns[0];
+    let lore_rect = columns[1];
+
+    let mut by = bestiary_rect.y + 1;
+    let bx = bestiary_rect.x + 2;
+    let _ = grid.write_rich(bx, by, "[fg:FF00FF][b]— ENEMY ENCYCLOPEDIA —[/fg][/b]");
+    by += 2;
+
+    if let Some(b) = bestiary {
+        for entry in &b.entries {
+            if by + 4 >= bestiary_rect.y + bestiary_rect.height {
+                break;
+            }
+            if !entry.encountered {
+                let _ = grid.write_rich(bx, by, "[fg:888888]??? (Not encountered yet)[/fg]");
+                by += 2;
+                continue;
+            }
+
+            let name_color = match entry.class {
+                CharacterClass::Boss => "FF0000",
+                CharacterClass::GlacialGolem | CharacterClass::CursedSentinel => "00FFFF",
+                _ => "FFFFFF",
+            };
+            let _ = grid.write_rich(
+                bx,
+                by,
+                &format!(
+                    "[fg:{}][b]{}[/fg][/b] (Defeated: {}, Killed Players: {})",
+                    name_color, entry.name, entry.defeated_count, entry.times_killed_by
+                ),
+            );
+            by += 1;
+
+            let weakness = entry.known_weakness.as_deref().unwrap_or("Unknown");
+            let resistance = entry.known_resistance.as_deref().unwrap_or("Unknown");
+            let _ = grid.write_rich(
+                bx + 2,
+                by,
+                &format!(
+                    "[fg:FF8888]Weakness:[/] {} | [fg:8888FF]Resistance:[/] {}",
+                    weakness, resistance
+                ),
+            );
+            by += 1;
+
+            if !entry.drop_table.is_empty() {
+                let drops = entry.drop_table.join(", ");
+                let _ = grid.write_rich(
+                    bx + 2,
+                    by,
+                    &format!("[fg:FFFF80]Notable Drops:[/] [fg:FFFFC0]{}[/fg]", drops),
+                );
+                by += 1;
+            }
+            by += 1; // spacer
+        }
+    } else {
+        let _ = grid.write_rich(bx, by, "[fg:888888]No bestiary data loaded[/fg]");
+    }
+
+    let mut ly = lore_rect.y + 1;
+    let lx = lore_rect.x + 2;
+    let _ = grid.write_rich(lx, ly, "[fg:FFD700][b]— ARCHIVED KNOWLEDGE —[/fg][/b]");
+    ly += 2;
+
+    if let Some(journal) = lore_journal {
+        for entry in &journal.entries {
+            if ly + 3 >= lore_rect.y + lore_rect.height {
+                break;
+            }
+            if !entry.discovered {
+                let _ =
+                    grid.write_rich(lx, ly, "[fg:888888]Locked Lore Entry (Play to unlock)[/fg]");
+                ly += 2;
+                continue;
+            }
+
+            let _ = grid.write_rich(
+                lx,
+                ly,
+                &format!(
+                    "[fg:FFD700][b]{}[/fg][/b] (Turn {})",
+                    entry.title, entry.turn_discovered
+                ),
+            );
+            ly += 1;
+
+            let text = &entry.text;
+            let max_w = (lore_rect.width - 6) as usize;
+            let words = text.split_whitespace();
+            let mut line = String::new();
+            for word in words {
+                if line.len() + word.len() + 1 > max_w {
+                    let _ = grid.write_rich(lx + 2, ly, &format!("[fg:CCCCCC]{}[/fg]", line));
+                    ly += 1;
+                    line.clear();
+                }
+                if !line.is_empty() {
+                    line.push(' ');
+                }
+                line.push_str(word);
+            }
+            if !line.is_empty() {
+                let _ = grid.write_rich(lx + 2, ly, &format!("[fg:CCCCCC]{}[/fg]", line));
+                ly += 1;
+            }
+            ly += 2; // spacer
+        }
+    } else {
+        let _ = grid.write_rich(lx, ly, "[fg:888888]No lore journal data loaded[/fg]");
     }
 }

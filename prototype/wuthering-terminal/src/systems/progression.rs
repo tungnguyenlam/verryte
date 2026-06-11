@@ -32,6 +32,10 @@ pub fn award_xp(world: &mut World, amount: u32) {
                 stats.def += 1;
                 level_ups.push((class, stats.level));
 
+                if let Some(tree) = world.get_mut::<crate::components::SkillTree>(e) {
+                    tree.skill_points += 1;
+                }
+
                 let char_pos = world.get::<Position>(e).copied();
                 if let Some(pos) = char_pos {
                     play_spatial_sfx(world, "level_up", pos);
