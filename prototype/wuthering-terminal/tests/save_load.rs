@@ -930,6 +930,21 @@ fn action_outcome_variants_roundtrip() {
             item_name: "DarkBlade".to_string(),
             hero: "Kael".to_string(),
         },
+        ActionOutcome::ToggleChanged {
+            name: "auto_battle".to_string(),
+            enabled: true,
+        },
+        ActionOutcome::StatusViewed {
+            name: "prestige".to_string(),
+        },
+        ActionOutcome::Rested {
+            entity: "Kael".to_string(),
+            fatigue_recovered: 20,
+            morale_gained: 5,
+        },
+        ActionOutcome::ModifiersRerolled {
+            modifiers: vec!["Darkness".to_string(), "Frenzy".to_string()],
+        },
         ActionOutcome::StateUpdated,
         ActionOutcome::Failed {
             reason: "Not enough AP".to_string(),

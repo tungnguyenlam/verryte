@@ -4785,3 +4785,26 @@ per-turn schedule.
 **Gotchas.** Boss phase transitions can happen through two paths: `handle_defeat()` for a lethal phase-1 hit, and `check_boss_phase_transition()` for threshold crossing while the boss remains alive. Both need explicit outcomes. The pre-existing `AGENTS.md` modification was left untouched and uncommitted.
 
 **Follow-ups.** Consider replacing the remaining craft/upgrade log-parsing fallback in `compute_outcome()` with purely explicit handlers once older tests or replay fixtures no longer depend on it. A future report model could also carry secondary outcomes so combat damage and progression rewards do not compete for one primary `ActionOutcome`.
+
+## 2026-06-11 - Structured utility action outcomes
+
+**Goal.** Continue the tactical RPG prototype pass by improving script/replay/agent observability for non-combat utility actions that were still reported as generic state updates.
+
+**Changes.**
+- `prototype/wuthering-terminal/src/snapshot.rs:130` - Added `ActionOutcome::ToggleChanged`, `StatusViewed`, `Rested`, and `ModifiersRerolled` so UI/tool toggles, prestige views, rest recovery, and modifier rerolls can be asserted without scraping logs.
+- `prototype/wuthering-terminal/src/game.rs:3663` - Preserved those explicit outcomes in `compute_outcome()` so they flow into `StepReport` and action-history metadata through the same shared action path.
+- `prototype/wuthering-terminal/src/game.rs:3928` - Overlay close paths now emit explicit toggle outcomes instead of becoming ambiguous state updates.
+- `prototype/wuthering-terminal/src/game.rs:4968` - Inventory/help/minimap/perf/auto-battle/bestiary handlers now report structured toggle state where applicable.
+- `prototype/wuthering-terminal/src/game.rs:5502` - Modifier rerolls report the active modifier display names after the reroll.
+- `prototype/wuthering-terminal/src/game.rs:5539` - Rest reports the selected hero plus fatigue recovered and morale gained, and missing selection now reports a structured failure.
+- `prototype/wuthering-terminal/tests/integration.rs:488` - Added action-path regression tests for toggles, rest, rerolls, and outcome metadata.
+- `prototype/wuthering-terminal/tests/save_load.rs:933` - Added serde roundtrip coverage for the new outcome variants.
+- `README.md:224` and `prototype/wuthering-terminal/README.md:104` - Documented the expanded structured outcome surface and script-visible utility tokens.
+
+**Reasoning.** Combat, items, crafting, equipment, echo absorption, and boss transitions were already structured. Utility actions such as auto-battle, bestiary/help toggles, rest, and floor modifier rerolls still collapsed to `StateUpdated`, which forced scripts and future agents to infer intent from logs or state diffs. Setting explicit outcomes in existing action handlers keeps terminal input, script input, tests, and replays on one path while making the observable report more useful.
+
+**Assumptions.** `ToggleChanged` uses stable snake-case names for panels/tools rather than serializing `UIState`, because several toggles are not UI panels (`auto_battle`, `performance_overlay`, `minimap`). `Rested` reports actual deltas after clamping, so resting at zero fatigue or max morale can legitimately report zero recovery/gain.
+
+**Gotchas.** Actions issued while an overlay is open are intentionally ignored unless they close that overlay or quit; tests must close bestiary/help before checking unrelated actions like auto-battle. Some older generic state-update fallbacks remain for selection/cursor style actions where a richer outcome would add little value.
+
+**Follow-ups.** Consider adding explicit structured outcomes for save/load and replay-mode toggles. Equipment upgrade success still relies on the log-parsing fallback after setting `StateUpdated`; it could be simplified by setting `EquipmentUpgraded` directly in the handler.

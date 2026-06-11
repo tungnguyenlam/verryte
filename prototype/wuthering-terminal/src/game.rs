@@ -3670,7 +3670,11 @@ impl Game {
             | (ActionOutcome::EquipmentUpgraded { .. }, Action::UpgradeEquipment(_))
             | (ActionOutcome::EquipmentRewarded { .. }, _)
             | (ActionOutcome::Absorbed { .. }, Action::Confirm)
-            | (ActionOutcome::BossPhaseChanged { .. }, _) => {
+            | (ActionOutcome::BossPhaseChanged { .. }, _)
+            | (ActionOutcome::ToggleChanged { .. }, _)
+            | (ActionOutcome::StatusViewed { .. }, Action::ViewPrestige)
+            | (ActionOutcome::Rested { .. }, Action::Rest)
+            | (ActionOutcome::ModifiersRerolled { .. }, Action::RerollModifiers) => {
                 return self.last_outcome.clone();
             }
             _ => {}
@@ -3921,6 +3925,10 @@ impl Game {
                     self.world.resource_mut::<GameState>().unwrap().ui_state =
                         crate::components::UIState::Normal;
                     self.log("Inventory closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "inventory".to_string(),
+                        enabled: false,
+                    };
                     return;
                 }
                 Action::UseItem(_) | Action::Quit => {} // Allow these to fall through
@@ -3935,6 +3943,10 @@ impl Game {
                     self.world.resource_mut::<GameState>().unwrap().ui_state =
                         crate::components::UIState::Normal;
                     self.log("Help closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "help".to_string(),
+                        enabled: false,
+                    };
                     return;
                 }
                 Action::Quit => {} // Allow quit to fall through
@@ -3950,6 +3962,10 @@ impl Game {
                     self.world.resource_mut::<GameState>().unwrap().ui_state =
                         crate::components::UIState::Normal;
                     self.log("Bestiary closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "bestiary".to_string(),
+                        enabled: false,
+                    };
                     return;
                 }
                 Action::Quit => {}
@@ -4955,9 +4971,17 @@ impl Game {
                     if state.ui_state == crate::components::UIState::Inventory {
                         state.ui_state = crate::components::UIState::Normal;
                         self.log("Inventory closed.");
+                        self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                            name: "inventory".to_string(),
+                            enabled: false,
+                        };
                     } else {
                         state.ui_state = crate::components::UIState::Inventory;
                         self.log("Inventory opened. Press [1-9] to use item.");
+                        self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                            name: "inventory".to_string(),
+                            enabled: true,
+                        };
                     }
                 } else {
                     self.log("Select a character first to view their inventory!");
@@ -4968,9 +4992,17 @@ impl Game {
                 if state.ui_state == crate::components::UIState::Help {
                     state.ui_state = crate::components::UIState::Normal;
                     self.log("Help closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "help".to_string(),
+                        enabled: false,
+                    };
                 } else {
                     state.ui_state = crate::components::UIState::Help;
                     self.log("Help overlay opened. Press [?] or [Esc] to close.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "help".to_string(),
+                        enabled: true,
+                    };
                 }
             }
             Action::EndTurn => {
@@ -5040,6 +5072,10 @@ impl Game {
             Action::TogglePerf => {
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.show_perf = !state.show_perf;
+                self.last_outcome = ActionOutcome::ToggleChanged {
+                    name: "performance_overlay".to_string(),
+                    enabled: state.show_perf,
+                };
             }
             Action::ToggleMinimap => {
                 let show = {
@@ -5052,6 +5088,10 @@ impl Game {
                 } else {
                     self.log("Minimap disabled.");
                 }
+                self.last_outcome = ActionOutcome::ToggleChanged {
+                    name: "minimap".to_string(),
+                    enabled: show,
+                };
             }
             Action::AutoBattle => {
                 let current = self.world.resource::<GameState>().unwrap().auto_battle;
@@ -5061,6 +5101,10 @@ impl Game {
                 } else {
                     self.log("Auto-Battle DISABLED.");
                 }
+                self.last_outcome = ActionOutcome::ToggleChanged {
+                    name: "auto_battle".to_string(),
+                    enabled: !current,
+                };
             }
             Action::StepToSafety => {
                 self.execute_step_to_safety();
@@ -5466,7 +5510,19 @@ impl Game {
                         }
                         self.log("[fg:FF00FF]Rerolling floor modifiers (-1 AP)...[/fg]");
                         crate::systems::select_floor_modifiers(&mut self.world);
-                        self.last_outcome = crate::snapshot::ActionOutcome::StateUpdated;
+                        let modifiers = self
+                            .world
+                            .resource::<crate::components::ActiveFloorModifiers>()
+                            .map(|active| {
+                                active
+                                    .modifiers
+                                    .iter()
+                                    .map(|modifier| modifier.display_name().to_string())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        self.last_outcome =
+                            crate::snapshot::ActionOutcome::ModifiersRerolled { modifiers };
                     } else {
                         self.log("Not enough AP to reroll modifiers! (Costs 1 AP)");
                         self.last_outcome = crate::snapshot::ActionOutcome::Failed {
@@ -5483,6 +5539,16 @@ impl Game {
             Action::Rest => {
                 let sel_entity = self.world.resource::<GameState>().unwrap().selected_entity;
                 if let Some(entity) = sel_entity {
+                    let before_fatigue = self
+                        .world
+                        .get::<crate::components::Fatigue>(entity)
+                        .map(|fatigue| fatigue.value)
+                        .unwrap_or_default();
+                    let before_morale = self
+                        .world
+                        .get::<crate::components::Morale>(entity)
+                        .map(|morale| morale.value)
+                        .unwrap_or_default();
                     if let Some(fatigue) = self.world.get_mut::<crate::components::Fatigue>(entity)
                     {
                         fatigue.value = (fatigue.value - 20).max(0);
@@ -5500,8 +5566,26 @@ impl Game {
                         .resource_mut::<GameState>()
                         .unwrap()
                         .selected_entity = None;
+                    let after_fatigue = self
+                        .world
+                        .get::<crate::components::Fatigue>(entity)
+                        .map(|fatigue| fatigue.value)
+                        .unwrap_or_default();
+                    let after_morale = self
+                        .world
+                        .get::<crate::components::Morale>(entity)
+                        .map(|morale| morale.value)
+                        .unwrap_or_default();
+                    self.last_outcome = crate::snapshot::ActionOutcome::Rested {
+                        entity: name,
+                        fatigue_recovered: before_fatigue - after_fatigue,
+                        morale_gained: after_morale - before_morale,
+                    };
                 } else {
                     self.log("Select a character first to rest!");
+                    self.last_outcome = crate::snapshot::ActionOutcome::Failed {
+                        reason: "Select a character first".to_string(),
+                    };
                 }
             }
             Action::ComboSkill(skill) => {
@@ -5533,9 +5617,17 @@ impl Game {
                 if state.ui_state == crate::components::UIState::Bestiary {
                     state.ui_state = crate::components::UIState::Normal;
                     self.log("Bestiary closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "bestiary".to_string(),
+                        enabled: false,
+                    };
                 } else {
                     state.ui_state = crate::components::UIState::Bestiary;
                     self.log("Bestiary opened. Press [J] or [Esc] to close.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "bestiary".to_string(),
+                        enabled: true,
+                    };
                 }
             }
             Action::ViewPrestige => {
@@ -5576,6 +5668,9 @@ impl Game {
                     self.log(format!("{}: [b]{}[/] ({})", name, prestige_name, req));
                 }
                 self.log("[fg:FFD700]-----------------------[/fg]");
+                self.last_outcome = crate::snapshot::ActionOutcome::StatusViewed {
+                    name: "prestige".to_string(),
+                };
             }
             _ => {}
         }

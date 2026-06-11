@@ -1,7 +1,7 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    CharacterClass, EchoItem, EquipmentSlot, EquippedEchoes, EquippedItems, GameState, Inventory,
-    ItemEffect, Outcome, Stats, TurnPhase, TurnTransition, UIState,
+    CharacterClass, EchoItem, EquipmentSlot, EquippedEchoes, EquippedItems, Fatigue, GameState,
+    Inventory, ItemEffect, Morale, Outcome, Stats, TurnPhase, TurnTransition, UIState,
 };
 use wuthering_terminal::equipment;
 use wuthering_terminal::snapshot::{ActionOutcome, FailureCategory};
@@ -483,6 +483,96 @@ fn use_upgrade_kit_directly_reports_failure_and_keeps_item() {
         items_before
     );
     assert!(game.world.is_alive(kit));
+}
+
+#[test]
+fn ui_toggles_report_structured_outcomes() {
+    let mut game = Game::new();
+
+    let help = game.apply_action(Action::ToggleHelp, ActionSource::Terminal);
+    assert_eq!(
+        help.outcome,
+        ActionOutcome::ToggleChanged {
+            name: "help".to_string(),
+            enabled: true,
+        }
+    );
+
+    let help_close = game.apply_action(Action::Cancel, ActionSource::Terminal);
+    assert_eq!(
+        help_close.outcome,
+        ActionOutcome::ToggleChanged {
+            name: "help".to_string(),
+            enabled: false,
+        }
+    );
+
+    let bestiary = game.apply_action(Action::ToggleBestiary, ActionSource::Script);
+    assert_eq!(
+        bestiary.outcome,
+        ActionOutcome::ToggleChanged {
+            name: "bestiary".to_string(),
+            enabled: true,
+        }
+    );
+    assert_eq!(last_recorded_outcome(&game), bestiary.outcome);
+
+    game.apply_action(Action::Cancel, ActionSource::Script);
+    let auto = game.apply_action(Action::AutoBattle, ActionSource::Script);
+    assert_eq!(
+        auto.outcome,
+        ActionOutcome::ToggleChanged {
+            name: "auto_battle".to_string(),
+            enabled: true,
+        }
+    );
+}
+
+#[test]
+fn rest_reports_recovered_fatigue_and_morale() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    game.world
+        .resource_mut::<GameState>()
+        .unwrap()
+        .selected_entity = Some(warrior);
+    game.world.get_mut::<Fatigue>(warrior).unwrap().value = 35;
+    game.world.get_mut::<Morale>(warrior).unwrap().value = 40;
+
+    let report = game.apply_action(Action::Rest, ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Rested {
+            entity: "Kael".to_string(),
+            fatigue_recovered: 20,
+            morale_gained: 5,
+        }
+    );
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
+fn reroll_modifiers_reports_active_modifier_names() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    game.world
+        .resource_mut::<GameState>()
+        .unwrap()
+        .selected_entity = Some(warrior);
+
+    let report = game.apply_action(Action::RerollModifiers, ActionSource::Script);
+
+    match &report.outcome {
+        ActionOutcome::ModifiersRerolled { modifiers } => {
+            assert!(
+                !modifiers.is_empty(),
+                "reroll should report the active modifier names"
+            );
+        }
+        other => panic!("expected modifier reroll outcome, got {other:?}"),
+    }
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
 }
 
 #[test]

@@ -127,6 +127,18 @@ pub enum ActionOutcome {
     },
     /// Defeating an enemy awarded and equipped a set item.
     EquipmentRewarded { item_name: String, hero: String },
+    /// A UI/tooling toggle changed a boolean or panel state.
+    ToggleChanged { name: String, enabled: bool },
+    /// A read-only status panel was viewed.
+    StatusViewed { name: String },
+    /// A character rested to recover fatigue and morale.
+    Rested {
+        entity: String,
+        fatigue_recovered: i32,
+        morale_gained: i32,
+    },
+    /// Active floor modifiers were rerolled.
+    ModifiersRerolled { modifiers: Vec<String> },
     /// The action triggered a state-only change (selection, cursor, inventory).
     StateUpdated,
     /// The action failed (e.g. out of AP, out of range, invalid target).

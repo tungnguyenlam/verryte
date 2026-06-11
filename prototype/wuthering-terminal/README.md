@@ -102,9 +102,10 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "confirm skil
 The script runner accepts action tokens separated by spaces. It prints
 rendered frames, state summaries, and event outcomes after each action.
 Item use, crafting, equipment upgrades, set rewards, echo absorption, boss phase
-transitions, and invalid inventory or floor-transition attempts are reported
-through structured `ActionOutcome` values so scripts and replays do not need to
-scrape log text.
+transitions, UI/tool toggles, prestige status views, rest recovery, floor
+modifier rerolls, and invalid inventory or floor-transition attempts are
+reported through structured `ActionOutcome` values so scripts and replays do not
+need to scrape log text.
 
 ### Script tokens
 
@@ -114,7 +115,7 @@ Combat: `skill1`, `skill2`, `skill3`, `confirm`, `cancel`, `end`, `wait`, `craft
 
 Swap: `swap1`, `swap2`, `swap3` (or `4`, `5`, `6`)
 
-Other: `autobattle`, `safety`, `stairs`/`next_floor`/`>`, `quit`
+Other: `autobattle`, `inventory`, `bestiary`/`lore`, `prestige`, `reroll`, `rest`, `safety`, `stairs`/`next_floor`/`>`, `quit`
 
 ## Adaptive Sprites
 
