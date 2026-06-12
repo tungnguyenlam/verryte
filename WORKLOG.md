@@ -5064,3 +5064,79 @@ decision-making, `to_ansi_string()` could be added as an option later.
 of plain text. Could add `--pretty` flag for pretty-printed JSON. The
 agent binary could eventually support a `--batch` mode that reads all
 commands upfront (like the script runner) but still emits per-step JSON.
+
+## 2026-06-12 - Prompt-driven tactical RPG verification and cleanup
+
+**Goal.** Execute the `@prompt/10-tactical-rpg.md` autonomous development prompt,
+verifying the current state of the tactical RPG prototype and cleaning up any
+issues before proceeding.
+
+**Phase 1: Understand.**
+- Read GOAL.md, AGENTS.md, WORKLOG.md, and prompt/10-tactical-rpg.md.
+- Read key source files: `prototype/wuthering-terminal/src/lib.rs`, `game.rs`,
+  `main.rs`, `action.rs`, `components.rs`, `map.rs`.
+- Read `prototype/vfx-demo/src/main.rs` and `crates/verryte-terminal/src/vfx.rs`.
+- Read `crates/verryte-terminal/src/lib.rs` and `crates/verryte-map/src/lib.rs`.
+- Ran `cargo test --workspace` — all 977+ tests pass (150 input + 231 map +
+  220 terminal + 22 tty + 258 wuthering-terminal unit + 56 integration +
+  40 save/load + doc tests).
+
+**Assessment.** All 8 roadmap steps from the prompt are already complete and
+heavily tested:
+1. Tactical grid scene — implemented with `TacticalMap::tactical()` and tile rendering.
+2. Turn system — `GameState` with `turn`, `phase` (Player/Enemy), AP tracking.
+3. Basic combat — `resolve_combat_hit`, damage calc, HP bars, VFX hit-flash.
+4. Team swap QTE — `Action::Skill3` triggers swap with VFX burst.
+5. Telegraphed attacks — `TelegraphZone` resource, parry/dodge mechanics.
+6. Echo absorption — `EchoItem` component, drop on defeat, absorb for abilities.
+7. Boss fight — multi-phase `Blight Sovereign` with `BossConfig`, phase transition triggers.
+8. Script runner — `wuthering-terminal-script` binary, `inject_script_with`, `run_pending_reports`.
+
+The VFX system was already extracted into `verryte-terminal::vfx` (per
+WORKLOG.md 2026-05-22). The `vfx-demo` compiles and uses the extracted crate.
+
+**Phase 2-3: Execute.**
+Since all roadmap steps were complete, the next task was to fix verification
+issues that would block clean CI:
+- `cargo fmt --check` revealed formatting drift in `viewport.rs` (long lines,
+  trailing whitespace) and `game.rs`/`lib.rs`/`combat.rs` (assert macro formatting,
+  import ordering).
+- `cargo clippy --workspace` revealed one `unreachable_pattern` warning in
+  `game.rs:5404` — a `_ => {}` catch-all arm on a `match dir` where `Direction`
+  only has 4 cardinal variants (North, South, East, West).
+
+**Changes.**
+- `cargo fmt` applied across workspace to fix all formatting drift.
+- `prototype/wuthering-terminal/src/game.rs:5399-5404` — removed the unreachable
+  `_ => {}` arm from the `Action::PanCamera` match on `Direction`, since the
+  enum is exhaustive at 4 variants.
+
+**Verification.**
+- `cargo fmt --check` — clean.
+- `cargo clippy --workspace` — zero warnings.
+- `cargo test --workspace` — all tests pass.
+
+**Reasoning.** The prompt's roadmap was already fully implemented by prior
+agents. Rather than inventing new speculative features, the correct response to
+"something fails" (per prompt autonomy rule #3) was to make the existing
+verification failures the next task. Formatting and clippy cleanliness are
+prerequisites for any subsequent development.
+
+**Assumptions.** The `Direction` enum in `verryte-map` will remain 4-variant
+(cardinal only). If diagonal directions are added later, this match arm would
+need to be revisited.
+
+**Gotchas.** The `vfx-demo` binary panics at runtime with "Device not configured"
+when run without a real TTY (expected in non-terminal environments). The
+compilation succeeds, which is the relevant verification.
+
+**Follow-ups.** The tactical RPG prototype is feature-complete relative to the
+prompt roadmap. The next meaningful direction would be one of:
+- Polish/balance pass on existing mechanics (e.g., make the boss fight more
+  tactically interesting, add more enemy archetypes).
+- Content pipeline improvements (e.g., wire the PNG-to-ANSI build script into
+  a Makefile target, generate more sprite tiers).
+- Engine extraction: move game-specific systems that have proven reusable
+  (e.g., turn management, combat resolution, VFX triggering) into engine crates.
+- Documentation update: refresh `prompt/10-tactical-rpg.md` or create a new
+  prompt for post-roadmap development.
