@@ -28,10 +28,20 @@ turn-phase scheduling.
 All gameplay paths must converge on the same action system. Do not split
 interactive, scripted, test, or agent control into separate paths.
 
+* **Binary:** `wuthering-terminal` (Interactive TTY)
+* **Script:** `wuthering-terminal-script` (CI/Verification)
+* **Agent:** `wuthering-terminal-agent` (Structured JSON REPL for AI agents)
+
 ```text
 terminal event -> game action -> game system -> observable state
 script command -> game action -> game system -> observable state
+agent command  -> game action -> game system -> observable state (JSON)
 ```
+
+The `wuthering-terminal-agent` tool is your primary window into the game's state.
+It provides a plain-text `frame` and a structured `snapshot` in JSON after every
+action. Use it to verify that your changes are reflected both in the data and
+on the screen.
 
 ## Characters
 
@@ -143,6 +153,7 @@ Before finishing:
 
 - `cargo fmt --check`
 - `cargo test --workspace`
+- **Agent Check:** Run `cargo run -p wuthering-terminal --bin wuthering-terminal-agent` and pipe commands (e.g., `n`, `s`, `snapshot`) to verify logic. **Crucially**, test at various terminal sizes using the `--size` flag (e.g., `--size 80x24` and `--size 120x40`) to ensure the adaptive resolution sprites and UI layouts remain correct.
 - confirm `cargo run -p vfx-demo` still works (if VFX extraction happened)
 - update WORKLOG.md with what was done and what comes next
 
