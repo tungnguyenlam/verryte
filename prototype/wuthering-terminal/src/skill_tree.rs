@@ -6,6 +6,11 @@ impl SkillTree {
             CharacterClass::Warrior => warrior_skill_tree(),
             CharacterClass::Mage => mage_skill_tree(),
             CharacterClass::Healer => healer_skill_tree(),
+            CharacterClass::Rogue => rogue_skill_tree(),
+            CharacterClass::DestructibleObject => Self {
+                skill_points: 0,
+                upgrades: Vec::new(),
+            },
             _ => Self {
                 skill_points: 0,
                 upgrades: Vec::new(),
@@ -452,6 +457,67 @@ fn mage_skill_tree() -> SkillTree {
                     spd: 3,
                 },
                 prerequisites: vec!["mage_passive_arcane_mastery".into()],
+            },
+        ],
+    }
+}
+
+fn rogue_skill_tree() -> SkillTree {
+    SkillTree {
+        skill_points: 0,
+        upgrades: vec![
+            // Skill 1 (Attack) tree
+            SkillUpgrade {
+                skill_slot: SkillSlot::Skill1,
+                upgrade_id: "rogue_s1_venom_edge".into(),
+                name: "Venom Edge".into(),
+                description: "Basic attacks deal +3 damage.".into(),
+                tier: 1,
+                cost: 1,
+                unlocked: false,
+                effect: UpgradeEffect::DamageBoost(3),
+                prerequisites: vec![],
+            },
+            // Skill 2 (Shadow Step / Poison Strike) tree
+            SkillUpgrade {
+                skill_slot: SkillSlot::Skill2,
+                upgrade_id: "rogue_s2_toxic_burst".into(),
+                name: "Toxic Burst".into(),
+                description: "Skill 2 deals +10 damage.".into(),
+                tier: 1,
+                cost: 1,
+                unlocked: false,
+                effect: UpgradeEffect::DamageBoost(10),
+                prerequisites: vec![],
+            },
+            // Skill 3 (Flurry) tree
+            SkillUpgrade {
+                skill_slot: SkillSlot::Skill3,
+                upgrade_id: "rogue_s3_flurry".into(),
+                name: "Blade Flurry".into(),
+                description: "Skill 3 damage increased by 15.".into(),
+                tier: 1,
+                cost: 2,
+                unlocked: false,
+                effect: UpgradeEffect::DamageBoost(15),
+                prerequisites: vec![],
+            },
+            // Passive
+            SkillUpgrade {
+                skill_slot: SkillSlot::Passive,
+                upgrade_id: "rogue_p_evasion".into(),
+                name: "Evasion".into(),
+                description: "Increase Speed by +2 and Defense by +2.".into(),
+                tier: 1,
+                cost: 2,
+                unlocked: false,
+                effect: UpgradeEffect::Passive {
+                    atk: 0,
+                    def: 2,
+                    hp: 0,
+                    spd: 2,
+                },
+                prerequisites: vec![],
             },
         ],
     }

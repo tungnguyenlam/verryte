@@ -46,6 +46,10 @@ pub enum Action {
     Rest,
     ToggleBestiary,
     UpgradeEquipment(crate::components::EquipmentSlot),
+    PanCamera(Direction),
+    ToggleCameraLock,
+    ZoomIn,
+    ZoomOut,
 }
 
 impl Action {
@@ -129,6 +133,30 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('?'), Action::ToggleHelp);
     b.bind(Key::Char('h'), Action::ToggleHelp);
     b.bind(Key::Char('H'), Action::ToggleHelp);
+
+    // Camera
+    b.bind(Key::Char('c'), Action::ToggleCameraLock);
+    b.bind(Key::Char('C'), Action::ToggleCameraLock);
+    b.bind(
+        Key::modified('↑', false, false, true),
+        Action::PanCamera(Direction::North),
+    );
+    b.bind(
+        Key::modified('↓', false, false, true),
+        Action::PanCamera(Direction::South),
+    );
+    b.bind(
+        Key::modified('←', false, false, true),
+        Action::PanCamera(Direction::West),
+    );
+    b.bind(
+        Key::modified('→', false, false, true),
+        Action::PanCamera(Direction::East),
+    );
+    b.bind(Key::Char('='), Action::ZoomIn);
+    b.bind(Key::Char('+'), Action::ZoomIn);
+    b.bind(Key::Char('-'), Action::ZoomOut);
+    b.bind(Key::Char('_'), Action::ZoomOut);
 
     // Skill Tree
     b.bind(Key::Char('t'), Action::ToggleSkillTree);
@@ -367,6 +395,31 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
         };
         if let Some(slot) = slot {
             return Some(Action::UpgradeEquipment(slot));
+        }
+    }
+
+    if token == "camera_lock" || token == "lock" {
+        return Some(Action::ToggleCameraLock);
+    }
+
+    if token == "zoom_in" || token == "zoomin" || token == "+" {
+        return Some(Action::ZoomIn);
+    }
+
+    if token == "zoom_out" || token == "zoomout" || token == "-" {
+        return Some(Action::ZoomOut);
+    }
+
+    if let Some(pan_str) = token.strip_prefix("pan:") {
+        let dir = match pan_str.to_lowercase().as_str() {
+            "n" | "north" | "up" => Some(Direction::North),
+            "s" | "south" | "down" => Some(Direction::South),
+            "e" | "east" | "right" => Some(Direction::East),
+            "w" | "west" | "left" => Some(Direction::West),
+            _ => None,
+        };
+        if let Some(d) = dir {
+            return Some(Action::PanCamera(d));
         }
     }
 

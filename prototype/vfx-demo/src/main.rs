@@ -203,7 +203,7 @@ impl Scene {
         self.vfx.floating_texts.push(FloatingText::new(
             tx - 1.0,
             ty - 3.0,
-            &format!("-{} ⚡", dmg),
+            &format!("-{} \u{26a1}", dmg),
             Color(255, 255, 100),
             true,
         ));
@@ -258,7 +258,7 @@ impl Scene {
         self.vfx.floating_texts.push(FloatingText::new(
             cx - 1.0,
             cy - 3.0,
-            &format!("+{} ♥", heal),
+            &format!("+{} \u{2665}", heal),
             Color(100, 255, 150),
             true,
         ));
@@ -327,7 +327,7 @@ impl Scene {
             cy,
             15,
             Color(255, 200, 50),
-            &['*', '✦', '·'],
+            &['*', '\u{2726}', '\u{00b7}'],
         ));
         self.vfx.shakes.push(ScreenShake::new(2.0, 0.2));
         self.vfx.flashes.push(Flash::region(
@@ -376,7 +376,7 @@ impl Scene {
             ey,
             25,
             Color(255, 100, 200),
-            &['✦', '*', '◇', '·', '°'],
+            &['\u{2726}', '*', '\u{25c7}', '\u{00b7}', '\u{00b0}'],
         ));
 
         // Phase 3: AoE
@@ -428,7 +428,7 @@ impl Scene {
                 10.0,
                 40,
                 Color(255, 200, 50),
-                &['✦', '*', '◇', '·', '°', '†', '‡'],
+                &['\u{2726}', '*', '\u{25c7}', '\u{00b7}', '\u{00b0}', '\u{2020}', '\u{2021}'],
             ));
             self.vfx
                 .flashes
@@ -448,7 +448,7 @@ impl Scene {
                     grid.put(
                         x,
                         y,
-                        Cell::new('·')
+                        Cell::new('\u{00b7}')
                             .with_fg(Color(25, 25, 35))
                             .with_bg(Color(12, 12, 18)),
                     );
@@ -462,7 +462,7 @@ impl Scene {
             grid.put(
                 x,
                 ground_y,
-                Cell::new('─')
+                Cell::new('\u{2500}')
                     .with_fg(Color(40, 40, 55))
                     .with_bg(Color(12, 12, 18)),
             );
@@ -510,8 +510,8 @@ impl Scene {
             bar_y + 1,
             10,
             hp_ratio,
-            Cell::new('█').with_fg(Color(80, 180, 240)),
-            Cell::new('░').with_fg(Color(40, 40, 40)),
+            Cell::new('\u{2588}').with_fg(Color(80, 180, 240)),
+            Cell::new('\u{2591}').with_fg(Color(40, 40, 40)),
         );
         grid.write_str(
             rover_bar_x + 11,
@@ -536,8 +536,8 @@ impl Scene {
             bar_y + 1,
             10,
             hp_ratio,
-            Cell::new('█').with_fg(Color(120, 200, 240)),
-            Cell::new('░').with_fg(Color(40, 40, 40)),
+            Cell::new('\u{2588}').with_fg(Color(120, 200, 240)),
+            Cell::new('\u{2591}').with_fg(Color(40, 40, 40)),
         );
         grid.write_str(
             baizhi_bar_x + 11,
@@ -562,8 +562,8 @@ impl Scene {
             bar_y + 1,
             14,
             hp_ratio,
-            Cell::new('█').with_fg(Color(200, 60, 60)),
-            Cell::new('░').with_fg(Color(40, 40, 40)),
+            Cell::new('\u{2588}').with_fg(Color(200, 60, 60)),
+            Cell::new('\u{2591}').with_fg(Color(40, 40, 40)),
         );
         grid.write_str(
             enemy_bar_x + 15,
@@ -580,7 +580,7 @@ impl Scene {
         grid.write_str(
             log_x,
             log_y,
-            "── Battle Log ──",
+            "\u{2500}\u{2500} Battle Log \u{2500}\u{2500}",
             Color(100, 100, 120),
             Color::BLACK,
         );
@@ -613,7 +613,7 @@ impl Scene {
         self.vfx.render_flash(&mut grid, w, h);
 
         // ── Title bar ─────────────────────────────────────────────────────
-        let title = "⚔ Tactical RPG VFX ⚔";
+        let title = "\u{2694} Tactical RPG VFX \u{2694}";
         let title_x = w.saturating_sub(title.len() as u16) / 2;
         grid.write_str(title_x, 0, title, Color(255, 200, 80), Color::BLACK);
 

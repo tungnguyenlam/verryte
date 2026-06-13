@@ -9,6 +9,7 @@ pub struct TileViewport {
     pub rect: Rect,
     pub tile_w: u16,
     pub tile_h: u16,
+    pub zoom: f32,
     pub camera: Camera,
 }
 
@@ -18,21 +19,31 @@ impl TileViewport {
             rect,
             tile_w,
             tile_h,
+            zoom: 1.0,
             camera: Camera::new(0.0, 0.0),
         }
     }
 
+    pub fn with_zoom(mut self, zoom: f32) -> Self {
+        self.zoom = zoom;
+        self
+    }
+
     pub fn world_to_screen(&self, world_x: f32, world_y: f32) -> (i32, i32) {
+        let zoom = self.camera.zoom;
         let (cam_x, cam_y) = self.camera.top_left(self.rect.width, self.rect.height);
-        let screen_x = (world_x * self.tile_w as f32).round() as i32 - cam_x as i32;
-        let screen_y = (world_y * self.tile_h as f32).round() as i32 - cam_y as i32;
+        let screen_x = (world_x * self.tile_w as f32 * zoom).round() as i32
+            - (cam_x as f32 * zoom).round() as i32;
+        let screen_y = (world_y * self.tile_h as f32 * zoom).round() as i32
+            - (cam_y as f32 * zoom).round() as i32;
         (screen_x, screen_y)
     }
 
     pub fn screen_to_world(&self, screen_x: i32, screen_y: i32) -> (f32, f32) {
+        let zoom = self.camera.zoom;
         let (cam_x, cam_y) = self.camera.top_left(self.rect.width, self.rect.height);
-        let world_x = (screen_x + cam_x as i32) as f32 / self.tile_w as f32;
-        let world_y = (screen_y + cam_y as i32) as f32 / self.tile_h as f32;
+        let world_x = (screen_x as f32 / zoom + cam_x as f32) / self.tile_w as f32;
+        let world_y = (screen_y as f32 / zoom + cam_y as f32) / self.tile_h as f32;
         (world_x, world_y)
     }
 
@@ -40,8 +51,12 @@ impl TileViewport {
         let (cam_x, cam_y) = self.camera.top_left(self.rect.width, self.rect.height);
         let start_x = (cam_x as f32 / self.tile_w as f32).floor() as i16;
         let start_y = (cam_y as f32 / self.tile_h as f32).floor() as i16;
-        let end_x = ((cam_x as f32 + self.rect.width as f32) / self.tile_w as f32).ceil() as i16;
-        let end_y = ((cam_y as f32 + self.rect.height as f32) / self.tile_h as f32).ceil() as i16;
+
+        let zoomed_w = (self.rect.width as f32 / self.camera.zoom).ceil() as u16;
+        let zoomed_h = (self.rect.height as f32 / self.camera.zoom).ceil() as u16;
+
+        let end_x = start_x + (zoomed_w as f32 / self.tile_w as f32).ceil() as i16 + 1;
+        let end_y = start_y + (zoomed_h as f32 / self.tile_h as f32).ceil() as i16 + 1;
 
         (
             start_x.max(0),
@@ -53,8 +68,12 @@ impl TileViewport {
 
     pub fn blit_sprite(&self, grid: &mut Grid, world_x: f32, world_y: f32, sprite: &Grid) {
         let (sx, sy) = self.world_to_screen(world_x, world_y);
-        let rx = sx + (self.tile_w as i32 - sprite.width() as i32) / 2;
-        let ry = sy + (self.tile_h as i32 - sprite.height() as i32) / 2;
+        let zoom = self.camera.zoom;
+        let zw = (self.tile_w as f32 * zoom).round() as i32;
+        let zh = (self.tile_h as f32 * zoom).round() as i32;
+
+        let rx = sx + (zw - sprite.width() as i32) / 2;
+        let ry = sy + (zh - sprite.height() as i32) / 2;
 
         for (ox, oy, cell) in sprite.iter_cells() {
             if cell.is_transparent() {
@@ -77,6 +96,10 @@ impl TileViewport {
         render_tile: impl Fn(&T) -> crate::grid::Cell,
     ) {
         let (x1, y1, x2, y2) = self.visible_tiles(layer.width(), layer.height());
+        let zoom = self.camera.zoom;
+        let zw = (self.tile_w as f32 * zoom).round() as i32;
+        let zh = (self.tile_h as f32 * zoom).round() as i32;
+
         for ty in y1..y2 {
             for tx in x1..x2 {
                 if let Some(tile) = layer.get(verryte_map::Point::new(tx, ty)) {
@@ -85,10 +108,10 @@ impl TileViewport {
                         continue;
                     }
                     let (sx, sy) = self.world_to_screen(tx as f32, ty as f32);
-                    for dy in 0..self.tile_h {
-                        for dx in 0..self.tile_w {
-                            let abs_x = self.rect.x as i32 + sx + dx as i32;
-                            let abs_y = self.rect.y as i32 + sy + dy as i32;
+                    for dy in 0..zh {
+                        for dx in 0..zw {
+                            let abs_x = self.rect.x as i32 + sx + dx;
+                            let abs_y = self.rect.y as i32 + sy + dy;
                             if self.rect.contains(abs_x as u16, abs_y as u16) {
                                 screen.put(abs_x as u16, abs_y as u16, cell);
                             }
@@ -210,6 +233,28 @@ mod tests {
         // Tile (1,1) maps to screen (28, 14) which is within 40x20 grid
         let cell = screen.get(28, 14).unwrap();
         assert_eq!(cell.glyph, '#');
+    }
+
+    #[test]
+    fn test_viewport_zoom() {
+        let mut vp = make_viewport();
+        vp.camera.set_zoom(2.0);
+
+        // Logical tile size is 8x4. With zoom 2.0, physical tile size is 16x8.
+        // Camera at (0,0) centers viewport.
+        // Logical top-left of 40x20 viewport is (-20, -10) relative to center.
+        // BUT with zoom 2.0, the zoomed viewport width is 20, height is 10.
+        // So top-left is center_x - 10 = -10, center_y - 5 = -5.
+
+        let (sx, sy) = vp.world_to_screen(0.0, 0.0);
+        // world_to_screen(0,0) = (0 * 8 * 2.0) - (-10 * 2.0) = 20
+        // (0 * 4 * 2.0) - (-5 * 2.0) = 10
+        assert_eq!(sx, 20);
+        assert_eq!(sy, 10);
+
+        let (wx, wy) = vp.screen_to_world(20, 10);
+        assert!((wx - 0.0).abs() < 0.1);
+        assert!((wy - 0.0).abs() < 0.1);
     }
 
     #[test]

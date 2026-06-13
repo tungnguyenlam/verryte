@@ -6,6 +6,16 @@ pub fn register_assets(registry: &mut VisualRegistry) {
     {
         let mut sprite = Sprite::new("kael", vec![]);
         sprite = sprite.with_tier(
+            ResolutionTier::ASCII,
+            vec![Frame {
+                grid: Grid::from_bytes(&[
+                    1, 0, 1, 0, 128, 37, 0, 0, 193, 190, 188, 184, 179, 173, 0,
+                ])
+                .unwrap(),
+                duration: 1,
+            }],
+        );
+        sprite = sprite.with_tier(
             ResolutionTier::TINY,
             vec![Frame {
                 grid: Grid::from_bytes(&[
@@ -607,6 +617,16 @@ pub fn register_assets(registry: &mut VisualRegistry) {
     {
         let mut sprite = Sprite::new("lyra", vec![]);
         sprite = sprite.with_tier(
+            ResolutionTier::ASCII,
+            vec![Frame {
+                grid: Grid::from_bytes(&[
+                    1, 0, 1, 0, 128, 37, 0, 0, 175, 184, 181, 168, 171, 161, 0,
+                ])
+                .unwrap(),
+                duration: 1,
+            }],
+        );
+        sprite = sprite.with_tier(
             ResolutionTier::TINY,
             vec![Frame {
                 grid: Grid::from_bytes(&[
@@ -1205,6 +1225,16 @@ pub fn register_assets(registry: &mut VisualRegistry) {
     }
     {
         let mut sprite = Sprite::new("mira", vec![]);
+        sprite = sprite.with_tier(
+            ResolutionTier::ASCII,
+            vec![Frame {
+                grid: Grid::from_bytes(&[
+                    1, 0, 1, 0, 128, 37, 0, 0, 220, 224, 227, 214, 219, 223, 0,
+                ])
+                .unwrap(),
+                duration: 1,
+            }],
+        );
         sprite = sprite.with_tier(
             ResolutionTier::TINY,
             vec![Frame {
@@ -1809,6 +1839,16 @@ pub fn register_assets(registry: &mut VisualRegistry) {
     }
     {
         let mut sprite = Sprite::new("blight-sovereign", vec![]);
+        sprite = sprite.with_tier(
+            ResolutionTier::ASCII,
+            vec![Frame {
+                grid: Grid::from_bytes(&[
+                    1, 0, 1, 0, 128, 37, 0, 0, 151, 146, 152, 133, 127, 133, 0,
+                ])
+                .unwrap(),
+                duration: 1,
+            }],
+        );
         sprite = sprite.with_tier(
             ResolutionTier::TINY,
             vec![Frame {
@@ -2784,5 +2824,28 @@ pub fn register_assets(registry: &mut VisualRegistry) {
             }],
         );
         registry.register("blight-sovereign", VisualAsset::Animated(sprite));
+    }
+
+    {
+        let mut sprite = Sprite::new("barrel", vec![]);
+        sprite = sprite.with_tier(
+            ResolutionTier::ASCII,
+            vec![Frame {
+                grid: Grid::from_ascii(" ( ) \n |-| \n ( ) ", |ch, _, _| {
+                    verryte_terminal::Cell::new(ch).with_fg(verryte_terminal::Color(140, 90, 50))
+                }),
+                duration: 1,
+            }],
+        );
+        sprite = sprite.with_tier(
+            ResolutionTier::TINY,
+            vec![Frame {
+                grid: Grid::from_ascii(" / \\ \n |-| \n \\ / ", |ch, _, _| {
+                    verryte_terminal::Cell::new(ch).with_fg(verryte_terminal::Color(140, 90, 50))
+                }),
+                duration: 1,
+            }],
+        );
+        registry.register_sprite(sprite);
     }
 }

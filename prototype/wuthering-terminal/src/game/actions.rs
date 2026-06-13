@@ -1,291 +1,19 @@
-use crate::action::{default_bindings, Action};
+use super::Game;
+use crate::action::Action;
 use crate::components::{
     BattleStats, CharacterClass, EquippedItems, GameEvent, GameState, Outcome, Position, Stats,
     Team, TurnPhase,
 };
 use crate::map::{TacticalMap, Tile};
 use crate::snapshot::ActionOutcome;
-use crate::spawn::Spawner;
 use std::collections::HashSet;
-use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, Schedule, World};
-use verryte_input::{ActionSource, InputRouter};
-use verryte_terminal::{Camera, Cell, Color, Grid, VisualRegistry};
-
-fn saves_dir() -> &'static str {
-    let dir = if std::path::Path::new("prototype/wuthering-terminal").exists() {
-        "prototype/wuthering-terminal/saves"
-    } else {
-        "saves"
-    };
-    let _ = std::fs::create_dir_all(dir);
-    dir
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum MapError {
-    Empty,
-}
-
-impl std::fmt::Display for MapError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MapError::Empty => write!(f, "map is empty"),
-        }
-    }
-}
-
-impl std::error::Error for MapError {}
-
-pub struct Game {
-    pub world: World,
-    pub schedule: Schedule,
-    pub router: InputRouter<Action>,
-    pub camera: Camera,
-    pub last_outcome: ActionOutcome,
-    /// Set to true by `check_boss_phase_transition` when the boss crossed into
-    /// phase 2 during this step. Reset by `apply_action` at the start of each step.
-    pub boss_transitioned: bool,
-    pub _audio_stream: Option<verryte_audio::OutputStream>,
-}
-
-impl Default for Game {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+use crate::spawn::Spawner;
+use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, World};
+use verryte_input::{ActionSource};
+use verryte_map::Direction;
+use verryte_terminal::Color;
 
 impl Game {
-    pub fn new() -> Self {
-        let mut world = World::new();
-        let width = 24;
-        let height = 16;
-        let map = TacticalMap::tactical();
-
-        world.insert_resource(map);
-        world.insert_resource(GameState {
-            turn: 1,
-            phase: TurnPhase::Player,
-            outcome: Outcome::Playing,
-            cursor: Position::new(5, 5),
-            selected_entity: None,
-            concert_energy: 0,
-            targeting: crate::components::TargetingMode::None,
-            boss_phase: crate::components::BossPhase::Phase1,
-            ui_state: crate::components::UIState::Normal,
-            show_perf: false,
-            auto_battle: false,
-            is_recording: false,
-            show_minimap: true,
-            combo_count: 0,
-            floor: 1,
-        });
-        world.insert_resource(crate::components::TelegraphZone::default());
-        world.insert_resource(verryte_map::VisibilityMap::new(width, height));
-        world.insert_resource(GameClock::new());
-        world.insert_resource(Rng::seed(1));
-        world.insert_resource(Events::<GameEvent>::with_capacity(16));
-        world.insert_resource(Events::<verryte_core::AudioEvent>::new());
-        world.insert_resource(MessageLog::with_max(50));
-        world.insert_resource(verryte_input::ActionHistory::<Action>::default());
-        world.insert_resource(verryte_terminal::vfx::VfxSystem::new());
-        world.insert_resource(verryte_terminal::DialogueState::new("Narrative", ""));
-        world.insert_resource(crate::components::EquippedEchoes::default());
-        world.insert_resource(crate::components::TurnTransition::default());
-        world.insert_resource(crate::components::ReplayState::default());
-        world.insert_resource(crate::components::BossConfig::default());
-        world.insert_resource(verryte_core::Diagnostics::new());
-        world.insert_resource(BattleStats::default());
-        world.insert_resource(crate::components::UndoStack::default());
-        world.insert_resource(crate::components::RedoStack::default());
-        world.insert_resource(crate::components::Weather::default());
-        world.insert_resource(crate::components::AvailableCombos::default());
-        world.insert_resource(crate::components::ActiveFloorModifiers::default());
-        world.insert_resource(Self::create_initial_bestiary());
-        world.insert_resource(Self::create_initial_lore_journal());
-
-        let mut registry = VisualRegistry::new();
-        crate::generated_assets::register_assets(&mut registry);
-        world.insert_resource(registry);
-
-        let mut schedule = Schedule::new();
-        schedule.add_named("visibility", crate::systems::visibility_system);
-        schedule.add_named("turn_management", crate::systems::turn_management_system);
-        schedule.add_named("floor_modifier", crate::systems::floor_modifier_system);
-        schedule.add_named("enemy_ai", crate::systems::enemy_ai_system);
-        schedule.add_named("weather_cycle", crate::systems::weather_cycle_system);
-        schedule.add_named("combo_detection", crate::systems::combo_detection_system);
-        schedule.add_named("prestige", crate::systems::prestige_system);
-        schedule.add_named("morale_fatigue", crate::systems::morale_fatigue_system);
-        schedule.add_named("weather_ambient", crate::systems::weather_ambient_system);
-
-        let mut audio_stream = None;
-        if let Ok((mut player, stream)) = verryte_audio::AudioPlayer::try_new() {
-            player.register("music_theme", vec![0; 100]);
-            player.register("warrior_attack", vec![0; 100]);
-            player.register("mage_attack", vec![0; 100]);
-            player.register("healer_attack", vec![0; 100]);
-            player.register("boss_attack", vec![0; 100]);
-            player.register("enemy_attack", vec![0; 100]);
-            player.register("swap_swoosh", vec![0; 100]);
-            player.register("item_craft", vec![0; 100]);
-            player.register("level_up", vec![0; 100]);
-            player.register("boss_phase_transition", vec![0; 100]);
-            player.register("dialogue_blip", vec![0; 100]);
-            player.register("ambient_rain", vec![0; 100]);
-            player.register("ambient_thunder", vec![0; 100]);
-            player.register("ambient_birds", vec![0; 100]);
-            player.register("ambient_wind", vec![0; 100]);
-
-            player.play_music("music_theme", true);
-
-            world.insert_resource(player);
-            audio_stream = Some(stream);
-        }
-
-        let mut game = Self {
-            world,
-            schedule,
-            router: InputRouter::new(default_bindings()),
-            camera: Camera::new(0.0, 0.0).with_smooth(0.15),
-            last_outcome: ActionOutcome::NoOp,
-            boss_transitioned: false,
-            _audio_stream: audio_stream,
-        };
-        let (cx, cy) = game.get_tile_center_pixels(Position::new(5, 5));
-        game.camera.center_x = cx;
-        game.camera.center_y = cy;
-        game.camera.target_x = cx;
-        game.camera.target_y = cy;
-
-        game.world
-            .spawn_character(Position::new(4, 4), Team::Player, CharacterClass::Warrior);
-        game.world
-            .spawn_character(Position::new(4, 8), Team::Player, CharacterClass::Mage);
-        game.world
-            .spawn_character(Position::new(4, 12), Team::Player, CharacterClass::Healer);
-        game.world
-            .spawn_character(Position::new(18, 8), Team::Enemy, CharacterClass::Boss);
-        game.world.spawn_character(
-            Position::new(14, 4),
-            Team::Enemy,
-            CharacterClass::ShadowStalker,
-        );
-        game.world.spawn_character(
-            Position::new(14, 12),
-            Team::Enemy,
-            CharacterClass::ShadowStalker,
-        );
-        game.world.spawn_character(
-            Position::new(12, 6),
-            Team::Enemy,
-            CharacterClass::CorruptedSpore,
-        );
-        game.world.spawn_character(
-            Position::new(12, 10),
-            Team::Enemy,
-            CharacterClass::CorruptedSpore,
-        );
-        game.world.spawn_character(
-            Position::new(16, 3),
-            Team::Enemy,
-            CharacterClass::CursedSentinel,
-        );
-        game.world.spawn_character(
-            Position::new(10, 14),
-            Team::Enemy,
-            CharacterClass::PlagueWraith,
-        );
-        game.world.spawn_character(
-            Position::new(15, 8),
-            Team::Enemy,
-            CharacterClass::EnemyCleric,
-        );
-
-        let potion = game
-            .world
-            .spawn_item("Healing Potion", crate::components::ItemEffect::Heal(30));
-        let elixir = game.world.spawn_item(
-            "Energy Elixir",
-            crate::components::ItemEffect::ReplenishAp(2),
-        );
-        let remedy = game
-            .world
-            .spawn_item("Cleanse Remedy", crate::components::ItemEffect::Cleanse);
-        let aegis = game.world.spawn_item(
-            "Aegis Elixir",
-            crate::components::ItemEffect::RestoreShield(
-                crate::components::ShieldType::Physical,
-                30,
-            ),
-        );
-
-        if let Some(kael) = game
-            .world
-            .query3::<Position, Team, CharacterClass>()
-            .iter()
-            .find(|(_, _, team, class)| {
-                **team == Team::Player && **class == CharacterClass::Warrior
-            })
-            .map(|(e, _, _, _)| *e)
-        {
-            if let Some(inv) = game.world.get_mut::<crate::components::Inventory>(kael) {
-                inv.items.push(potion);
-                inv.items.push(elixir);
-                inv.items.push(aegis);
-            }
-        }
-        if let Some(mira) = game
-            .world
-            .query3::<Position, Team, CharacterClass>()
-            .iter()
-            .find(|(_, _, team, class)| **team == Team::Player && **class == CharacterClass::Healer)
-            .map(|(e, _, _, _)| *e)
-        {
-            if let Some(inv) = game.world.get_mut::<crate::components::Inventory>(mira) {
-                inv.items.push(remedy);
-            }
-        }
-
-        game.log("Wuthering Terminal Tactical RPG Initialized.");
-        game.log("Move cursor: Arrows/WASD. Confirm: Enter. Cancel: Esc.");
-        game.log("End Turn: E. Cycle: Tab. Bestiary/Lore: J.");
-
-        game
-    }
-
-    fn create_initial_bestiary() -> crate::components::Bestiary {
-        use crate::components::BestiaryEntry;
-        crate::components::Bestiary {
-            entries: vec![
-                BestiaryEntry { class: CharacterClass::ShadowStalker, name: "Shadow Stalker".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Created from the shadows of the Sovereign's domain, these silent hunters vanish when struck. Area attacks are the only reliable way to pin them down.".to_string(), drop_table: vec!["Frostbite Echo".to_string(), "Shadow Essence".to_string()] },
-                BestiaryEntry { class: CharacterClass::CorruptedSpore, name: "Corrupted Spore".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Once benign forest spores, corrupted by the Blight into volatile living mines. They explode on proximity, dealing devastating area damage.".to_string(), drop_table: vec!["Nature Essence".to_string()] },
-                BestiaryEntry { class: CharacterClass::CursedSentinel, name: "Cursed Sentinel".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Ancient guardians turned to serve darkness. They prefer ranged attacks and retreat when approached.".to_string(), drop_table: vec!["Sentinel Core".to_string()] },
-                BestiaryEntry { class: CharacterClass::PlagueWraith, name: "Plague Wraith".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Spirits of plague victims, bound to spread decay. Their touch applies Nature status.".to_string(), drop_table: vec!["Wraith Shard".to_string(), "Plague Essence".to_string()] },
-                BestiaryEntry { class: CharacterClass::GlacialGolem, name: "Glacial Golem".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Forged from eternal ice in the Sovereign's forge. Attacks apply Ice status, freezing victims in place.".to_string(), drop_table: vec!["Frost Core".to_string(), "Ice Walker Echo".to_string()] },
-                BestiaryEntry { class: CharacterClass::EnemyCleric, name: "Dark Cleric".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Fallen healers who chose darkness over light. They prioritize healing wounded allies.".to_string(), drop_table: vec!["Dark Blessing".to_string()] },
-                BestiaryEntry { class: CharacterClass::Boss, name: "Blight Sovereign".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "The source of all corruption. A multi-phase abomination. In Phase 2, it unleashes Celestial Ruin with telegraphed attacks that can be parried.".to_string(), drop_table: vec!["Sovereign's Echo".to_string(), "Blight Crystal".to_string()] },
-            ],
-        }
-    }
-
-    fn create_initial_lore_journal() -> crate::components::LoreJournal {
-        use crate::components::{LoreCategory, LoreEntry};
-        crate::components::LoreJournal {
-            entries: vec![
-                LoreEntry { id: "the_blight".to_string(), title: "The Blight".to_string(), text: "A creeping corruption from the Sovereign's domain, twisting living things into servants of darkness.".to_string(), category: LoreCategory::World, discovered: true, turn_discovered: 0 },
-                LoreEntry { id: "concert_energy".to_string(), title: "Concert Energy".to_string(), text: "A mystical force that builds as heroes fight. At 100, enables QTE Swaps with devastating intro skills.".to_string(), category: LoreCategory::Mechanic, discovered: true, turn_discovered: 0 },
-                LoreEntry { id: "echo_absorption".to_string(), title: "Echo Absorption".to_string(), text: "Defeated enemies leave Echoes. Absorb to gain Swift, Thorns, Frostbite, Stun, or Lifesteal.".to_string(), category: LoreCategory::Mechanic, discovered: true, turn_discovered: 0 },
-                LoreEntry { id: "kael_origins".to_string(), title: "Kael's Origins".to_string(), text: "A sellsword whose homeland fell to the Blight. Swift Foot grants bonus AP each turn.".to_string(), category: LoreCategory::Character, discovered: true, turn_discovered: 0 },
-                LoreEntry { id: "lyra_studies".to_string(), title: "Lyra's Studies".to_string(), text: "Arcane Academy prodigy pursuing the Blight's source. Storm Chaser amplifies lightning damage.".to_string(), category: LoreCategory::Character, discovered: true, turn_discovered: 0 },
-                LoreEntry { id: "mira_calling".to_string(), title: "Mira's Calling".to_string(), text: "Temple healer who answered the cries of the afflicted. Purifying Touch cleanses on heal.".to_string(), category: LoreCategory::Character, discovered: true, turn_discovered: 0 },
-                LoreEntry { id: "combat_insights".to_string(), title: "Combat Insights".to_string(), text: "Ice+Lightning=Shatter, Lightning+Nature=Overgrowth, Nature+Ice=Bloom. Combos amplify damage by 5% per chain.".to_string(), category: LoreCategory::Mechanic, discovered: false, turn_discovered: 0 },
-                LoreEntry { id: "sovereigns_rage".to_string(), title: "The Sovereign's Rage".to_string(), text: "Below half health, the Sovereign enters frenzy. Power doubles, shield manifests, Celestial Ruin begins.".to_string(), category: LoreCategory::Enemy, discovered: false, turn_discovered: 0 },
-                LoreEntry { id: "descent_into_darkness".to_string(), title: "Descent into Darkness".to_string(), text: "Floor 2 is a procedurally generated dungeon warped by the Blight. The Sovereign awaits in the deepest chamber.".to_string(), category: LoreCategory::World, discovered: false, turn_discovered: 0 },
-                LoreEntry { id: "echo_lore".to_string(), title: "Echo Lore".to_string(), text: "Echoes are the crystallized will of the fallen. Each absorbed Echo reshapes the hero's soul.".to_string(), category: LoreCategory::Mechanic, discovered: false, turn_discovered: 0 },
-            ],
-        }
-    }
-
     pub fn record_enemy_encounter(&mut self, class: CharacterClass) {
         let name = Self::get_class_name(class);
         let mut discovered = false;
@@ -420,113 +148,6 @@ impl Game {
         }
         if newly_unlocked {
             self.log(format!("[fg:9933FF]Lore unlocked: '{}'![/fg]", title));
-        }
-    }
-
-    pub fn trigger_intro_dialogue(&mut self) {
-        if let Some(dialogue) = self.world.resource_mut::<verryte_terminal::DialogueState>() {
-            *dialogue = verryte_terminal::DialogueState::new(
-                "Tactical Focus",
-                "Choose Kael's Vanguard Focus for this battle:",
-            )
-            .with_choices(vec![
-                "Pure Blade (+5 Attack for Kael)".to_string(),
-                "Arcane Synergy (Start with +5 Concert Energy)".to_string(),
-            ]);
-        }
-    }
-
-    pub fn vfx(&self) -> &verryte_terminal::vfx::VfxSystem {
-        self.world
-            .resource::<verryte_terminal::vfx::VfxSystem>()
-            .expect("VfxSystem resource must be registered")
-    }
-
-    pub fn vfx_mut(&mut self) -> &mut verryte_terminal::vfx::VfxSystem {
-        self.world
-            .resource_mut::<verryte_terminal::vfx::VfxSystem>()
-            .expect("VfxSystem resource must be registered")
-    }
-
-    pub fn log(&mut self, msg: impl Into<String>) {
-        if let Some(log) = self.world.resource_mut::<MessageLog>() {
-            log.push(msg);
-        }
-    }
-
-    pub fn get_class_name(class: CharacterClass) -> &'static str {
-        match class {
-            CharacterClass::Warrior => "Kael",
-            CharacterClass::Mage => "Lyra",
-            CharacterClass::Healer => "Mira",
-            CharacterClass::Boss => "Blight Sovereign",
-            CharacterClass::ShadowStalker => "Shadow Stalker",
-            CharacterClass::CorruptedSpore => "Corrupted Spore",
-            CharacterClass::CursedSentinel => "Cursed Sentinel",
-            CharacterClass::PlagueWraith => "Plague Wraith",
-            CharacterClass::GlacialGolem => "Glacial Golem",
-            CharacterClass::EnemyCleric => "Dark Cleric",
-        }
-    }
-
-    pub fn get_entity_at(&self, pos: Position) -> Option<(Entity, Team, Stats, CharacterClass)> {
-        for (e, p, team) in self.world.query2::<Position, Team>() {
-            if *p == pos {
-                let stats = self.world.get::<Stats>(e)?.clone();
-                let class = *self.world.get::<CharacterClass>(e)?;
-                return Some((e, *team, stats, class));
-            }
-        }
-        None
-    }
-
-    pub fn is_occupied_except(&self, pos: Position, except: Entity) -> bool {
-        for (e, p) in self.world.query::<Position>() {
-            if e != except && *p == pos && self.world.get::<Team>(e).is_some() {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn get_tile_dimensions(&self) -> (u16, u16) {
-        let (term_w, term_h) = verryte_tty::terminal_size();
-        let tier = verryte_terminal::ResolutionTier::from_size(term_w, term_h);
-        tier.tile_dimensions()
-    }
-
-    pub fn get_tile_center_pixels(&self, pos: Position) -> (f32, f32) {
-        let (tile_w, tile_h) = self.get_tile_dimensions();
-        let cx = pos.x as f32 * tile_w as f32 + (tile_w as f32 / 2.0);
-        let cy = pos.y as f32 * tile_h as f32 + (tile_h as f32 / 2.0);
-        (cx, cy)
-    }
-
-    pub fn play_spatial_sfx(&mut self, name: &str, emitter_pos: Position) {
-        let listener = self
-            .world
-            .resource::<GameState>()
-            .map(|s| s.cursor)
-            .unwrap_or(Position::new(12, 8));
-        let dx = (emitter_pos.x - listener.x) as f32;
-        let dy = (emitter_pos.y - listener.y) as f32;
-        let dist = (dx * dx + dy * dy).sqrt();
-        let max_range = 15.0_f32;
-        let volume = (1.0 - (dist / max_range)).clamp(0.0, 1.0);
-        let pan = if max_range > 0.0 {
-            (dx / max_range).clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
-        if let Some(events) = self
-            .world
-            .resource_mut::<Events<verryte_core::AudioEvent>>()
-        {
-            events.send(
-                verryte_core::AudioEvent::play(name)
-                    .with_volume(volume)
-                    .with_pan(pan),
-            );
         }
     }
 
@@ -778,15 +399,24 @@ impl Game {
             Color(255, 50, 50) // Red
         };
 
+        // Improved floating text with horizontal velocity and easing
+        let rng = self.world.resource_mut::<Rng>().unwrap();
+        let vx = if is_player { 
+            2.0 + rng.next_f64() as f32 * 2.0 
+        } else { 
+            -2.0 - rng.next_f64() as f32 * 2.0 
+        };
+        
         self.vfx_mut()
             .floating_texts
-            .push(verryte_terminal::vfx::FloatingText::new(
+            .push(verryte_terminal::vfx::FloatingText::new_eased(
                 tcx,
-                tcy - 2.0,
+                tcy - 1.5,
                 &float_text,
                 float_color,
                 is_crit,
-            ));
+                verryte_terminal::vfx::EasingMode::QuadOut,
+            ).with_velocity(vx, -4.0));
 
         if is_player && new_combo > 0 {
             self.vfx_mut()
@@ -800,6 +430,7 @@ impl Game {
                 ));
         }
 
+        // Hit effects: Slash + Sparks
         self.vfx_mut()
             .particles
             .extend(verryte_terminal::vfx::emit_slash(
@@ -807,6 +438,25 @@ impl Game {
                 tcy,
                 if is_crit { 2.0 } else { 1.0 },
             ));
+        
+        // Add hit sparks
+        let spark_color = if is_crit { Color(255, 255, 200) } else { Color(255, 200, 50) };
+        self.vfx_mut()
+            .particles
+            .extend(verryte_terminal::vfx::emit_burst(
+                tcx,
+                tcy,
+                if is_crit { 15 } else { 8 },
+                spark_color,
+                &['·', '*', '+', '°'],
+            ));
+
+        // Extra shatter effect for crits
+        if is_crit {
+             self.vfx_mut()
+                .particles
+                .extend(verryte_terminal::vfx::emit_shatter(tcx, tcy, 10));
+        }
 
         let shake_intensity = if is_crit { 3.5 } else { 1.5 };
         let shake_duration = if is_crit { 0.4 } else { 0.25 };
@@ -816,6 +466,20 @@ impl Game {
                 shake_intensity,
                 shake_duration,
             ));
+        
+        // Regional flash on hit
+        let flash_color = if is_crit { Color(255, 255, 255) } else { Color(255, 200, 100) };
+        let (tw, th) = self.get_tile_dimensions();
+        self.vfx_mut().trigger_flash_region(
+            flash_color,
+            0.1,
+            verryte_terminal::Rect::new(
+                (tcx as u16).saturating_sub(tw),
+                (tcy as u16).saturating_sub(th),
+                tw * 2,
+                th * 2,
+            ),
+        );
 
         // Play combat sound
         if let Some(events) = self
@@ -1187,7 +851,9 @@ impl Game {
             state.cursor = next_pos;
         }
         let (cx, cy) = self.get_tile_center_pixels(next_pos);
-        self.camera.look_at(cx, cy);
+        if self.camera_locked {
+            self.camera.look_at(cx, cy);
+        }
 
         if let Some(class) = self.world.get::<CharacterClass>(next_entity) {
             let name = Self::get_class_name(*class);
@@ -1326,6 +992,50 @@ impl Game {
         class: CharacterClass,
         pos: Position,
     ) {
+        if class == CharacterClass::DestructibleObject {
+            self.log("BOOM! The barrel exploded!");
+            let (cx, cy) = self.get_tile_center_pixels(pos);
+            self.vfx_mut().particles.extend(
+                verryte_terminal::vfx::emit_burst(cx, cy, 50, Color(255, 100, 20), &['*', '#', '@']),
+            );
+            self.vfx_mut()
+                .shakes
+                .push(verryte_terminal::vfx::ScreenShake::new(5.0, 0.5));
+            self.vfx_mut()
+                .flashes
+                .push(verryte_terminal::vfx::Flash::full_screen(
+                    Color(255, 200, 50),
+                    0.2,
+                ));
+            self.play_spatial_sfx("explosion", pos);
+
+            // Deal AOE damage
+            let mut affected = Vec::new();
+            for (e, p, _stats) in self.world.query2::<Position, Stats>() {
+                if e == entity { continue; }
+                let dist = (p.x - pos.x).abs() + (p.y - pos.y).abs();
+                if dist <= 2 {
+                    affected.push(e);
+                }
+            }
+
+            for e in affected {
+                let (tx, ty) = self.world.get::<Position>(e).map(|p| self.get_tile_center_pixels(*p)).unwrap_or((cx, cy));
+                let stats = self.world.get_mut::<Stats>(e).unwrap();
+                let dmg = 30;
+                stats.hp = stats.hp.saturating_sub(dmg);
+                self.vfx_mut().floating_texts.push(
+                    verryte_terminal::vfx::FloatingText::new(
+                        tx,
+                        ty - 1.0,
+                        &format!("-{}", dmg),
+                        Color(255, 50, 50),
+                        true,
+                    ),
+                );
+            }
+        }
+
         if class == CharacterClass::Boss {
             let mut phase = crate::components::BossPhase::Phase1;
             if let Some(state) = self.world.resource::<GameState>() {
@@ -1823,7 +1533,9 @@ impl Game {
         }
 
         let (cx, cy) = self.get_tile_center_pixels(active_pos);
-        self.camera.look_at(cx, cy);
+        if self.camera_locked {
+            self.camera.look_at(cx, cy);
+        }
     }
 
     pub fn execute_combo_skill(
@@ -2765,10 +2477,6 @@ impl Game {
         }
     }
 
-    pub fn outcome(&self) -> Outcome {
-        self.world.resource::<GameState>().unwrap().outcome
-    }
-
     pub fn check_boss_phase_transition(&mut self) {
         let mut boss_entity = None;
         let mut boss_pos = None;
@@ -3241,253 +2949,6 @@ impl Game {
         }
     }
 
-    pub fn transition_to_next_floor(&mut self) {
-        let mut floor = 1;
-        if let Some(state) = self.world.resource_mut::<GameState>() {
-            state.floor += 1;
-            floor = state.floor;
-        }
-
-        self.log(format!("Descending to Floor {}...", floor));
-        if floor == 2 {
-            self.unlock_lore("descent_into_darkness");
-        }
-
-        // 1. Clear VFX
-        self.vfx_mut().clear();
-        self.vfx_mut().trigger_shake(4.0, 0.8);
-        self.vfx_mut().trigger_flash(Color(255, 255, 255), 0.5);
-        if let Some(events) = self
-            .world
-            .resource_mut::<Events<verryte_core::AudioEvent>>()
-        {
-            events.send(verryte_core::AudioEvent::play("cleanse"));
-        }
-
-        // 2. Despawn all old enemies and EchoItems
-        let mut to_despawn = Vec::new();
-        for (e, team) in self.world.query::<Team>() {
-            if *team == Team::Enemy {
-                to_despawn.push(e);
-            }
-        }
-        for (e, _) in self.world.query::<crate::components::EchoItem>() {
-            to_despawn.push(e);
-        }
-        for e in to_despawn {
-            self.world.despawn(e);
-        }
-
-        // 3. Generate a new map! (using BSP algorithm)
-        let width = 24;
-        let height = 16;
-        let mut map = TacticalMap::new(width, height);
-        // Generate BSP dungeon
-        let seed = 100 + floor as u64;
-        let room_centers = map
-            .tiles
-            .generate_bsp_dungeon(Tile::Wall, Tile::Grass, 4, seed);
-
-        // Ensure map boundaries are set
-        map.width = width;
-        map.height = height;
-
-        self.world.insert_resource(map);
-
-        // Place Ice terrain patches near GlacialGolem spawn rooms
-        {
-            let map = self.world.resource_mut::<TacticalMap>().unwrap();
-            for (i, &rc) in room_centers.iter().enumerate().skip(1) {
-                if i < room_centers.len() - 1 && i % 3 == 2 {
-                    for dx in -1i16..=1 {
-                        for dy in -1i16..=1 {
-                            let x = rc.x + dx;
-                            let y = rc.y + dy;
-                            if x >= 0
-                                && x < width as i16
-                                && y >= 0
-                                && y < height as i16
-                                && map.tile(x, y) == Tile::Grass
-                            {
-                                map.tiles.set(Position::new(x, y), Tile::Ice);
-                            }
-                        }
-                    }
-                }
-            }
-            map.add_ice_patches(seed + 100, 2);
-        }
-
-        // 4. Position players in the first room center
-        let player_spawn = room_centers.first().copied().unwrap_or(Position::new(4, 4));
-        let mut player_entities = Vec::new();
-        for (e, team) in self.world.query::<Team>() {
-            if *team == Team::Player {
-                player_entities.push(e);
-            }
-        }
-        for (i, p_ent) in player_entities.iter().enumerate() {
-            let dx = (i % 2) as i16;
-            let dy = (i / 2) as i16;
-            if let Some(pos) = self.world.get_mut::<Position>(*p_ent) {
-                *pos = Position::new(player_spawn.x + dx, player_spawn.y + dy);
-            }
-            if let Some(stats) = self.world.get_mut::<Stats>(*p_ent) {
-                stats.ap = stats.max_ap;
-            }
-        }
-
-        // 5. Spawn enemies in other rooms (scaled by floor)
-        for (i, &room_center) in room_centers.iter().enumerate().skip(1) {
-            if i == room_centers.len() - 1 {
-                self.world.spawn_character_scaled(
-                    room_center,
-                    Team::Enemy,
-                    CharacterClass::Boss,
-                    floor,
-                );
-                if let Some(boss_ent) = self
-                    .world
-                    .query2::<CharacterClass, Team>()
-                    .into_iter()
-                    .find(|(_, class, team)| {
-                        **class == CharacterClass::Boss && **team == Team::Enemy
-                    })
-                    .map(|(e, _, _)| e)
-                {
-                    let shield_amount = 150 + (floor as i32 - 1) * 50;
-                    self.world.insert(
-                        boss_ent,
-                        crate::components::ElementalShield {
-                            shield_type: crate::components::ShieldType::Ice,
-                            amount: shield_amount,
-                            max_amount: shield_amount,
-                        },
-                    );
-                }
-            } else {
-                // Floor 3+: add elite enemy variants with higher frequency
-                let class = if floor >= 3 && i % 7 == 0 {
-                    CharacterClass::GlacialGolem
-                } else {
-                    match i % 5 {
-                        0 => CharacterClass::ShadowStalker,
-                        1 => CharacterClass::CorruptedSpore,
-                        2 => CharacterClass::GlacialGolem,
-                        3 => CharacterClass::EnemyCleric,
-                        _ => CharacterClass::CursedSentinel,
-                    }
-                };
-                self.world
-                    .spawn_character_scaled(room_center, Team::Enemy, class, floor);
-            }
-        }
-
-        // 5b. Guarantee at least one GlacialGolem near Ice terrain
-        let has_golem = self
-            .world
-            .query2::<CharacterClass, Team>()
-            .iter()
-            .any(|(_, c, t)| **c == CharacterClass::GlacialGolem && **t == Team::Enemy);
-        if !has_golem {
-            let map = self.world.resource::<TacticalMap>().unwrap();
-            let mut ice_adjacent = None;
-            for y in 1..(height as i16 - 1) {
-                for x in 1..(width as i16 - 1) {
-                    if map.tile(x, y) == Tile::Ice {
-                        for (dx, dy) in &[(0i16, -1i16), (0, 1), (-1, 0), (1, 0)] {
-                            let nx = x + dx;
-                            let ny = y + dy;
-                            if map.tile(nx, ny) == Tile::Grass {
-                                ice_adjacent = Some(Position::new(nx, ny));
-                                break;
-                            }
-                        }
-                    }
-                    if ice_adjacent.is_some() {
-                        break;
-                    }
-                }
-                if ice_adjacent.is_some() {
-                    break;
-                }
-            }
-            if let Some(pos) = ice_adjacent {
-                self.world.spawn_character_scaled(
-                    pos,
-                    Team::Enemy,
-                    CharacterClass::GlacialGolem,
-                    floor,
-                );
-            }
-        }
-
-        // 6. Reset GameState parameters for next floor
-        if let Some(state) = self.world.resource_mut::<GameState>() {
-            state.cursor = player_spawn;
-            state.selected_entity = None;
-            state.boss_phase = crate::components::BossPhase::Phase1;
-            state.turn = 1;
-        }
-
-        // 7. Grant bonus items on deeper floors
-        if floor > 1 {
-            let bonus_items: Vec<(&str, crate::components::ItemEffect)> = if floor >= 4 {
-                vec![
-                    ("Mega Potion", crate::components::ItemEffect::Heal(60)),
-                    (
-                        "Elixir of the Gods",
-                        crate::components::ItemEffect::Heal(100),
-                    ),
-                ]
-            } else if floor >= 3 {
-                vec![("Greater Potion", crate::components::ItemEffect::Heal(45))]
-            } else {
-                vec![("Healing Potion", crate::components::ItemEffect::Heal(30))]
-            };
-
-            let first_player: Option<Entity> = self
-                .world
-                .query::<Team>()
-                .iter()
-                .find(|(_, t)| **t == Team::Player)
-                .map(|(e, _)| *e);
-
-            if let Some(p_ent) = first_player {
-                let mut item_entities = Vec::new();
-                for (name, effect) in &bonus_items {
-                    let item = self.world.spawn_item(name, effect.clone());
-                    item_entities.push(item);
-                }
-                if let Some(inv) = self.world.get_mut::<crate::components::Inventory>(p_ent) {
-                    for item_ent in item_entities {
-                        inv.items.push(item_ent);
-                    }
-                }
-            }
-
-            if !bonus_items.is_empty() {
-                self.log(format!(
-                    "[fg:32CD32]Found {} bonus item(s) for Floor {}![/fg]",
-                    bonus_items.len(),
-                    floor
-                ));
-            }
-        }
-
-        self.world
-            .insert_resource(verryte_map::VisibilityMap::new(width, height));
-        let (cx, cy) = self.get_tile_center_pixels(player_spawn);
-        self.camera.look_at(cx, cy);
-
-        crate::systems::select_floor_modifiers(&mut self.world);
-
-        self.log(format!(
-            "Welcome to Floor {}! Enemies grow stronger the deeper you go.",
-            floor
-        ));
-    }
-
     pub fn apply_action(
         &mut self,
         action: Action,
@@ -3592,6 +3053,10 @@ impl Game {
                 | Action::StepReplay
                 | Action::TogglePerf
                 | Action::ToggleMinimap
+                | Action::ToggleCameraLock
+                | Action::PanCamera(_)
+                | Action::ZoomIn
+                | Action::ZoomOut
                 | Action::ChangeWeather(_)
                 | Action::ViewPrestige
         );
@@ -3801,7 +3266,6 @@ impl Game {
         }
     }
 
-    /// Derive an `ActionOutcome` summary from the before/after state delta.
     fn compute_outcome(
         &self,
         action: Action,
@@ -3974,11 +3438,19 @@ impl Game {
                         .world
                         .get::<CharacterClass>(*entity)
                         .map(|c| Game::get_class_name(*c).to_string())
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| "Unknown".to_string());
                     return ActionOutcome::Moved {
                         entity: entity_name,
                         to: *to,
                     };
+                }
+                if let GameEvent::Defeated { entity } = event {
+                    let name = self
+                        .world
+                        .get::<CharacterClass>(*entity)
+                        .map(|c| Game::get_class_name(*c).to_string())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    return ActionOutcome::Defeated { entity: name };
                 }
                 if let GameEvent::ElementalApplied { entity, status } = event {
                     let target_name = self
@@ -4009,6 +3481,10 @@ impl Game {
                 | Action::ToggleInventory
                 | Action::TogglePerf
                 | Action::ToggleMinimap
+                | Action::ToggleCameraLock
+                | Action::PanCamera(_)
+                | Action::ZoomIn
+                | Action::ZoomOut
                 | Action::ToggleHelp
                 | Action::AutoBattle
                 | Action::ToggleBestiary
@@ -4017,14 +3493,6 @@ impl Game {
             return ActionOutcome::StateUpdated;
         }
         ActionOutcome::NoOp
-    }
-
-    pub fn run_pending_reports(&mut self) -> Vec<crate::snapshot::StepReport> {
-        let mut reports = Vec::new();
-        while let Some(action) = self.router.pop_action() {
-            reports.push(self.apply_action(action.action, action.source));
-        }
-        reports
     }
 
     fn apply_action_internal(&mut self, action: Action) {
@@ -4228,7 +3696,9 @@ impl Game {
                 state.cursor.y = state.cursor.y.clamp(0, height as i16 - 1);
                 let target_pos = state.cursor;
                 let (cx, cy) = self.get_tile_center_pixels(target_pos);
-                self.camera.look_at(cx, cy);
+                if self.camera_locked {
+                    self.camera.look_at(cx, cy);
+                }
             }
             Action::Confirm => {
                 let state_clone = self.world.resource::<GameState>().unwrap().clone();
@@ -4919,7 +4389,9 @@ impl Game {
                     state.selected_entity = Some(ent);
                     state.cursor = pos;
                     let (cx, cy) = self.get_tile_center_pixels(pos);
-                    self.camera.look_at(cx, cy);
+                    if self.camera_locked {
+                        self.camera.look_at(cx, cy);
+                    }
                     let class = *self.world.get::<CharacterClass>(ent).unwrap();
                     self.log(format!(
                         "Selected character: {}.",
@@ -5268,7 +4740,9 @@ impl Game {
                     let state = self.world.resource_mut::<GameState>().unwrap();
                     state.cursor = point;
                     let (cx, cy) = self.get_tile_center_pixels(point);
-                    self.camera.look_at(cx, cy);
+                    if self.camera_locked {
+                        self.camera.look_at(cx, cy);
+                    }
                 }
             }
             Action::ClearCursor => {
@@ -5280,7 +4754,7 @@ impl Game {
                 self.world.resource_mut::<GameState>().unwrap().outcome = Outcome::Quit;
             }
             Action::Save => {
-                let base_path = saves_dir();
+                let base_path = super::saves_dir();
                 let _ = std::fs::create_dir_all(base_path);
 
                 if let Ok(state) = self.save_state() {
@@ -5312,7 +4786,7 @@ impl Game {
                 }
             }
             Action::Load => {
-                let base_path = saves_dir();
+                let base_path = super::saves_dir();
                 let path = format!("{}/quicksave.json", base_path);
                 if let Ok(state_str) = std::fs::read_to_string(&path) {
                     if self.load_state(&state_str).is_ok() {
@@ -5353,6 +4827,52 @@ impl Game {
                     enabled: show,
                 };
             }
+            Action::ToggleCameraLock => {
+                self.camera_locked = !self.camera_locked;
+                if self.camera_locked {
+                    self.log("Camera locked to active character.");
+                } else {
+                    self.log("Camera unlocked (free-pan mode).");
+                }
+                self.last_outcome = ActionOutcome::ToggleChanged {
+                    name: "camera_lock".to_string(),
+                    enabled: self.camera_locked,
+                };
+            }
+            Action::PanCamera(dir) => {
+                self.camera_locked = false; // Auto-unlock on pan
+                match dir {
+                    Direction::North => self.camera.target_y -= 1.0,
+                    Direction::South => self.camera.target_y += 1.0,
+                    Direction::East => self.camera.target_x += 1.0,
+                    Direction::West => self.camera.target_x -= 1.0,
+                }
+                self.last_outcome = ActionOutcome::StateUpdated;
+            }
+            Action::ZoomIn => {
+                let cursor = self.world.resource::<GameState>().unwrap().cursor;
+                let (cx, cy) = self.get_tile_center_pixels(cursor);
+                let (term_w, term_h) = verryte_tty::terminal_size();
+                let hud_h = 6;
+                let board_h = term_h.saturating_sub(hud_h);
+
+                let next_zoom = (self.camera.target_zoom + 0.2).min(4.0);
+                self.camera
+                    .zoom_at_world(cx, cy, next_zoom, term_w, board_h);
+                self.last_outcome = ActionOutcome::StateUpdated;
+            }
+            Action::ZoomOut => {
+                let cursor = self.world.resource::<GameState>().unwrap().cursor;
+                let (cx, cy) = self.get_tile_center_pixels(cursor);
+                let (term_w, term_h) = verryte_tty::terminal_size();
+                let hud_h = 6;
+                let board_h = term_h.saturating_sub(hud_h);
+
+                let next_zoom = (self.camera.target_zoom - 0.2).max(0.2);
+                self.camera
+                    .zoom_at_world(cx, cy, next_zoom, term_w, board_h);
+                self.last_outcome = ActionOutcome::StateUpdated;
+            }
             Action::AutoBattle => {
                 let current = self.world.resource::<GameState>().unwrap().auto_battle;
                 self.world.resource_mut::<GameState>().unwrap().auto_battle = !current;
@@ -5379,7 +4899,7 @@ impl Game {
                     self.router.stop_recording();
                     self.world.resource_mut::<GameState>().unwrap().is_recording = false;
                     self.log("Action recording STOPPED.");
-                    let base_path = saves_dir();
+                    let base_path = super::saves_dir();
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -5409,7 +4929,7 @@ impl Game {
                     {
                         history.clear();
                     }
-                    let base_path = saves_dir();
+                    let base_path = super::saves_dir();
                     let path = format!("{}/last_recording.json", base_path);
                     self.router.start_recording(path);
                     self.world.resource_mut::<GameState>().unwrap().is_recording = true;
@@ -5434,7 +4954,7 @@ impl Game {
                         (false, actions, errors, "Replay mode DISABLED.".to_string())
                     } else {
                         // Try to load last_recording.json
-                        let base_path = saves_dir();
+                        let base_path = super::saves_dir();
                         let path = format!("{}/last_recording.json", base_path);
                         if let Ok(history) =
                             verryte_input::ActionHistory::<Action>::load_from_file(&path)
@@ -6078,7 +5598,7 @@ impl Game {
             }
         }
         if replay_step {
-            self.apply_action(Action::StepReplay, ActionSource::Agent);
+            self.apply_action(Action::StepReplay, verryte_input::ActionSource::Agent);
         }
 
         // Auto-battle logic
@@ -6107,7 +5627,7 @@ impl Game {
 
         if player_entities.is_empty() {
             // No more actions possible, end turn
-            self.apply_action(Action::EndTurn, ActionSource::Agent);
+            self.apply_action(Action::EndTurn, verryte_input::ActionSource::Agent);
             return;
         }
 
@@ -6146,7 +5666,7 @@ impl Game {
             let state = self.world.resource_mut::<GameState>().unwrap();
             state.selected_entity = Some(entity);
             state.cursor = e_pos;
-            self.apply_action(Action::Confirm, ActionSource::Agent);
+            self.apply_action(Action::Confirm, verryte_input::ActionSource::Agent);
         } else {
             // Move towards nearest enemy
             let mut nearest_enemy: Option<Position> = None;
@@ -6173,13 +5693,13 @@ impl Game {
                         let state = self.world.resource_mut::<GameState>().unwrap();
                         state.selected_entity = Some(entity);
                         state.cursor = next_step;
-                        self.apply_action(Action::Confirm, ActionSource::Agent);
+                        self.apply_action(Action::Confirm, verryte_input::ActionSource::Agent);
                         return;
                     }
                 }
             }
             // If no path or stuck, just wait
-            self.apply_action(Action::Wait, ActionSource::Agent);
+            self.apply_action(Action::Wait, verryte_input::ActionSource::Agent);
         }
     }
 
@@ -6244,7 +5764,9 @@ impl Game {
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.cursor = safe_pos;
                 let (cx, cy) = self.get_tile_center_pixels(safe_pos);
-                self.camera.look_at(cx, cy);
+                if self.camera_locked {
+                    self.camera.look_at(cx, cy);
+                }
             } else {
                 self.log("Not enough AP to step to safety!");
             }
@@ -6253,1134 +5775,15 @@ impl Game {
         }
     }
 
-    /// Render using the current terminal size.
-    pub fn render(&self) -> Grid {
-        let (term_w, term_h) = verryte_tty::terminal_size();
-        self.render_sized(term_w, term_h)
-    }
+    pub fn camera_follow_target(&mut self) {
+        if !self.camera_locked {
+            return;
+        }
 
-    /// Render into a grid of explicit `(cols, rows)` dimensions.
-    ///
-    /// This decouples rendering from having a real terminal attached,
-    /// allowing headless runners and agent tools to specify the size.
-    pub fn render_sized(&self, term_w: u16, term_h: u16) -> Grid {
-        let map = self.world.resource::<TacticalMap>().unwrap();
         let state = self.world.resource::<GameState>().unwrap();
-        let registry = self.world.resource::<VisualRegistry>().unwrap();
-        let visibility = self.world.resource::<verryte_map::VisibilityMap>().unwrap();
-        let clock = self.world.resource::<GameClock>().unwrap();
-
-        // Determine resolution tier and tile dimensions dynamically
-        let tier = verryte_terminal::ResolutionTier::from_size(term_w, term_h);
-        let (tile_w, tile_h) = tier.tile_dimensions();
-
-        // Screen layout
-        let hud_h = 6;
-        let board_h = term_h.saturating_sub(hud_h);
-        let mut screen = Grid::new(term_w, term_h);
-
-        let mut viewport = verryte_terminal::TileViewport::new(
-            verryte_terminal::Rect::new(0, 0, term_w, board_h),
-            tile_w,
-            tile_h,
-        );
-        viewport.camera = self.camera.clone();
-        viewport.camera.clamp_to_bounds(
-            0.0,
-            0.0,
-            map.width as f32 * tile_w as f32,
-            map.height as f32 * tile_h as f32,
-            viewport.rect.width,
-            viewport.rect.height,
-        );
-
-        // 1. Render Tiles (culled by visibility)
-        let (start_x, start_y, end_x, end_y) = viewport.visible_tiles(map.width, map.height);
-
-        for ty in start_y..end_y {
-            for tx in start_x..end_x {
-                let pos = Position::new(tx, ty);
-                let vis = visibility.get(pos);
-                if matches!(vis, verryte_map::Visibility::Hidden) {
-                    continue;
-                }
-
-                let tile = map.tile(tx, ty);
-                let mut color = match tile {
-                    Tile::Grass => Color(30, 80, 30),
-                    Tile::Wall => Color(60, 60, 60),
-                    Tile::Water => Color(30, 30, 100),
-                    Tile::Lava => Color(120, 20, 10),
-                    Tile::Ice => Color(100, 180, 200),
-                    Tile::Stairs => Color(160, 120, 40),
-                    Tile::Mud => Color(80, 50, 30),
-                    Tile::SpikeTrap => Color(180, 30, 30),
-                    Tile::PoisonCloud => Color(80, 30, 120),
-                    Tile::HealingSpring => Color(30, 160, 80),
-                    Tile::CrackedFloor => Color(90, 70, 50),
-                    Tile::PressurePlate => Color(140, 140, 60),
-                    Tile::ThornBush => Color(50, 100, 20),
-                };
-
-                if matches!(vis, verryte_map::Visibility::Explored) {
-                    color = verryte_terminal::vfx::blend_color(color, Color::BLACK, 0.6);
-                }
-
-                let (sx, sy) = viewport.world_to_screen(tx as f32, ty as f32);
-                let ticks = clock.elapsed_ticks();
-
-                // Draw tile background/border
-                for dy in 0..tile_h {
-                    for dx in 0..tile_w {
-                        let tx_abs = sx + dx as i32;
-                        let ty_abs = sy + dy as i32;
-
-                        if viewport.rect.contains(tx_abs as u16, ty_abs as u16) {
-                            let glyph = match tile {
-                                Tile::Water => {
-                                    let phase =
-                                        ((ticks + (tx as u64) * 3 + (ty as u64) * 7) / 10) % 3;
-                                    match phase {
-                                        0 => '~',
-                                        1 => '≈',
-                                        _ => '∽',
-                                    }
-                                }
-                                Tile::Lava => {
-                                    let phase =
-                                        ((ticks + (tx as u64) * 3 + (ty as u64) * 7) / 8) % 3;
-                                    match phase {
-                                        0 => '^',
-                                        1 => 'v',
-                                        _ => '*',
-                                    }
-                                }
-                                _ => {
-                                    let is_ice = matches!(tile, Tile::Ice);
-                                    let is_stairs = matches!(tile, Tile::Stairs);
-                                    let is_mud = matches!(tile, Tile::Mud);
-                                    if dx == 0 || dy == 0 {
-                                        if is_ice {
-                                            '-'
-                                        } else if is_stairs {
-                                            '>'
-                                        } else if is_mud {
-                                            '='
-                                        } else {
-                                            '·'
-                                        }
-                                    } else {
-                                        ' '
-                                    }
-                                }
-                            };
-                            let mut fg = match tile {
-                                Tile::Water => Color(80, 80, 180),
-                                Tile::Lava => Color(240, 100, 20),
-                                Tile::Ice => Color(200, 240, 255),
-                                Tile::Stairs => Color(255, 215, 0),
-                                Tile::Mud => Color(140, 90, 50),
-                                _ => Color(40, 40, 40),
-                            };
-                            if matches!(vis, verryte_map::Visibility::Explored) {
-                                fg = verryte_terminal::vfx::blend_color(fg, Color::BLACK, 0.6);
-                            }
-                            screen.put(
-                                tx_abs as u16,
-                                ty_abs as u16,
-                                Cell::new(glyph).with_fg(fg).with_bg(color),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Overlays (Range, Path, Telegraphs)
-        if state.targeting == crate::components::TargetingMode::None {
-            if let Some(sel_entity) = state.selected_entity {
-                let reachable = self.get_reachable_tiles(sel_entity);
-                for pos in &reachable {
-                    let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
-                    for dy in 0..tile_h {
-                        for dx in 0..tile_w {
-                            let tx = sx + dx as i32;
-                            let ty = sy + dy as i32;
-                            if viewport.rect.contains(tx as u16, ty as u16) {
-                                let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
-                                cell.bg = verryte_terminal::vfx::blend_color(
-                                    cell.bg,
-                                    Color(0, 100, 150),
-                                    0.35,
-                                );
-                            }
-                        }
-                    }
-                }
-
-                // Draw path preview
-                if reachable.contains(&state.cursor) {
-                    if let Some(path) = self.get_path_to(sel_entity, state.cursor) {
-                        for pos in path {
-                            let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
-                            for dy in 0..tile_h {
-                                for dx in 0..tile_w {
-                                    let tx = sx + dx as i32;
-                                    let ty = sy + dy as i32;
-                                    if viewport.rect.contains(tx as u16, ty as u16) {
-                                        let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
-                                        cell.bg = verryte_terminal::vfx::blend_color(
-                                            cell.bg,
-                                            Color(0, 150, 220),
-                                            0.4,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Targeting mode range
-            if let Some(sel_entity) = state.selected_entity {
-                if let (Some(caster_pos), Some(class)) = (
-                    self.world.get::<Position>(sel_entity),
-                    self.world.get::<CharacterClass>(sel_entity),
-                ) {
-                    let (_name, range, _ap, _aoe, _power) = Self::get_skill_info(
-                        *class,
-                        state.targeting,
-                    )
-                    .unwrap_or(("Unknown".to_string(), 0, 0, false, 0));
-
-                    for ty in 0..map.height {
-                        for tx in 0..map.width {
-                            let target = Position::new(tx as i16, ty as i16);
-                            let dist =
-                                (caster_pos.x - target.x).abs() + (caster_pos.y - target.y).abs();
-                            if dist <= range {
-                                let (sx, sy) = viewport.world_to_screen(tx as f32, ty as f32);
-                                for dy in 0..tile_h {
-                                    for dx in 0..tile_w {
-                                        let tx_abs = sx + dx as i32;
-                                        let ty_abs = sy + dy as i32;
-                                        if viewport.rect.contains(tx_abs as u16, ty_abs as u16) {
-                                            let cell = screen
-                                                .get_mut(tx_abs as u16, ty_abs as u16)
-                                                .unwrap();
-                                            cell.bg = verryte_terminal::vfx::blend_color(
-                                                cell.bg,
-                                                Color(50, 150, 50),
-                                                0.35,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // AoE Preview under cursor
-                    let dist = (caster_pos.x - state.cursor.x).abs()
-                        + (caster_pos.y - state.cursor.y).abs();
-                    if dist <= range {
-                        let aoe_tiles = Self::get_skill_aoe(*class, state.targeting, state.cursor);
-                        for pos in aoe_tiles {
-                            let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
-                            for dy in 0..tile_h {
-                                for dx in 0..tile_w {
-                                    let tx = sx + dx as i32;
-                                    let ty = sy + dy as i32;
-                                    if viewport.rect.contains(tx as u16, ty as u16) {
-                                        if let Some(cell) = screen.get_mut(tx as u16, ty as u16) {
-                                            cell.bg = verryte_terminal::vfx::blend_color(
-                                                cell.bg,
-                                                Color(200, 200, 50),
-                                                0.5,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Telegraph Zones
-        let telegraph_zone = self
-            .world
-            .resource::<crate::components::TelegraphZone>()
-            .unwrap();
-        for pos in &telegraph_zone.tiles {
-            let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
-            for dy in 0..tile_h {
-                for dx in 0..tile_w {
-                    let tx = sx + dx as i32;
-                    let ty = sy + dy as i32;
-                    if viewport.rect.contains(tx as u16, ty as u16) {
-                        let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
-                        cell.bg =
-                            verryte_terminal::vfx::blend_color(cell.bg, Color(150, 0, 75), 0.4);
-                    }
-                }
-            }
-        }
-
-        // 3b. Weather Danger Zones
-        crate::ui::render_weather_danger_zones(
-            &mut screen,
-            &self.world,
-            &viewport,
-            tile_w,
-            tile_h,
-            clock.elapsed_ticks(),
-        );
-
-        // 4. Cursor
-        let pulse = ((clock.elapsed_ticks() as f32 * 0.1).sin() * 0.5 + 0.5) * 0.6 + 0.2; // 0.2 to 0.8
-        let (csx, csy) = viewport.world_to_screen(state.cursor.x as f32, state.cursor.y as f32);
-        for dy in 0..tile_h {
-            for dx in 0..tile_w {
-                let tx = csx + dx as i32;
-                let ty = csy + dy as i32;
-                if viewport.rect.contains(tx as u16, ty as u16) {
-                    let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
-                    let is_border = dx == 0 || dy == 0 || dx == tile_w - 1 || dy == tile_h - 1;
-                    if is_border {
-                        cell.bg =
-                            verryte_terminal::vfx::blend_color(cell.bg, Color(255, 255, 0), pulse);
-                    } else {
-                        cell.bg = verryte_terminal::vfx::blend_color(
-                            cell.bg,
-                            Color(150, 150, 0),
-                            pulse * 0.5,
-                        );
-                    }
-                }
-            }
-        }
-
-        // 5. Render Entities
-        for (entity, pos, team, class) in self.world.query3::<Position, Team, CharacterClass>() {
-            // Check visibility
-            let vis = visibility.get(*pos);
-            if *team != Team::Player && !matches!(vis, verryte_map::Visibility::Visible) {
-                continue;
-            }
-
-            let key = match class {
-                CharacterClass::Warrior => "kael",
-                CharacterClass::Mage => "lyra",
-                CharacterClass::Healer => "mira",
-                CharacterClass::Boss => "blight-sovereign",
-                CharacterClass::ShadowStalker => "lyra",
-                CharacterClass::CorruptedSpore => "blight-sovereign",
-                CharacterClass::CursedSentinel => "kael",
-                CharacterClass::PlagueWraith => "lyra",
-                CharacterClass::GlacialGolem => "blight-sovereign",
-                CharacterClass::EnemyCleric => "mira",
-            };
-
-            if let Some(asset) = registry.get(key) {
-                let sprite_grid = asset.render(tier);
-                viewport.blit_sprite(&mut screen, pos.x as f32, pos.y as f32, sprite_grid);
-
-                // HP Bar
-                if let Some(stats) = self.world.get::<Stats>(entity) {
-                    let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
-                    let bar_w = tile_w.min(10);
-                    let hp_ratio = stats.hp as f32 / stats.max_hp as f32;
-                    let fill_w = (bar_w as f32 * hp_ratio).round() as u16;
-
-                    let bar_x = sx + (tile_w as i32 - bar_w as i32) / 2;
-                    let bar_y = sy + tile_h as i32 - 1;
-
-                    for i in 0..bar_w {
-                        let tx = viewport.rect.x as i32 + bar_x + i as i32;
-                        let ty = viewport.rect.y as i32 + bar_y;
-                        if viewport.rect.contains(tx as u16, ty as u16) {
-                            let color = if i < fill_w {
-                                Color(0, 255, 0)
-                            } else {
-                                Color(100, 0, 0)
-                            };
-                            screen.put(tx as u16, ty as u16, Cell::new('=').with_fg(color));
-                        }
-                    }
-
-                    // Render Shield Bar right above HP Bar
-                    if let Some(shield) =
-                        self.world.get::<crate::components::ElementalShield>(entity)
-                    {
-                        if shield.amount > 0 {
-                            let sh_ratio = shield.amount as f32 / shield.max_amount as f32;
-                            let sh_fill_w = (bar_w as f32 * sh_ratio).round() as u16;
-                            let sh_color = match shield.shield_type {
-                                crate::components::ShieldType::Ice => Color(100, 200, 255),
-                                crate::components::ShieldType::Lightning => Color(255, 255, 0),
-                                crate::components::ShieldType::Nature => Color(0, 255, 100),
-                                crate::components::ShieldType::Physical => Color(200, 200, 200),
-                            };
-                            let sh_y = sy + tile_h as i32 - 2;
-                            for i in 0..bar_w {
-                                let tx = viewport.rect.x as i32 + bar_x + i as i32;
-                                let ty = viewport.rect.y as i32 + sh_y;
-                                if viewport.rect.contains(tx as u16, ty as u16) {
-                                    let color = if i < sh_fill_w {
-                                        sh_color
-                                    } else {
-                                        Color(50, 50, 50)
-                                    };
-                                    screen.put(tx as u16, ty as u16, Cell::new('-').with_fg(color));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Render Echo items
-        for (_e, pos, _echo) in self.world.query2::<Position, crate::components::EchoItem>() {
-            let vis = visibility.get(*pos);
-            if matches!(vis, verryte_map::Visibility::Hidden) {
-                continue;
-            }
-            let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
-            let tx = sx + tile_w as i32 / 2;
-            let ty = sy + tile_h as i32 / 2;
-            if viewport.rect.contains(tx as u16, ty as u16) {
-                screen.put(
-                    tx as u16,
-                    ty as u16,
-                    Cell::new('Ω')
-                        .with_fg(Color(180, 50, 255))
-                        .with_bg(Color::BLACK)
-                        .with_attrs(verryte_terminal::CellAttrs::NONE.bold()),
-                );
-            }
-        }
-
-        // 6. VFX
-        self.vfx().render_world(&mut screen, &viewport);
-
-        // 7. Dialogue
-        if let Some(dialogue) = self.world.resource::<verryte_terminal::DialogueState>() {
-            if !dialogue.text.is_empty() {
-                let dialog_w = term_w.min(60);
-                let dialog_h = 8;
-                let dialog_x = (term_w - dialog_w) / 2;
-                let dialog_y = (term_h - dialog_h) / 2;
-
-                let theme = match dialogue.title.as_str() {
-                    "Blight Sovereign" => verryte_terminal::DialogueTheme::Blood,
-                    "Kael" => verryte_terminal::DialogueTheme::Frost,
-                    "Lyra" => verryte_terminal::DialogueTheme::Arcane,
-                    "Mira" => verryte_terminal::DialogueTheme::Forest,
-                    _ => verryte_terminal::DialogueTheme::Dungeon,
-                };
-                let box_widget = verryte_terminal::DialogueBox::new(verryte_terminal::Rect::new(
-                    dialog_x, dialog_y, dialog_w, dialog_h,
-                ))
-                .with_theme(theme);
-
-                box_widget.render(
-                    &mut screen,
-                    &dialogue.title,
-                    &dialogue.text,
-                    dialogue.visible_chars as usize,
-                    None,
-                    &dialogue.choices,
-                    if dialogue.choices.is_empty() {
-                        None
-                    } else {
-                        Some(dialogue.selected_choice)
-                    },
-                );
-            }
-        }
-
-        // 8. Minimap
-        if state.show_minimap {
-            crate::ui::render_minimap(&mut screen, &self.world, board_h);
-        }
-
-        // 9. HUD
-        crate::ui::render_hud(&mut screen, &self.world, term_w, term_h);
-
-        // 9. Screen Flash
-        self.vfx().render_flash(&mut screen, term_w, term_h);
-
-        // 10. Performance Overlay
-        if state.show_perf {
-            if let Some(diagnostics) = self
-                .world
-                .resource::<verryte_core::diagnostics::Diagnostics>()
-            {
-                let perf_widget = verryte_terminal::widgets::PerformanceOverlay::new(
-                    verryte_terminal::Rect::new(term_w.saturating_sub(30), 0, 30, 10),
-                );
-                perf_widget.render(&mut screen, diagnostics);
-            }
-        }
-
-        screen
-    }
-
-    pub fn save<P: AsRef<std::path::Path>>(
-        &self,
-        path: P,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let json = self.save_state()?;
-        std::fs::write(path, json)?;
-        Ok(())
-    }
-
-    pub fn load<P: AsRef<std::path::Path>>(
-        &mut self,
-        path: P,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let data = std::fs::read_to_string(path)?;
-        self.load_state(&data)?;
-        Ok(())
-    }
-
-    /// Snapshot boss phase directly (helper for the outcome derivation).
-    fn boss_phase(&self) -> crate::components::BossPhase {
-        self.world
-            .resource::<GameState>()
-            .map(|s| s.boss_phase)
-            .unwrap_or(crate::components::BossPhase::Phase1)
-    }
-
-    /// True iff the boss crossed into Phase2 during the most recent action.
-    fn boss_just_transitioned(&self) -> bool {
-        self.boss_transitioned
-    }
-
-    pub fn update_weather_ambient(&mut self, weather: crate::components::WeatherType) {
-        use crate::components::WeatherType;
-
-        // Emit ambient audio events
-        if let Some(events) = self
-            .world
-            .resource_mut::<Events<verryte_core::AudioEvent>>()
-        {
-            let (ambient_name, volume) = match weather {
-                WeatherType::Rainy => ("ambient_rain", 0.4),
-                WeatherType::LightningStorm => ("ambient_thunder", 0.5),
-                WeatherType::Sunny => ("ambient_birds", 0.3),
-                WeatherType::Snowing => ("ambient_wind", 0.35),
-            };
-            events.send(verryte_core::AudioEvent::loop_music(ambient_name).with_volume(volume));
-        }
-
-        // VFX effects
-        match weather {
-            WeatherType::Rainy => {
-                let (tw, th) = self.get_tile_dimensions();
-                let cols = 24u16;
-                let rows = 16u16;
-                let screen_w = cols * tw;
-                let screen_h = rows * th;
-                let mut rain = Vec::new();
-                for _ in 0..30 {
-                    let rx = (screen_w as f32) * 0.5;
-                    let ry = (screen_h as f32) * 0.5;
-                    rain.extend(verryte_terminal::vfx::emit_burst(
-                        rx,
-                        ry,
-                        1,
-                        Color(100, 140, 220),
-                        &['│', '┃', '¦'],
-                    ));
-                }
-                self.vfx_mut().particles.extend(rain);
-            }
-            WeatherType::LightningStorm => {
-                self.vfx_mut()
-                    .flashes
-                    .push(verryte_terminal::vfx::Flash::full_screen(
-                        Color(255, 255, 200),
-                        0.15,
-                    ));
-                self.vfx_mut()
-                    .shakes
-                    .push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.2));
-            }
-            WeatherType::Sunny => {
-                let (tw, th) = self.get_tile_dimensions();
-                let cols = 24u16;
-                let rows = 16u16;
-                let screen_w = cols * tw;
-                let screen_h = rows * th;
-                let cx = screen_w as f32 * 0.5;
-                let cy = screen_h as f32 * 0.5;
-                self.vfx_mut()
-                    .particles
-                    .extend(verryte_terminal::vfx::emit_burst(
-                        cx,
-                        cy,
-                        12,
-                        Color(255, 230, 100),
-                        &['·', '°', '∘'],
-                    ));
-            }
-            WeatherType::Snowing => {
-                let (tw, th) = self.get_tile_dimensions();
-                let cols = 24u16;
-                let rows = 16u16;
-                let screen_w = cols * tw;
-                let screen_h = rows * th;
-                let cx = screen_w as f32 * 0.5;
-                let cy = screen_h as f32 * 0.5;
-                self.vfx_mut()
-                    .particles
-                    .extend(verryte_terminal::vfx::emit_burst(
-                        cx,
-                        cy,
-                        20,
-                        Color(220, 230, 255),
-                        &['*', '·', '❄'],
-                    ));
-            }
-        }
-    }
-
-    pub fn snapshot(&self) -> crate::snapshot::Snapshot {
-        let state = self.world.resource::<GameState>().unwrap();
-
-        let mut player_team = crate::snapshot::TeamSummary {
-            count: 0,
-            total_hp: 0,
-            max_hp: 0,
-        };
-        let mut enemy_team = crate::snapshot::TeamSummary {
-            count: 0,
-            total_hp: 0,
-            max_hp: 0,
-        };
-
-        for (_, team, stats) in self.world.query2::<Team, Stats>() {
-            let summary = match team {
-                Team::Player => &mut player_team,
-                Team::Enemy => &mut enemy_team,
-            };
-            summary.count += 1;
-            summary.total_hp += stats.hp;
-            summary.max_hp += stats.max_hp;
-        }
-
-        let (reachable_tiles, targetable_tiles, selected_can_act) =
-            if let Some(sel) = state.selected_entity {
-                let reachable = self.get_reachable_tiles(sel);
-                let attack_range = self
-                    .world
-                    .get::<CharacterClass>(sel)
-                    .map(|c| match c {
-                        CharacterClass::Warrior => 1,
-                        CharacterClass::Mage => 3,
-                        CharacterClass::Healer => 2,
-                        _ => 1,
-                    })
-                    .unwrap_or(1);
-                let can_act = self
-                    .world
-                    .get::<Stats>(sel)
-                    .map(|s| s.ap > 0)
-                    .unwrap_or(false);
-                let mut targets: Vec<Position> = Vec::new();
-                for (_, team, pos) in self.world.query2::<Team, Position>() {
-                    if team == &Team::Enemy {
-                        let dist = (pos.x - state.cursor.x).abs() + (pos.y - state.cursor.y).abs();
-                        if dist <= attack_range {
-                            targets.push(*pos);
-                        }
-                    }
-                }
-                (reachable, targets, can_act)
-            } else {
-                (Vec::new(), Vec::new(), false)
-            };
-
-        let battle_stats = self
-            .world
-            .resource::<BattleStats>()
-            .cloned()
-            .unwrap_or_default();
-
-        crate::snapshot::Snapshot {
-            turn: state.turn,
-            phase: state.phase,
-            outcome: state.outcome,
-            cursor: state.cursor,
-            player_team,
-            enemy_team,
-            reachable_tiles,
-            targetable_tiles,
-            selected_can_act,
-            combo_count: state.combo_count,
-            battle_stats,
-            floor: state.floor,
-            weather: self
-                .world
-                .resource::<crate::components::Weather>()
-                .map(|w| w.current)
-                .unwrap_or(crate::components::WeatherType::Sunny),
-            turn_order: crate::battle_preview::BattlePreview::calculate_turn_order(
-                &self.world,
-                state.selected_entity,
-            )
-            .entries
-            .iter()
-            .map(|e| {
-                format!(
-                    "{}[{}]{}",
-                    e.name,
-                    e.spd,
-                    if e.is_current { "*" } else { "" }
-                )
-            })
-            .collect(),
-            enemy_intents: {
-                let default_map = crate::map::TacticalMap::new(24, 16);
-                let default_telegraph = crate::components::TelegraphZone::default();
-                let map_ref = self
-                    .world
-                    .resource::<crate::map::TacticalMap>()
-                    .unwrap_or(&default_map);
-                let telegraph_ref = self
-                    .world
-                    .resource::<crate::components::TelegraphZone>()
-                    .unwrap_or(&default_telegraph);
-                crate::battle_preview::BattlePreview::predict_enemy_intents(
-                    &self.world,
-                    map_ref,
-                    telegraph_ref,
-                )
-                .intents
-                .iter()
-                .map(|i| i.description.clone())
-                .collect()
-            },
-            damage_preview: state.selected_entity.and_then(|sel| {
-                let cursor = state.cursor;
-                self.get_entity_at(cursor)
-                    .and_then(|(target, team, _stats, _class)| {
-                        if team == Team::Enemy {
-                            if let (Some(atk_stats), Some(tgt_stats)) = (
-                                self.world.get::<Stats>(sel),
-                                self.world.get::<Stats>(target),
-                            ) {
-                                let mut preview =
-                                    crate::battle_preview::BattlePreview::calculate_damage_preview(
-                                        atk_stats.atk,
-                                        atk_stats.level,
-                                        tgt_stats.def,
-                                        tgt_stats.level,
-                                        1.0,
-                                        20,
-                                    );
-                                preview.can_kill = preview.max_damage >= tgt_stats.hp;
-                                Some(preview)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-            }),
-            aoe_preview: {
-                if state.targeting != crate::components::TargetingMode::None {
-                    if let Some(sel) = state.selected_entity {
-                        if let Some(class) = self.world.get::<CharacterClass>(sel) {
-                            let mut aoe =
-                                Self::get_skill_aoe(*class, state.targeting, state.cursor);
-                            let is_archmage_aoe = *class == CharacterClass::Mage
-                                && self
-                                    .world
-                                    .get::<crate::components::PrestigeProgress>(sel)
-                                    .is_some_and(|p| {
-                                        p.class == crate::components::PrestigeClass::Archmage
-                                            && p.promoted
-                                    });
-                            if is_archmage_aoe {
-                                let extra: Vec<Position> = aoe
-                                    .iter()
-                                    .flat_map(|p| p.neighbors4())
-                                    .filter(|p| !aoe.contains(p))
-                                    .collect();
-                                aoe.extend(extra);
-                            }
-                            let mut extra_aoe = 0;
-                            if let Some(skill_slot) = match state.targeting {
-                                crate::components::TargetingMode::Skill1 => {
-                                    Some(crate::components::SkillSlot::Skill1)
-                                }
-                                crate::components::TargetingMode::Skill2 => {
-                                    Some(crate::components::SkillSlot::Skill2)
-                                }
-                                crate::components::TargetingMode::Skill3 => {
-                                    Some(crate::components::SkillSlot::Skill3)
-                                }
-                                _ => None,
-                            } {
-                                if let Some(tree) =
-                                    self.world.get::<crate::components::SkillTree>(sel)
-                                {
-                                    extra_aoe = tree.total_aoe_bonus(skill_slot);
-                                }
-                            }
-                            if extra_aoe > 0 {
-                                let mut expanded = aoe.clone();
-                                for _ in 0..extra_aoe {
-                                    let neighbors: Vec<Position> = expanded
-                                        .iter()
-                                        .flat_map(|p| p.neighbors4())
-                                        .filter(|p| !expanded.contains(p))
-                                        .collect();
-                                    expanded.extend(neighbors);
-                                }
-                                aoe = expanded;
-                            }
-                            aoe
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                }
-            },
-            available_combos: self
-                .world
-                .resource::<crate::components::AvailableCombos>()
-                .map(|ac| {
-                    ac.combos
-                        .iter()
-                        .map(|(s, _)| crate::components::ComboSkillDef::for_skill(s).name)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            bestiary_discovered: self
-                .world
-                .resource::<crate::components::Bestiary>()
-                .map(|b| b.entries.iter().filter(|e| e.encountered).count() as u32)
-                .unwrap_or(0),
-            bestiary_total: self
-                .world
-                .resource::<crate::components::Bestiary>()
-                .map(|b| b.entries.len() as u32)
-                .unwrap_or(0),
-            lore_discovered: self
-                .world
-                .resource::<crate::components::LoreJournal>()
-                .map(|j| j.entries.iter().filter(|e| e.discovered).count() as u32)
-                .unwrap_or(0),
-            lore_total: self
-                .world
-                .resource::<crate::components::LoreJournal>()
-                .map(|j| j.entries.len() as u32)
-                .unwrap_or(0),
-            active_modifiers: self
-                .world
-                .resource::<crate::components::ActiveFloorModifiers>()
-                .map(|m| {
-                    m.modifiers
-                        .iter()
-                        .map(|fm| fm.display_name().to_string())
-                        .collect()
-                })
-                .unwrap_or_default(),
-            active_set_bonuses: self
-                .world
-                .query2::<Team, crate::components::EquippedItems>()
-                .into_iter()
-                .filter(|(_, t, _)| **t == Team::Player)
-                .filter_map(|(_, _, eq)| {
-                    let stats = crate::equipment::check_set_bonuses(eq);
-                    if stats.active_sets.is_empty() {
-                        None
-                    } else {
-                        Some(
-                            stats
-                                .active_sets
-                                .iter()
-                                .map(|s| s.display_name().to_string())
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        )
-                    }
-                })
-                .collect(),
-        }
-    }
-
-    pub fn take_events(&mut self) -> Vec<GameEvent> {
-        self.world
-            .resource_mut::<Events<GameEvent>>()
-            .unwrap()
-            .drain()
-            .collect()
-    }
-
-    pub fn diagnostics(&self) -> crate::snapshot::GameDiagnostics {
-        let state = self.world.resource::<GameState>().unwrap();
-        let mut alive = 0usize;
-        let mut dead = 0usize;
-        let mut characters = Vec::new();
-
-        for (e, _team, stats, class) in self.world.query3::<Team, Stats, CharacterClass>() {
-            let name = Self::get_class_name(*class).to_string();
-            let status = self
-                .world
-                .get::<crate::components::ElementalStatus>(e)
-                .map(|s| format!("{:?}", s))
-                .unwrap_or_else(|| "None".to_string());
-            let is_alive = stats.hp > 0;
-            if is_alive {
-                alive += 1;
-            } else {
-                dead += 1;
-            }
-            let prestige_str = self
-                .world
-                .get::<crate::components::PrestigeProgress>(e)
-                .map(|p| format!("{:?}", p.class))
-                .unwrap_or_default();
-            let morale_val = self
-                .world
-                .get::<crate::components::Morale>(e)
-                .map(|m| m.value)
-                .unwrap_or(70);
-            let morale_state_str = self
-                .world
-                .get::<crate::components::Morale>(e)
-                .map(|m| {
-                    crate::components::MoraleState::from_morale(m.value)
-                        .display_name()
-                        .to_string()
-                })
-                .unwrap_or_else(|| "Steady".to_string());
-            let fatigue_val = self
-                .world
-                .get::<crate::components::Fatigue>(e)
-                .map(|f| f.value)
-                .unwrap_or(0);
-            characters.push(crate::snapshot::CharacterDiag {
-                name,
-                hp: stats.hp,
-                max_hp: stats.max_hp,
-                ap: stats.ap,
-                max_ap: stats.max_ap,
-                status,
-                alive: is_alive,
-                prestige: prestige_str,
-                morale: morale_val,
-                morale_state: morale_state_str,
-                fatigue: fatigue_val,
-            });
-        }
-
-        let weather = self
-            .world
-            .resource::<crate::components::Weather>()
-            .map(|w| format!("{:?}", w.current))
-            .unwrap_or_else(|| "Sunny".to_string());
-
-        crate::snapshot::GameDiagnostics {
-            alive_entities: alive,
-            dead_entities: dead,
-            current_phase: state.phase,
-            weather,
-            floor: state.floor,
-            turn: state.turn,
-            characters,
-            combo_count: state.combo_count,
-            concert_energy: state.concert_energy,
-        }
-    }
-
-    pub fn save_state(&self) -> Result<String, serde_json::Error> {
-        let registry = crate::snapshot::create_registry();
-        let snapshot = registry.snapshot(&self.world);
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default();
-        let state = crate::snapshot::FullSaveState {
-            magic: "VERRYTE_SAVE".to_string(),
-            version: crate::snapshot::CURRENT_SAVE_VERSION,
-            timestamp,
-            world: snapshot,
-            migrations_applied: Vec::new(),
-        };
-
-        serde_json::to_string(&state)
-    }
-
-    pub fn load_state(&mut self, state_str: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let mut state: crate::snapshot::FullSaveState = serde_json::from_str(state_str)?;
-
-        if state.magic != "VERRYTE_SAVE" {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid magic signature in save state",
-            )));
-        }
-        if state.version > crate::snapshot::CURRENT_SAVE_VERSION {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "Unsupported save state version: {} (max supported: {})",
-                    state.version,
-                    crate::snapshot::CURRENT_SAVE_VERSION
-                ),
-            )));
-        }
-
-        // Apply migrations for older save versions.
-        if state.version < crate::snapshot::CURRENT_SAVE_VERSION {
-            state = Self::migrate_save_state(state)?;
-        }
-
-        let registry = crate::snapshot::create_registry();
-        registry.apply(&mut self.world, state.world)?;
-
-        // Re-insert non-snapshotted resources
-        let mut asset_registry = verryte_terminal::assets::VisualRegistry::new();
-        crate::generated_assets::register_assets(&mut asset_registry);
-        self.world.insert_resource(asset_registry);
-
-        if self.world.resource::<Events<GameEvent>>().is_none() {
-            self.world
-                .insert_resource(Events::<GameEvent>::with_capacity(16));
-        }
-        if self
-            .world
-            .resource::<Events<verryte_core::AudioEvent>>()
-            .is_none()
-        {
-            self.world
-                .insert_resource(Events::<verryte_core::AudioEvent>::new());
-        }
-        if self
-            .world
-            .resource::<crate::components::UndoStack>()
-            .is_none()
-        {
-            self.world
-                .insert_resource(crate::components::UndoStack::default());
-        }
-        if self
-            .world
-            .resource::<crate::components::RedoStack>()
-            .is_none()
-        {
-            self.world
-                .insert_resource(crate::components::RedoStack::default());
-        }
-        if self
-            .world
-            .resource::<crate::components::Weather>()
-            .is_none()
-        {
-            self.world
-                .insert_resource(crate::components::Weather::default());
-        }
-        if self
-            .world
-            .resource::<crate::components::Bestiary>()
-            .is_none()
-        {
-            self.world.insert_resource(Self::create_initial_bestiary());
-        }
-        if self
-            .world
-            .resource::<crate::components::LoreJournal>()
-            .is_none()
-        {
-            self.world
-                .insert_resource(Self::create_initial_lore_journal());
-        }
-
-        // Sync camera from resource
-        if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {
-            self.camera = camera.clone();
-        }
-
-        Ok(())
-    }
-
-    /// Apply version-by-version migrations to bring an old save up to date.
-    fn migrate_save_state(
-        mut state: crate::snapshot::FullSaveState,
-    ) -> Result<crate::snapshot::FullSaveState, Box<dyn std::error::Error>> {
-        // Migration v1 -> v2: add migrations_applied field (already handled
-        // by serde default) and stamp the migration.
-        if state.version == 1 {
-            state
-                .migrations_applied
-                .push("v1_to_v2: added migrations_applied tracking".to_string());
-            state.version = 2;
-        }
-        // Future migrations would go here:
-        // if state.version == 2 { ... state.version = 3; }
-
-        Ok(state)
-    }
-
-    pub fn handle_mouse_click(
-        &mut self,
-        term_w: u16,
-        term_h: u16,
-        mouse_x: u16,
-        mouse_y: u16,
-    ) -> bool {
-        let (shake_x, shake_y) =
-            if let Some(vfx) = self.world.resource::<verryte_terminal::vfx::VfxSystem>() {
-                vfx.shake_offset()
-            } else {
-                (0, 0)
-            };
-        let hud_h = 6;
-        let board_h = term_h.saturating_sub(hud_h);
-
-        let rx = mouse_x as i32 - shake_x as i32;
-        let ry = mouse_y as i32 - shake_y as i32;
-        if rx >= 0 && ry >= 0 && ry < board_h as i32 && rx < term_w as i32 {
-            let map = self.world.resource::<TacticalMap>().unwrap();
-            let tier = verryte_terminal::ResolutionTier::from_size(term_w, term_h);
-            let (tile_w, tile_h) = tier.tile_dimensions();
-            let mut viewport = verryte_terminal::TileViewport::new(
-                verryte_terminal::Rect::new(0, 0, term_w, board_h),
-                tile_w,
-                tile_h,
-            );
-            viewport.camera = self.camera.clone();
-            viewport.camera.clamp_to_bounds(
-                0.0,
-                0.0,
-                map.width as f32 * tile_w as f32,
-                map.height as f32 * tile_h as f32,
-                viewport.rect.width,
-                viewport.rect.height,
-            );
-            let (tx, ty) = viewport.screen_to_world(rx, ry);
-            let tx = tx.floor() as i32;
-            let ty = ty.floor() as i32;
-            if tx >= 0 && tx < map.width as i32 && ty >= 0 && ty < map.height as i32 {
-                let point = verryte_map::Point::new(tx as i16, ty as i16);
-                self.apply_action(Action::Inspect(point), ActionSource::Terminal);
-                return true;
-            }
-        }
-        false
+        let target_pos = state.cursor;
+        let (cx, cy) = self.get_tile_center_pixels(target_pos);
+        self.camera.target_x = cx;
+        self.camera.target_y = cy;
     }
 }

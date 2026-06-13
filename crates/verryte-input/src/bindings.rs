@@ -1,4 +1,28 @@
 //! Keyboard/mouse/scroll bindings and command bindings.
+//!
+//! This module provides mappings from input events or script commands to
+//! a generic game action type.
+//!
+//! # Example
+//!
+//! ```rust
+//! use verryte_input::{Bindings, Key};
+//!
+//! #[derive(Clone, PartialEq, Debug)]
+//! enum Action {
+//!     Up,
+//!     Down,
+//!     Attack,
+//! }
+//!
+//! let mut bindings = Bindings::<Action>::new();
+//! bindings.bind(Key::Up, Action::Up);
+//! bindings.bind(Key::Char('w'), Action::Up);
+//! bindings.bind(Key::Enter, Action::Attack);
+//!
+//! assert_eq!(bindings.translate(Key::Up), Some(Action::Up));
+//! assert_eq!(bindings.translate(Key::Char('x')), None);
+//! ```
 
 use std::collections::HashMap;
 

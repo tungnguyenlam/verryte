@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn test_game_init() {
         let game = Game::new();
-        assert_eq!(game.world.entity_count(), 15); // 3 players + 1 boss + 2 stalkers + 2 spores + 1 sentinel + 1 wraith + 1 cleric + 4 items
+        assert_eq!(game.world.entity_count(), 19); // 4 players + 1 boss + 2 stalkers + 2 spores + 1 sentinel + 1 wraith + 1 cleric + 4 items + 3 barrels
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -48,7 +48,7 @@ mod tests {
                 boss_count += 1;
             }
         }
-        assert_eq!(player_count, 3);
+        assert_eq!(player_count, 4);
         assert_eq!(boss_count, 1);
     }
 
@@ -89,7 +89,7 @@ mod tests {
         );
 
         // Check that all entities are restored
-        assert_eq!(game2.world.entity_count(), 15);
+        assert_eq!(game2.world.entity_count(), 19);
 
         let mut player_count = 0;
         let mut boss_count = 0;
@@ -101,7 +101,7 @@ mod tests {
                 boss_count += 1;
             }
         }
-        assert_eq!(player_count, 3);
+        assert_eq!(player_count, 4);
         assert_eq!(boss_count, 1);
     }
 
@@ -612,6 +612,17 @@ mod tests {
                 CharacterClass::PlagueWraith => {}
                 CharacterClass::GlacialGolem => {}
                 CharacterClass::EnemyCleric => {}
+                CharacterClass::VoidTerror => {}
+                CharacterClass::Rogue => {}
+                CharacterClass::Berserker => {}
+                CharacterClass::Tactician => {}
+                CharacterClass::Summoner => {}
+                CharacterClass::Assassin => {}
+                CharacterClass::EliteBerserker => {}
+                CharacterClass::EliteTactician => {}
+                CharacterClass::EliteSummoner => {}
+                CharacterClass::EliteAssassin => {}
+                CharacterClass::DestructibleObject => {}
             }
         }
         let warrior = warrior.unwrap();
@@ -1262,8 +1273,9 @@ mod tests {
         assert_eq!(snap1.turn, 1);
         assert_eq!(snap1.phase, TurnPhase::Player);
         assert_eq!(snap1.outcome, Outcome::Playing);
-        assert_eq!(snap1.player_team.count, 3);
-        assert_eq!(snap1.enemy_team.count, 8); // Boss + 2 stalkers + 2 spores + sentinel + wraith + cleric
+        assert_eq!(snap1.player_team.count, 4);
+        assert_eq!(snap1.enemy_team.count, 11); // 8 original + 3 barrels
+ // Boss + 2 stalkers + 2 spores + sentinel + wraith + cleric
 
         game.apply_action(Action::MoveNorth, ActionSource::Terminal);
         let snap2 = game.snapshot();
@@ -1450,6 +1462,7 @@ mod tests {
             match *class {
                 CharacterClass::CursedSentinel => sentinel_found = true,
                 CharacterClass::PlagueWraith => wraith_found = true,
+                CharacterClass::Rogue => {}
                 _ => {}
             }
         }
@@ -1805,14 +1818,28 @@ mod tests {
             },
         );
 
-        // Selection / centering is at (4,4)
+        let warrior_pos = *game
+            .world
+            .get::<crate::components::Position>(warrior)
+            .unwrap();
+
+        // Selection / centering is at the warrior
         {
             let state = game.world.resource_mut::<GameState>().unwrap();
-            state.cursor = Position::new(4, 4);
+            state.cursor = warrior_pos;
         }
+        // Force camera to be at the correct position for 80x24 SMALL tier
+        let tile_w = 8;
+        let tile_h = 4;
+        let cx = warrior_pos.x as f32 * tile_w as f32 + (tile_w as f32 / 2.0);
+        let cy = warrior_pos.y as f32 * tile_h as f32 + (tile_h as f32 / 2.0);
+        game.camera.center_x = cx;
+        game.camera.center_y = cy;
+        game.camera.target_x = cx;
+        game.camera.target_y = cy;
 
-        // Render the screen
-        let grid = game.render();
+        // Render the screen at a fixed size to ensure a predictable ResolutionTier
+        let grid = game.render_sized(80, 24);
 
         // Scan the grid to verify '-' character is rendered
         let mut found_shield_cell = false;
@@ -3240,6 +3267,57 @@ mod tests {
     }
 
     #[test]
+    fn test_rogue_shadow_strike() {
+        let mut game = Game::new();
+        let rogue = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Rogue)
+            .map(|(e, _)| e)
+            .unwrap();
+        let enemy = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Boss)
+            .map(|(e, _)| e)
+            .unwrap();
+        let ally = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        // Rogue at (5,5), Enemy at (5,6), Ally at (6,6) - Flanking
+        *game.world.get_mut::<Position>(rogue).unwrap() = Position::new(5, 5);
+        *game.world.get_mut::<Position>(enemy).unwrap() = Position::new(5, 6);
+        *game.world.get_mut::<Position>(ally).unwrap() = Position::new(6, 6);
+
+        // Seed RNG for determinism
+        game.world.insert_resource(verryte_core::Rng::seed(1));
+
+        let (dmg, _) = crate::systems::resolve_combat_hit(
+            &mut game.world,
+            Some(rogue),
+            enemy,
+            20,
+            "Jax",
+            "Blight Sovereign",
+            Position::new(5, 6),
+        );
+
+        // Base 20 + Shadow Strike 10 = 30
+        assert!(
+            dmg >= 30,
+            "Damage was {}, expected backstab bonus (min 30)",
+            dmg
+        );
+    }
+
+    #[test]
     fn test_focus_fire_targeting() {
         let mut game = Game::new();
 
@@ -3671,7 +3749,11 @@ mod tests {
         let diag = game.diagnostics();
 
         for ch in &diag.characters {
+            if ch.name == "Object" {
+                continue;
+            }
             assert!(ch.max_ap > 0, "{} should have max_ap > 0", ch.name);
+
             if ch.name == "Kael" {
                 assert!(ch.ap > 0, "Kael should start with AP");
             }
@@ -4783,8 +4865,8 @@ mod tests {
 
         let final_count = game.world.entity_count();
         assert_eq!(
-            final_count, 15,
-            "Entity count should remain 15 after multiple save/load cycles"
+            final_count, 19,
+            "Entity count should remain 19 after multiple save/load cycles"
         );
     }
 

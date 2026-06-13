@@ -44,3 +44,11 @@ pub use widgets::{
     Button, MenuView, MessageLogView, Panel, PerformanceOverlay, ProgressBar, Table, Tooltip,
     VerticalProgressBar,
 };
+
+/// Register built-in terminal resources for snapshotting.
+#[cfg(feature = "serde")]
+pub fn register_terminal_resources(reg: &mut verryte_core::snapshot::WorldRegistry) {
+    reg.register_resource::<Camera>("Camera");
+    // VFX system can be large and contain transient state, but the base system is serializable
+    // reg.register_resource::<VfxSystem>("VfxSystem");
+}

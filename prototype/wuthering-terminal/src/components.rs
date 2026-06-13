@@ -14,6 +14,7 @@ pub enum CharacterClass {
     Warrior, // Kael
     Mage,    // Lyra
     Healer,  // Mira
+    Rogue,   // Jax
     Boss,    // Blight Sovereign
     ShadowStalker,
     CorruptedSpore,
@@ -21,6 +22,16 @@ pub enum CharacterClass {
     PlagueWraith,
     GlacialGolem,
     EnemyCleric,
+    VoidTerror,
+    Berserker,
+    Tactician,
+    Summoner,
+    Assassin,
+    EliteBerserker,
+    EliteTactician,
+    EliteSummoner,
+    EliteAssassin,
+    DestructibleObject,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -380,6 +391,7 @@ pub enum HeroTrait {
     StormChaser,    // Lyra: Lightning reactions deal +10 damage
     PurifyingTouch, // Mira: 50% chance to cleanse negative status effects when healing a character
     IceWalker,      // Glacial Golem / custom: prevents sliding on Ice terrain
+    ShadowStrike,   // Jax: Backstabs/flanking attacks deal +5 extra damage
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -423,6 +435,10 @@ pub enum AIArchetype {
     Chaser,
     Cleric,
     Coward,
+    Berserker,
+    Tactician,
+    Summoner,
+    Assassin,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -441,6 +457,10 @@ impl AIBehavior {
             AIArchetype::Chaser => (80, 20, 40),
             AIArchetype::Cleric => (40, 60, 80),
             AIArchetype::Coward => (20, 90, 30),
+            AIArchetype::Berserker => (95, 5, 10),
+            AIArchetype::Tactician => (70, 40, 85),
+            AIArchetype::Summoner => (50, 30, 70),
+            AIArchetype::Assassin => (85, 15, 50),
         };
         Self {
             archetype,
@@ -764,6 +784,7 @@ pub enum IntentType {
     Move,
     AoEAttack,
     Buff,
+    Summon,
     Unknown,
 }
 

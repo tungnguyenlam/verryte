@@ -1,4 +1,38 @@
 //! The shared event/script funnel: [`InputRouter`] and [`BindingsGuard`].
+//!
+//! This module provides the central queue where all input (from the terminal,
+//! automated test scripts, and replay traces) converges.
+//!
+//! # Example
+//!
+//! ```rust
+//! use verryte_input::{ActionSource, Bindings, InputRouter, Key};
+//!
+//! #[derive(Clone, PartialEq, Debug)]
+//! enum Action { MoveUp }
+//!
+//! let mut bindings = Bindings::new();
+//! bindings.bind(Key::Up, Action::MoveUp);
+//!
+//! let mut router = InputRouter::new(bindings);
+//!
+//! // Terminal input
+//! router.handle(verryte_input::InputEvent::Key {
+//!     key: Key::Up,
+//!     kind: verryte_input::KeyEventKind::Press,
+//! });
+//!
+//! // Script injection
+//! router.inject_from(Action::MoveUp, ActionSource::Script);
+//!
+//! let trace = router.drain_trace();
+//! let actions = trace.steps();
+//! assert_eq!(actions.len(), 2);
+//! assert_eq!(actions[0].action, Action::MoveUp);
+//! assert_eq!(actions[0].source, ActionSource::Terminal);
+//! assert_eq!(actions[1].action, Action::MoveUp);
+//! assert_eq!(actions[1].source, ActionSource::Script);
+//! ```
 
 use std::collections::{vec_deque, VecDeque};
 

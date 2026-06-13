@@ -755,9 +755,13 @@ pub struct FloatingText {
     pub x: f32,
     pub y: f32,
     #[cfg_attr(feature = "serde", serde(default))]
+    pub start_x: f32,
+    #[cfg_attr(feature = "serde", serde(default))]
     pub start_y: f32,
     pub text: String,
     pub fg: Color,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub vx: f32,
     pub vy: f32,
     pub lifetime: f32,
     pub max_lifetime: f32,
@@ -772,15 +776,23 @@ impl FloatingText {
         Self {
             x,
             y,
+            start_x: x,
             start_y: y,
             text: text.to_string(),
             fg,
+            vx: 0.0,
             vy: -1.5,
             lifetime,
             max_lifetime: lifetime,
             bold,
             easing: EasingMode::Linear,
         }
+    }
+
+    pub fn with_velocity(mut self, vx: f32, vy: f32) -> Self {
+        self.vx = vx;
+        self.vy = vy;
+        self
     }
 
     pub fn new_eased(
@@ -795,9 +807,11 @@ impl FloatingText {
         Self {
             x,
             y,
+            start_x: x,
             start_y: y,
             text: text.to_string(),
             fg,
+            vx: 0.0,
             vy: -2.5, // Total distance is -2.5 cells
             lifetime,
             max_lifetime: lifetime,
@@ -1135,6 +1149,7 @@ impl VfxSystem {
                 EasingMode::CubicOut => crate::math::easing::cubic_out(progress),
                 EasingMode::ExpoOut => crate::math::easing::expo_out(progress),
             };
+            t.x = t.start_x + t.vx * eased_progress;
             t.y = t.start_y + t.vy * eased_progress;
         }
         self.floating_texts.retain(|t| t.alive());

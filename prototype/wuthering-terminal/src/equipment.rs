@@ -73,6 +73,32 @@ macro_rules! equip {
     };
 }
 
+pub fn shadow_dagger() -> Equipment {
+    equip!(
+        "Shadow Dagger",
+        EquipmentSlot::Weapon,
+        atk = 6,
+        def = 0,
+        hp = 0,
+        spd = 2,
+        special = Some(EquipmentSpecial::CritBoost(15)),
+        set = None
+    )
+}
+
+pub fn leather_armor() -> Equipment {
+    equip!(
+        "Leather Armor",
+        EquipmentSlot::Armor,
+        atk = 0,
+        def = 3,
+        hp = 5,
+        spd = 1,
+        special = None,
+        set = None
+    )
+}
+
 pub fn iron_sword() -> Equipment {
     equip!(
         "Iron Sword",
@@ -121,19 +147,6 @@ pub fn healing_wand() -> Equipment {
         hp = 0,
         spd = 0,
         special = Some(EquipmentSpecial::HpRegen(5)),
-        set = None
-    )
-}
-
-pub fn shadow_dagger() -> Equipment {
-    equip!(
-        "Shadow Dagger",
-        EquipmentSlot::Weapon,
-        atk = 6,
-        def = 0,
-        hp = 0,
-        spd = 0,
-        special = Some(EquipmentSpecial::CritBoost(15)),
         set = None
     )
 }
@@ -245,8 +258,10 @@ pub fn vampiric_ring() -> Equipment {
 pub fn equipment_for_class(class: CharacterClass) -> Vec<Equipment> {
     match class {
         CharacterClass::Warrior => vec![iron_sword(), chain_mail()],
+        CharacterClass::Rogue => vec![shadow_dagger(), leather_armor()],
         CharacterClass::Mage => vec![staff_of_storms(), robe_of_warding()],
         CharacterClass::Healer => vec![healing_wand(), holy_vestments()],
+        CharacterClass::DestructibleObject => vec![],
         _ => vec![],
     }
 }
@@ -259,6 +274,7 @@ pub fn set_reward_for_defeated_class(class: CharacterClass) -> Option<(Character
         CharacterClass::GlacialGolem => Some((CharacterClass::Mage, arcane_staff())),
         CharacterClass::EnemyCleric => Some((CharacterClass::Healer, divine_staff())),
         CharacterClass::Boss => Some((CharacterClass::Healer, divine_vestments())),
+        CharacterClass::DestructibleObject => None,
         _ => None,
     }
 }

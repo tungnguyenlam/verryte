@@ -15,6 +15,9 @@ pub struct Camera {
     pub target_zoom: f32,
     pub zoom_lerp: f32,
 
+    pub dead_zone_w: f32,
+    pub dead_zone_h: f32,
+
     pub shake_intensity: f32,
     pub shake_decay: f32,
     pub shake_offset_x: f32,
@@ -33,6 +36,8 @@ impl Camera {
             lerp_factor: 0.1,
             target_zoom: 1.0,
             zoom_lerp: 0.1,
+            dead_zone_w: 0.0,
+            dead_zone_h: 0.0,
             shake_intensity: 0.0,
             shake_decay: 0.9,
             shake_offset_x: 0.0,
@@ -43,6 +48,12 @@ impl Camera {
     pub fn with_smooth(mut self, factor: f32) -> Self {
         self.smooth = true;
         self.lerp_factor = factor;
+        self
+    }
+
+    pub fn with_dead_zone(mut self, w: f32, h: f32) -> Self {
+        self.dead_zone_w = w;
+        self.dead_zone_h = h;
         self
     }
 
@@ -61,14 +72,32 @@ impl Camera {
     }
 
     pub fn look_at(&mut self, x: f32, y: f32) {
-        if self.smooth {
-            self.target_x = x;
-            self.target_y = y;
+        if self.dead_zone_w > 0.0 || self.dead_zone_h > 0.0 {
+            let dx = x - self.target_x;
+            let dy = y - self.target_y;
+
+            if dx.abs() > self.dead_zone_w {
+                self.target_x += if dx > 0.0 {
+                    dx - self.dead_zone_w
+                } else {
+                    dx + self.dead_zone_w
+                };
+            }
+            if dy.abs() > self.dead_zone_h {
+                self.target_y += if dy > 0.0 {
+                    dy - self.dead_zone_h
+                } else {
+                    dy + self.dead_zone_h
+                };
+            }
         } else {
-            self.center_x = x;
-            self.center_y = y;
             self.target_x = x;
             self.target_y = y;
+        }
+
+        if !self.smooth {
+            self.center_x = self.target_x;
+            self.center_y = self.target_y;
         }
     }
 
@@ -82,6 +111,45 @@ impl Camera {
     pub fn zoom_out(&mut self, factor: f32, min_zoom: f32) {
         let next = (self.target_zoom - factor).max(min_zoom);
         self.zoom_to(next);
+    }
+
+    /// Zoom toward a specific screen point, adjusting the camera center so that
+    /// the world point under the cursor remains at the same screen position.
+    pub fn zoom_at(
+        &mut self,
+        screen_x: f32,
+        screen_y: f32,
+        new_zoom: f32,
+        width: u16,
+        height: u16,
+    ) {
+        let old_zoom = self.zoom;
+        let world_x = self.center_x + (screen_x - width as f32 / 2.0) / old_zoom;
+        let world_y = self.center_y + (screen_y - height as f32 / 2.0) / old_zoom;
+
+        self.zoom_at_world(world_x, world_y, new_zoom, width, height);
+    }
+
+    /// Zoom anchored at a specific world point, adjusting the camera center so that
+    /// this world point remains at its current screen position.
+    pub fn zoom_at_world(
+        &mut self,
+        world_x: f32,
+        world_y: f32,
+        new_zoom: f32,
+        width: u16,
+        height: u16,
+    ) {
+        let old_zoom = self.zoom;
+        let screen_x = (world_x - self.center_x) * old_zoom + width as f32 / 2.0;
+        let screen_y = (world_y - self.center_y) * old_zoom + height as f32 / 2.0;
+
+        self.zoom_to(new_zoom);
+
+        let new_center_x = world_x - (screen_x - width as f32 / 2.0) / new_zoom;
+        let new_center_y = world_y - (screen_y - height as f32 / 2.0) / new_zoom;
+
+        self.look_at(new_center_x, new_center_y);
     }
 
     /// Check if a point is within the current viewport camera's view.

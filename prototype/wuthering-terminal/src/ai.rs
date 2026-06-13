@@ -227,6 +227,14 @@ impl TacticalAI {
             AIArchetype::Chaser => Self::chaser_strategy(enemy_pos, &stats, &players, assessment),
             AIArchetype::Cleric => Self::cleric_strategy(enemy_pos, &stats, &allies, &players),
             AIArchetype::Coward => Self::coward_strategy(enemy_pos, &stats, &players, assessment),
+            AIArchetype::Berserker => {
+                Self::chaser_strategy(enemy_pos, &stats, &players, assessment)
+            }
+            AIArchetype::Tactician => {
+                Self::chaser_strategy(enemy_pos, &stats, &players, assessment)
+            }
+            AIArchetype::Summoner => Self::cleric_strategy(enemy_pos, &stats, &allies, &players),
+            AIArchetype::Assassin => Self::chaser_strategy(enemy_pos, &stats, &players, assessment),
         }
     }
 
@@ -820,5 +828,182 @@ mod tests {
 
         let coward = AIBehavior::new(AIArchetype::Coward);
         assert_eq!(coward.caution, 90);
+    }
+
+    #[test]
+    fn test_berserker_behavior_defaults() {
+        let berserker = AIBehavior::new(AIArchetype::Berserker);
+        assert_eq!(berserker.aggression, 95);
+        assert_eq!(berserker.caution, 5);
+        assert_eq!(berserker.coordination, 10);
+    }
+
+    #[test]
+    fn test_tactician_behavior_defaults() {
+        let tactician = AIBehavior::new(AIArchetype::Tactician);
+        assert_eq!(tactician.aggression, 70);
+        assert_eq!(tactician.caution, 40);
+        assert_eq!(tactician.coordination, 85);
+    }
+
+    #[test]
+    fn test_summoner_behavior_defaults() {
+        let summoner = AIBehavior::new(AIArchetype::Summoner);
+        assert_eq!(summoner.aggression, 50);
+        assert_eq!(summoner.caution, 30);
+        assert_eq!(summoner.coordination, 70);
+    }
+
+    #[test]
+    fn test_assassin_behavior_defaults() {
+        let assassin = AIBehavior::new(AIArchetype::Assassin);
+        assert_eq!(assassin.aggression, 85);
+        assert_eq!(assassin.caution, 15);
+        assert_eq!(assassin.coordination, 50);
+    }
+
+    #[test]
+    fn test_berserker_strategy_attacks() {
+        let map = make_test_map();
+        let enemy_pos = Position::new(0, 0);
+        let stats = Stats {
+            hp: 80,
+            max_hp: 80,
+            atk: 20,
+            def: 5,
+            spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+        let mut world = World::new();
+        let pe = spawn_test_entity(&mut world, Position::new(1, 0), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(1, 0), pstats)];
+
+        let threat_map = TacticalAI::calculate_threat_map(&map, &players);
+        let assessment = TacticalAssessment {
+            threat_map,
+            cover_positions: vec![],
+            flank_positions: vec![],
+            safe_positions: vec![],
+        };
+
+        let action = TacticalAI::chaser_strategy(enemy_pos, &stats, &players, &assessment);
+        match action {
+            AIAction::Attack(_) | AIAction::MoveTo(_) => {}
+            other => panic!("Expected Attack or MoveTo, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tactician_strategy_moves() {
+        let map = make_test_map();
+        let enemy_pos = Position::new(0, 0);
+        let stats = Stats {
+            hp: 80,
+            max_hp: 80,
+            atk: 20,
+            def: 5,
+            spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+        let mut world = World::new();
+        let pe = spawn_test_entity(&mut world, Position::new(3, 0), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(3, 0), pstats)];
+
+        let threat_map = TacticalAI::calculate_threat_map(&map, &players);
+        let assessment = TacticalAssessment {
+            threat_map,
+            cover_positions: vec![],
+            flank_positions: vec![],
+            safe_positions: vec![],
+        };
+
+        let action = TacticalAI::chaser_strategy(enemy_pos, &stats, &players, &assessment);
+        match action {
+            AIAction::MoveTo(pos) => {
+                let dist_before = (enemy_pos.x - 3).abs() + enemy_pos.y.abs();
+                let dist_after = (pos.x - 3).abs() + pos.y.abs();
+                assert!(dist_after <= dist_before);
+            }
+            AIAction::Attack(_) => {}
+            other => panic!("Expected MoveTo or Attack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_summoner_strategy_heals_allies() {
+        let enemy_pos = Position::new(2, 2);
+        let stats = Stats {
+            hp: 55,
+            max_hp: 55,
+            atk: 12,
+            def: 6,
+            spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 2,
+            xp: 0,
+        };
+        let mut world = World::new();
+        let ally = spawn_test_entity(&mut world, Position::new(2, 3), Team::Enemy, 100, 500, 40);
+        let ally_stats = world.get::<Stats>(ally).unwrap().clone();
+        let allies = vec![(ally, Position::new(2, 3), ally_stats)];
+        let pe = spawn_test_entity(&mut world, Position::new(5, 5), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(5, 5), pstats)];
+
+        let action = TacticalAI::cleric_strategy(enemy_pos, &stats, &allies, &players);
+        match action {
+            AIAction::HealAlly(e) => assert_eq!(e, ally),
+            AIAction::MoveTo(pos) => assert_eq!(pos, Position::new(2, 3)),
+            other => panic!("Expected HealAlly or MoveTo, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assassin_strategy_pursues() {
+        let map = make_test_map();
+        let enemy_pos = Position::new(0, 0);
+        let stats = Stats {
+            hp: 80,
+            max_hp: 80,
+            atk: 20,
+            def: 5,
+            spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        };
+        let mut world = World::new();
+        let pe = spawn_test_entity(&mut world, Position::new(3, 0), Team::Player, 100, 100, 20);
+        let pstats = world.get::<Stats>(pe).unwrap().clone();
+        let players = vec![(pe, Position::new(3, 0), pstats)];
+
+        let threat_map = TacticalAI::calculate_threat_map(&map, &players);
+        let assessment = TacticalAssessment {
+            threat_map,
+            cover_positions: vec![],
+            flank_positions: vec![],
+            safe_positions: vec![],
+        };
+
+        let action = TacticalAI::chaser_strategy(enemy_pos, &stats, &players, &assessment);
+        match action {
+            AIAction::MoveTo(pos) => {
+                let dist_before = (enemy_pos.x - 3).abs() + enemy_pos.y.abs();
+                let dist_after = (pos.x - 3).abs() + pos.y.abs();
+                assert!(dist_after <= dist_before);
+            }
+            AIAction::Attack(_) => {}
+            other => panic!("Expected MoveTo or Attack, got {:?}", other),
+        }
     }
 }

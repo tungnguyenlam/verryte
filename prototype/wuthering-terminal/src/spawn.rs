@@ -7,6 +7,7 @@ use verryte_core::{Entity, World};
 pub trait Spawner {
     fn spawn_character(&mut self, pos: Position, team: Team, class: CharacterClass) -> Entity;
     fn spawn_item(&mut self, name: &str, effect: ItemEffect) -> Entity;
+    fn spawn_barrel(&mut self, pos: Position) -> Entity;
     fn spawn_character_scaled(
         &mut self,
         pos: Position,
@@ -57,6 +58,9 @@ impl Spawner for World {
             CharacterClass::Warrior => Some(crate::components::CharacterTrait {
                 trait_type: crate::components::HeroTrait::SwiftFoot,
             }),
+            CharacterClass::Rogue => Some(crate::components::CharacterTrait {
+                trait_type: crate::components::HeroTrait::ShadowStrike,
+            }),
             CharacterClass::Mage => Some(crate::components::CharacterTrait {
                 trait_type: crate::components::HeroTrait::StormChaser,
             }),
@@ -66,6 +70,7 @@ impl Spawner for World {
             CharacterClass::GlacialGolem => Some(crate::components::CharacterTrait {
                 trait_type: crate::components::HeroTrait::IceWalker,
             }),
+            CharacterClass::DestructibleObject => None,
             _ => None,
         };
 
@@ -74,7 +79,22 @@ impl Spawner for World {
             CharacterClass::Mage => crate::components::CharacterElement::lightning(),
             CharacterClass::Healer => crate::components::CharacterElement::nature(),
             CharacterClass::GlacialGolem => crate::components::CharacterElement::ice(),
-            CharacterClass::Boss => crate::components::CharacterElement::fire(),
+            CharacterClass::Boss | CharacterClass::VoidTerror => {
+                crate::components::CharacterElement::fire()
+            }
+            CharacterClass::Berserker | CharacterClass::EliteBerserker => {
+                crate::components::CharacterElement::fire()
+            }
+            CharacterClass::Tactician | CharacterClass::EliteTactician => {
+                crate::components::CharacterElement::lightning()
+            }
+            CharacterClass::Summoner | CharacterClass::EliteSummoner => {
+                crate::components::CharacterElement::nature()
+            }
+            CharacterClass::Assassin | CharacterClass::EliteAssassin => {
+                crate::components::CharacterElement::ice()
+            }
+            CharacterClass::DestructibleObject => crate::components::CharacterElement::physical(),
             _ => crate::components::CharacterElement::physical(),
         };
 
@@ -113,6 +133,19 @@ impl Spawner for World {
                     crate::components::AIArchetype::Coward
                 }
                 CharacterClass::EnemyCleric => crate::components::AIArchetype::Cleric,
+                CharacterClass::Berserker | CharacterClass::EliteBerserker => {
+                    crate::components::AIArchetype::Berserker
+                }
+                CharacterClass::Tactician | CharacterClass::EliteTactician => {
+                    crate::components::AIArchetype::Tactician
+                }
+                CharacterClass::Summoner | CharacterClass::EliteSummoner => {
+                    crate::components::AIArchetype::Summoner
+                }
+                CharacterClass::Assassin | CharacterClass::EliteAssassin => {
+                    crate::components::AIArchetype::Assassin
+                }
+                CharacterClass::DestructibleObject => crate::components::AIArchetype::Chaser,
                 _ => crate::components::AIArchetype::Chaser,
             };
             builder = builder.with(archetype);
@@ -140,6 +173,32 @@ impl Spawner for World {
             })
             .build()
     }
+
+    fn spawn_barrel(&mut self, pos: Position) -> Entity {
+        self.builder()
+            .with(pos)
+            .with(Team::Enemy) // Targeted by players
+            .with(CharacterClass::DestructibleObject)
+            .with(Stats {
+                hp: 20,
+                max_hp: 20,
+                atk: 0,
+                def: 0,
+                spd: 0,
+                ap: 0,
+                max_ap: 0,
+                level: 1,
+                xp: 0,
+            })
+            .with(crate::components::Destructible {
+                hp: 20,
+                max_hp: 20,
+                destroyed: false,
+                replacement_tile: crate::map::Tile::Grass,
+            })
+            .with(ElementalStatus::None)
+            .build()
+    }
 }
 
 pub fn base_stats(class: CharacterClass) -> Stats {
@@ -150,6 +209,17 @@ pub fn base_stats(class: CharacterClass) -> Stats {
             atk: 20,
             def: 10,
             spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 1,
+            xp: 0,
+        },
+        CharacterClass::Rogue => Stats {
+            hp: 75,
+            max_hp: 75,
+            atk: 25,
+            def: 8,
+            spd: 8,
             ap: 3,
             max_ap: 3,
             level: 1,
@@ -252,6 +322,116 @@ pub fn base_stats(class: CharacterClass) -> Stats {
             ap: 3,
             max_ap: 3,
             level: 2,
+            xp: 0,
+        },
+        CharacterClass::VoidTerror => Stats {
+            hp: 120,
+            max_hp: 120,
+            atk: 50,
+            def: 10,
+            spd: 6,
+            ap: 3,
+            max_ap: 3,
+            level: 5,
+            xp: 0,
+        },
+        CharacterClass::Berserker => Stats {
+            hp: 90,
+            max_hp: 90,
+            atk: 40,
+            def: 3,
+            spd: 7,
+            ap: 3,
+            max_ap: 3,
+            level: 3,
+            xp: 0,
+        },
+        CharacterClass::Tactician => Stats {
+            hp: 70,
+            max_hp: 70,
+            atk: 25,
+            def: 10,
+            spd: 6,
+            ap: 3,
+            max_ap: 3,
+            level: 3,
+            xp: 0,
+        },
+        CharacterClass::Summoner => Stats {
+            hp: 60,
+            max_hp: 60,
+            atk: 15,
+            def: 8,
+            spd: 5,
+            ap: 3,
+            max_ap: 3,
+            level: 3,
+            xp: 0,
+        },
+        CharacterClass::Assassin => Stats {
+            hp: 55,
+            max_hp: 55,
+            atk: 35,
+            def: 4,
+            spd: 9,
+            ap: 4,
+            max_ap: 4,
+            level: 4,
+            xp: 0,
+        },
+        CharacterClass::EliteBerserker => Stats {
+            hp: 140,
+            max_hp: 140,
+            atk: 55,
+            def: 8,
+            spd: 8,
+            ap: 4,
+            max_ap: 4,
+            level: 6,
+            xp: 0,
+        },
+        CharacterClass::EliteTactician => Stats {
+            hp: 100,
+            max_hp: 100,
+            atk: 35,
+            def: 15,
+            spd: 7,
+            ap: 4,
+            max_ap: 4,
+            level: 6,
+            xp: 0,
+        },
+        CharacterClass::EliteSummoner => Stats {
+            hp: 85,
+            max_hp: 85,
+            atk: 20,
+            def: 12,
+            spd: 6,
+            ap: 4,
+            max_ap: 4,
+            level: 6,
+            xp: 0,
+        },
+        CharacterClass::EliteAssassin => Stats {
+            hp: 75,
+            max_hp: 75,
+            atk: 50,
+            def: 6,
+            spd: 11,
+            ap: 5,
+            max_ap: 5,
+            level: 7,
+            xp: 0,
+        },
+        CharacterClass::DestructibleObject => Stats {
+            hp: 20,
+            max_hp: 20,
+            atk: 0,
+            def: 0,
+            spd: 0,
+            ap: 0,
+            max_ap: 0,
+            level: 1,
             xp: 0,
         },
     }

@@ -244,6 +244,42 @@ impl BattlePreview {
                         });
                     }
                 }
+                AIArchetype::Berserker => {
+                    intents.push(EnemyIntent {
+                        entity: e,
+                        intent_type: IntentType::Attack,
+                        target: None,
+                        predicted_damage: stats.atk,
+                        description: format!("{}: Berserk attack", name),
+                    });
+                }
+                AIArchetype::Tactician => {
+                    intents.push(EnemyIntent {
+                        entity: e,
+                        intent_type: IntentType::Move,
+                        target: None,
+                        predicted_damage: 0,
+                        description: format!("{}: Tactical reposition", name),
+                    });
+                }
+                AIArchetype::Summoner => {
+                    intents.push(EnemyIntent {
+                        entity: e,
+                        intent_type: IntentType::Summon,
+                        target: None,
+                        predicted_damage: 0,
+                        description: format!("{}: Summon minion", name),
+                    });
+                }
+                AIArchetype::Assassin => {
+                    intents.push(EnemyIntent {
+                        entity: e,
+                        intent_type: IntentType::Attack,
+                        target: None,
+                        predicted_damage: stats.atk * 2,
+                        description: format!("{}: Assassinate", name),
+                    });
+                }
             }
         }
 
@@ -839,5 +875,238 @@ mod tests {
         let mut p2 = preview.clone();
         p2.can_kill = p2.max_damage >= 200;
         assert!(!p2.can_kill);
+    }
+
+    #[test]
+    fn test_enemy_intent_berserker() {
+        let mut world = World::new();
+        world.insert_resource(make_game_state());
+        world.insert_resource(TelegraphZone::default());
+
+        let _player = world
+            .builder()
+            .with(Position::new(5, 5))
+            .with(Team::Player)
+            .with(CharacterClass::Warrior)
+            .with(Stats {
+                hp: 100,
+                max_hp: 100,
+                atk: 20,
+                def: 10,
+                spd: 5,
+                ap: 3,
+                max_ap: 3,
+                level: 1,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .build();
+
+        let _enemy = world
+            .builder()
+            .with(Position::new(5, 6))
+            .with(Team::Enemy)
+            .with(CharacterClass::Berserker)
+            .with(Stats {
+                hp: 80,
+                max_hp: 80,
+                atk: 30,
+                def: 3,
+                spd: 8,
+                ap: 4,
+                max_ap: 4,
+                level: 1,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .with(AIArchetype::Berserker)
+            .build();
+
+        let map = TacticalMap::new(24, 16);
+        let telegraph = TelegraphZone::default();
+        let intents = BattlePreview::predict_enemy_intents(&world, &map, &telegraph);
+
+        let attack_intent = intents
+            .intents
+            .iter()
+            .find(|i| i.intent_type == IntentType::Attack);
+        assert!(
+            attack_intent.is_some(),
+            "Berserker should have an attack intent"
+        );
+    }
+
+    #[test]
+    fn test_enemy_intent_tactician() {
+        let mut world = World::new();
+        world.insert_resource(make_game_state());
+        world.insert_resource(TelegraphZone::default());
+
+        let _player = world
+            .builder()
+            .with(Position::new(5, 5))
+            .with(Team::Player)
+            .with(CharacterClass::Warrior)
+            .with(Stats {
+                hp: 100,
+                max_hp: 100,
+                atk: 20,
+                def: 10,
+                spd: 5,
+                ap: 3,
+                max_ap: 3,
+                level: 1,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .build();
+
+        let _enemy = world
+            .builder()
+            .with(Position::new(5, 6))
+            .with(Team::Enemy)
+            .with(CharacterClass::Tactician)
+            .with(Stats {
+                hp: 70,
+                max_hp: 70,
+                atk: 18,
+                def: 8,
+                spd: 6,
+                ap: 3,
+                max_ap: 3,
+                level: 2,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .with(AIArchetype::Tactician)
+            .build();
+
+        let map = TacticalMap::new(24, 16);
+        let telegraph = TelegraphZone::default();
+        let intents = BattlePreview::predict_enemy_intents(&world, &map, &telegraph);
+
+        let move_intent = intents
+            .intents
+            .iter()
+            .find(|i| i.intent_type == IntentType::Move);
+        assert!(move_intent.is_some(), "Tactician should have a move intent");
+    }
+
+    #[test]
+    fn test_enemy_intent_summoner() {
+        let mut world = World::new();
+        world.insert_resource(make_game_state());
+        world.insert_resource(TelegraphZone::default());
+
+        let _player = world
+            .builder()
+            .with(Position::new(5, 5))
+            .with(Team::Player)
+            .with(CharacterClass::Warrior)
+            .with(Stats {
+                hp: 100,
+                max_hp: 100,
+                atk: 20,
+                def: 10,
+                spd: 5,
+                ap: 3,
+                max_ap: 3,
+                level: 1,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .build();
+
+        let _enemy = world
+            .builder()
+            .with(Position::new(5, 6))
+            .with(Team::Enemy)
+            .with(CharacterClass::Summoner)
+            .with(Stats {
+                hp: 60,
+                max_hp: 60,
+                atk: 15,
+                def: 5,
+                spd: 4,
+                ap: 3,
+                max_ap: 3,
+                level: 2,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .with(AIArchetype::Summoner)
+            .build();
+
+        let map = TacticalMap::new(24, 16);
+        let telegraph = TelegraphZone::default();
+        let intents = BattlePreview::predict_enemy_intents(&world, &map, &telegraph);
+
+        let summon_intent = intents
+            .intents
+            .iter()
+            .find(|i| i.intent_type == IntentType::Summon);
+        assert!(
+            summon_intent.is_some(),
+            "Summoner should have a summon intent"
+        );
+    }
+
+    #[test]
+    fn test_enemy_intent_assassin() {
+        let mut world = World::new();
+        world.insert_resource(make_game_state());
+        world.insert_resource(TelegraphZone::default());
+
+        let _player = world
+            .builder()
+            .with(Position::new(5, 5))
+            .with(Team::Player)
+            .with(CharacterClass::Warrior)
+            .with(Stats {
+                hp: 100,
+                max_hp: 100,
+                atk: 20,
+                def: 10,
+                spd: 5,
+                ap: 3,
+                max_ap: 3,
+                level: 1,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .build();
+
+        let _enemy = world
+            .builder()
+            .with(Position::new(5, 6))
+            .with(Team::Enemy)
+            .with(CharacterClass::Assassin)
+            .with(Stats {
+                hp: 50,
+                max_hp: 50,
+                atk: 35,
+                def: 2,
+                spd: 12,
+                ap: 4,
+                max_ap: 4,
+                level: 3,
+                xp: 0,
+            })
+            .with(ElementalStatus::None)
+            .with(AIArchetype::Assassin)
+            .build();
+
+        let map = TacticalMap::new(24, 16);
+        let telegraph = TelegraphZone::default();
+        let intents = BattlePreview::predict_enemy_intents(&world, &map, &telegraph);
+
+        let attack_intent = intents
+            .intents
+            .iter()
+            .find(|i| i.intent_type == IntentType::Attack);
+        assert!(
+            attack_intent.is_some(),
+            "Assassin should have an attack intent"
+        );
     }
 }

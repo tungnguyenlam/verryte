@@ -15,6 +15,122 @@ use super::combat::{
 };
 use super::movement::{get_tile_center_pixels, is_occupied_except};
 
+pub fn auto_battle_system(world: &mut World) {
+    let (phase, outcome, auto_battle) = {
+        let state = world
+            .resource::<GameState>()
+            .expect("GameState resource must be registered");
+        (state.phase, state.outcome, state.auto_battle)
+    };
+    if phase != TurnPhase::Player || outcome != Outcome::Playing || !auto_battle {
+        return;
+    }
+
+    // A simple greedily-attacking AI for the player team
+    let mut players = Vec::new();
+    for (e, team) in world.query::<Team>() {
+        if *team == Team::Player {
+            players.push(e);
+        }
+    }
+
+    let mut all_done = true;
+    for player_entity in players {
+        let ap = world.get::<Stats>(player_entity).map(|s| s.ap).unwrap_or(0);
+        if ap > 0 {
+            all_done = false;
+
+            let pos = *world.get::<Position>(player_entity).unwrap();
+            let class = *world.get::<CharacterClass>(player_entity).unwrap();
+
+            // Find nearest enemy
+            let mut nearest_enemy: Option<(Entity, Position)> = None;
+            let mut min_dist = i32::MAX;
+            for (ee, ep, team) in world.query2::<Position, Team>() {
+                if *team == Team::Enemy {
+                    let dist = (ep.x - pos.x).abs() as i32 + (ep.y - pos.y).abs() as i32;
+                    if dist < min_dist {
+                        min_dist = dist;
+                        nearest_enemy = Some((ee, *ep));
+                    }
+                }
+            }
+
+            if let Some((_target_e, target_pos)) = nearest_enemy {
+                let range = match class {
+                    CharacterClass::Warrior => 1,
+                    CharacterClass::Mage => 3,
+                    CharacterClass::Healer => 2,
+                    CharacterClass::DestructibleObject => 0,
+                    _ => 1,
+                };
+
+                if min_dist <= range as i32 {
+                    // Attack!
+                    // In a real system, we'd inject an action.
+                    // For simplicity here, we'll use a helper that simulates the action injection.
+                    // But wait, systems run inside world.step().
+                    // We should probably just set the cursor and "confirm".
+                    let state = world.resource_mut::<GameState>().unwrap();
+                    state.selected_entity = Some(player_entity);
+                    state.cursor = target_pos;
+                    // We can't easily call apply_action from here because it's on Game, not World.
+                    // So we'll just set a flag or use a queue.
+                    // Verryte uses an Event queue for this!
+                } else {
+                    // Move closer
+                    let (target_tile, move_cost) = {
+                        let map = world.resource::<TacticalMap>().unwrap();
+                        let d_map = verryte_map::DijkstraMap::compute(
+                            map.width,
+                            map.height,
+                            &[target_pos],
+                            |pt| map.is_walkable(pt) && !is_occupied_except(world, pt, player_entity),
+                            false,
+                        );
+                        let mut best_move = None;
+                        let mut min_d = d_map.get(pos).unwrap_or(u32::MAX);
+                        for neighbor in pos.neighbors4() {
+                            if let Some(dist) = d_map.get(neighbor) {
+                                if dist < min_d {
+                                    min_d = dist;
+                                    best_move = Some(neighbor);
+                                }
+                            }
+                        }
+                        if let Some(mt) = best_move {
+                            (Some(mt), map.movement_cost(mt))
+                        } else {
+                            (None, 0)
+                        }
+                    };
+
+                    if let Some(target_tile) = target_tile {
+                        if ap >= move_cost {
+                            if let Some(p) = world.get_mut::<Position>(player_entity) {
+                                *p = target_tile;
+                            }
+                            if let Some(s) = world.get_mut::<Stats>(player_entity) {
+                                s.ap -= move_cost;
+                            }
+                            let name = Game::get_class_name(class);
+                            log(world, format!("{} (Auto) moved to ({}, {}).", name, target_tile.x, target_tile.y));
+                        } else {
+                            // Skip this player
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if all_done {
+        let state = world.resource_mut::<GameState>().unwrap();
+        state.phase = TurnPhase::Enemy;
+        log(world, "Player turn ended (Auto).");
+    }
+}
+
 fn enemy_hazard_check(world: &mut World, entity: Entity, pos: Position) {
     let tile = {
         let map = world
@@ -405,6 +521,7 @@ pub fn enemy_ai_system(world: &mut World) {
                 CharacterClass::CursedSentinel => 3,
                 CharacterClass::Boss => 2,
                 CharacterClass::EnemyCleric => 2,
+                CharacterClass::DestructibleObject => 0,
                 _ => 2,
             };
             let actual_dist =

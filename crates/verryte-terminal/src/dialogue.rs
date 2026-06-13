@@ -77,6 +77,7 @@ pub enum DialogueTheme {
     Forest,
     Blood,
     Frost,
+    Shadow,
     Dungeon,
 }
 
@@ -87,6 +88,7 @@ impl std::fmt::Display for DialogueTheme {
             Self::Forest => write!(f, "Forest"),
             Self::Blood => write!(f, "Blood"),
             Self::Frost => write!(f, "Frost"),
+            Self::Shadow => write!(f, "Shadow"),
             Self::Dungeon => write!(f, "Dungeon"),
         }
     }
@@ -100,6 +102,7 @@ impl DialogueTheme {
             Self::Forest => Color(50, 180, 80),
             Self::Blood => Color(200, 20, 20),
             Self::Frost => Color(80, 180, 240),
+            Self::Shadow => Color(80, 0, 120),
             Self::Dungeon => Color::GREY,
         }
     }
@@ -111,6 +114,7 @@ impl DialogueTheme {
             Self::Forest => Color(180, 255, 180),
             Self::Blood => Color(255, 100, 100),
             Self::Frost => Color(180, 240, 255),
+            Self::Shadow => Color(200, 100, 255),
             Self::Dungeon => Color::YELLOW,
         }
     }
@@ -122,6 +126,7 @@ impl DialogueTheme {
             Self::Forest => Color(5, 15, 10),
             Self::Blood => Color(20, 5, 5),
             Self::Frost => Color(5, 10, 20),
+            Self::Shadow => Color(10, 0, 15),
             Self::Dungeon => Color::BLACK,
         }
     }

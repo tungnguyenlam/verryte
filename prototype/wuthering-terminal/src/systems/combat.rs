@@ -69,6 +69,7 @@ pub fn resolve_combat_hit(
 ) -> (i32, bool) {
     let sfx_name = match attacker.and_then(|e| world.get::<CharacterClass>(e)) {
         Some(CharacterClass::Warrior) => "warrior_attack",
+        Some(CharacterClass::Rogue) => "rogue_attack",
         Some(CharacterClass::Mage) => "mage_attack",
         Some(CharacterClass::Healer) => "healer_attack",
         Some(CharacterClass::Boss) => "boss_attack",
@@ -76,6 +77,25 @@ pub fn resolve_combat_hit(
     };
     play_spatial_sfx(world, sfx_name, pos);
 
+    let mut backstab_bonus = 0;
+    if let Some(attacker_ent) = attacker {
+        let has_shadow_strike = world
+            .get::<crate::components::CharacterTrait>(attacker_ent)
+            .is_some_and(|t| t.trait_type == crate::components::HeroTrait::ShadowStrike);
+        if has_shadow_strike {
+            if let Some(attacker_pos) = world.get::<Position>(attacker_ent) {
+                if is_flanking_position(world, *attacker_pos, pos) {
+                    backstab_bonus = 10;
+                    log(
+                        world,
+                        "[fg:FF00FF][b]BACKSTAB![/b] Shadow Strike deals +10 extra damage![/fg]",
+                    );
+                }
+            }
+        }
+    }
+
+    let base_damage = base_damage + backstab_bonus;
     let base_damage = weather_damage_modifier(world, base_damage, attacker);
 
     let (is_crit, is_block, damage) = {
@@ -417,6 +437,7 @@ pub fn handle_defeat(
             CharacterClass::CursedSentinel => 40,
             CharacterClass::PlagueWraith => 35,
             CharacterClass::GlacialGolem => 60,
+            CharacterClass::DestructibleObject => 0,
             _ => 20,
         };
         award_xp(world, xp_amount);
@@ -942,10 +963,21 @@ pub fn is_flanking_position(world: &World, attacker_pos: Position, target_pos: P
     if dist != 1 {
         return false;
     }
+
+    let attacker_team = world
+        .query2::<Position, Team>()
+        .into_iter()
+        .find(|(_, pos, _)| **pos == attacker_pos)
+        .map(|(_, _, team)| *team);
+
+    let Some(team_to_match) = attacker_team else {
+        return false;
+    };
+
     let dx = attacker_pos.x - target_pos.x;
     let dy = attacker_pos.y - target_pos.y;
     for (_other_e, other_pos, team) in world.query2::<Position, Team>() {
-        if *team == Team::Enemy {
+        if *team == team_to_match {
             let other_dist =
                 (other_pos.x - target_pos.x).abs() + (other_pos.y - target_pos.y).abs();
             if other_dist == 1 {

@@ -4,17 +4,19 @@ use crate::grid::Grid;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResolutionTier {
+    ASCII, // 1x1 or small ASCII fallback
     #[default]
     TINY, // 6x8
-    SMALL,  // 8x12
+    SMALL, // 8x12
     MEDIUM, // 12x16
-    LARGE,  // 16x20
+    LARGE, // 16x20
     XLARGE, // 20x24
-    ULTRA,  // 28x32
+    ULTRA, // 28x32
 }
 
 impl ResolutionTier {
-    pub const ALL: [ResolutionTier; 6] = [
+    pub const ALL: [ResolutionTier; 7] = [
+        ResolutionTier::ASCII,
         ResolutionTier::TINY,
         ResolutionTier::SMALL,
         ResolutionTier::MEDIUM,
@@ -24,7 +26,11 @@ impl ResolutionTier {
     ];
 
     pub fn from_size(width: u16, height: u16) -> Self {
-        if width >= 160 && height >= 48 {
+        if width == 0 || height == 0 {
+            ResolutionTier::TINY
+        } else if width < 40 || height < 12 {
+            ResolutionTier::ASCII
+        } else if width >= 160 && height >= 48 {
             ResolutionTier::ULTRA
         } else if width >= 140 && height >= 42 {
             ResolutionTier::XLARGE
@@ -42,6 +48,7 @@ impl ResolutionTier {
     /// Recommended tile dimensions (width, height) for this resolution tier.
     pub fn tile_dimensions(&self) -> (u16, u16) {
         match self {
+            Self::ASCII => (1, 1),
             Self::TINY => (6, 3),
             Self::SMALL => (8, 4),
             Self::MEDIUM => (12, 6),
@@ -53,6 +60,7 @@ impl ResolutionTier {
 
     pub fn sprite_size(self) -> (u16, u16) {
         match self {
+            ResolutionTier::ASCII => (1, 1),
             ResolutionTier::TINY => (6, 4),
             ResolutionTier::SMALL => (8, 6),
             ResolutionTier::MEDIUM => (12, 8),
@@ -290,7 +298,7 @@ mod tests {
     fn resolution_tier_from_size_boundaries() {
         assert_eq!(ResolutionTier::from_size(80, 24), ResolutionTier::SMALL);
         assert_eq!(ResolutionTier::from_size(79, 24), ResolutionTier::TINY);
-        assert_eq!(ResolutionTier::from_size(80, 23), ResolutionTier::TINY);
+        assert_eq!(ResolutionTier::from_size(39, 12), ResolutionTier::ASCII);
         assert_eq!(ResolutionTier::from_size(100, 30), ResolutionTier::MEDIUM);
         assert_eq!(ResolutionTier::from_size(120, 36), ResolutionTier::LARGE);
         assert_eq!(ResolutionTier::from_size(140, 42), ResolutionTier::XLARGE);
@@ -301,6 +309,7 @@ mod tests {
 
     #[test]
     fn resolution_tier_tile_dimensions() {
+        assert_eq!(ResolutionTier::ASCII.tile_dimensions(), (1, 1));
         assert_eq!(ResolutionTier::TINY.tile_dimensions(), (6, 3));
         assert_eq!(ResolutionTier::SMALL.tile_dimensions(), (8, 4));
         assert_eq!(ResolutionTier::MEDIUM.tile_dimensions(), (12, 6));
@@ -311,13 +320,14 @@ mod tests {
 
     #[test]
     fn resolution_tier_sprite_size() {
+        assert_eq!(ResolutionTier::ASCII.sprite_size(), (1, 1));
         assert_eq!(ResolutionTier::TINY.sprite_size(), (6, 4));
         assert_eq!(ResolutionTier::ULTRA.sprite_size(), (28, 16));
     }
 
     #[test]
-    fn resolution_tier_all_contains_six() {
-        assert_eq!(ResolutionTier::ALL.len(), 6);
+    fn resolution_tier_all_contains_seven() {
+        assert_eq!(ResolutionTier::ALL.len(), 7);
     }
 
     #[test]

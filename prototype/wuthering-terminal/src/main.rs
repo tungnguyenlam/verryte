@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
-use verryte_input::InputEvent;
+use verryte_input::{ActionSource, InputEvent};
 use verryte_terminal::Grid;
 use verryte_tty::{init, poll_event, render, render_diff};
-use wuthering_terminal::{Game, Outcome};
+use wuthering_terminal::{action::Action, Game, Outcome};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut game = Game::new();
@@ -46,6 +46,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if game.handle_mouse_click(w, h, x, y) {
                     continue;
                 }
+            }
+            if let InputEvent::MouseScroll {
+                x: _,
+                y: _,
+                direction,
+            } = event
+            {
+                match direction {
+                    verryte_input::ScrollDirection::Up => {
+                        game.apply_action(Action::ZoomIn, ActionSource::Terminal);
+                    }
+                    verryte_input::ScrollDirection::Down => {
+                        game.apply_action(Action::ZoomOut, ActionSource::Terminal);
+                    }
+                    _ => {}
+                }
+                continue;
             }
             if game.router.handle(event) {
                 while let Some(queued) = game.router.pop_action() {

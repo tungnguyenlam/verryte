@@ -1,5 +1,6 @@
 /// Cardinal movement on a 2D grid.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Direction {
     North,
     South,

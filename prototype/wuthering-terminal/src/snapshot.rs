@@ -97,6 +97,8 @@ pub enum ActionOutcome {
         was_critical: bool,
         was_blocked: bool,
     },
+    /// An entity was defeated.
+    Defeated { entity: String },
     /// A critical hit landed.
     CritHit { damage: i32 },
     /// Damage was blocked by a shield.
@@ -251,13 +253,12 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_component::<crate::components::SkillTree>("SkillTree");
 
     // Resources
+    reg.register_core_resources();
+    verryte_terminal::register_terminal_resources(&mut reg);
+
     reg.register_resource::<GameState>("GameState");
     reg.register_resource::<TelegraphZone>("TelegraphZone");
-    reg.register_resource::<verryte_core::MessageLog>("MessageLog");
-    reg.register_resource::<verryte_core::GameClock>("GameClock");
-    reg.register_resource::<verryte_core::Rng>("Rng");
     reg.register_resource::<crate::map::TacticalMap>("TacticalMap");
-    reg.register_resource::<verryte_terminal::Camera>("Camera");
     reg.register_resource::<verryte_input::ActionHistory<Action>>("ActionHistory");
     // reg.register_resource::<verryte_terminal::vfx::VfxSystem>("VfxSystem"); // Skip if not serializable
     reg.register_resource::<crate::components::EquippedEchoes>("EquippedEchoes");

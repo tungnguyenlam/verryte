@@ -260,6 +260,26 @@ impl Grid {
         }
     }
 
+    /// Construct a grid from a multi-line ASCII string.
+    pub fn from_ascii<F>(input: &str, mut f: F) -> Self
+    where
+        F: FnMut(char, u16, u16) -> Cell,
+    {
+        if input.is_empty() {
+            return Self::new(0, 0);
+        }
+        let lines: Vec<&str> = input.split('\n').collect();
+        let height = lines.len() as u16;
+        let width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+        let mut grid = Self::new(width, height);
+        for (y, line) in lines.iter().enumerate() {
+            for (x, ch) in line.chars().enumerate() {
+                grid.put(x as u16, y as u16, f(ch, x as u16, y as u16));
+            }
+        }
+        grid
+    }
+
     pub fn width(&self) -> u16 {
         self.width
     }

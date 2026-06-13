@@ -43,10 +43,10 @@ fn last_recorded_outcome(game: &Game) -> ActionOutcome {
 // ─── 1. Game Initialization ──────────────────────────────────────────────────
 
 #[test]
-fn game_init_has_three_players() {
+fn game_init_has_four_players() {
     let game = Game::new();
     let snap = game.snapshot();
-    assert_eq!(snap.player_team.count, 3);
+    assert_eq!(snap.player_team.count, 4);
     assert_eq!(snap.turn, 1);
     assert_eq!(snap.phase, TurnPhase::Player);
     assert_eq!(snap.outcome, Outcome::Playing);

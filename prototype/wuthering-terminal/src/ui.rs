@@ -5,7 +5,7 @@ use crate::components::{
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
 use verryte_core::{MessageLog, World};
-use verryte_terminal::{Cell, CellAttrs, Color, Grid};
+use verryte_terminal::{Camera, Cell, CellAttrs, Color, Grid};
 
 pub fn get_tile_animated_cell(tile: Tile, x: u16, y: u16, ticks: u64) -> Option<Cell> {
     match tile {
@@ -218,7 +218,11 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         }
     }
 
-    let turn_label = format!("FLOOR: {} | TURN: {:02} | ", state.floor, state.turn);
+    let zoom = world.resource::<Camera>().map(|c| c.zoom).unwrap_or(1.0);
+    let turn_label = format!(
+        "FLOOR: {} | TURN: {:02} | ZOOM: {:.1}x | ",
+        state.floor, state.turn, zoom
+    );
     let phase_label = format!("PHASE: {:<12}", phase_str);
 
     let combo_label = if state.combo_count > 0 {

@@ -217,6 +217,13 @@ impl WorldRegistry {
         );
     }
 
+    /// Register built-in core resources for snapshotting.
+    pub fn register_core_resources(&mut self) {
+        self.register_resource::<crate::log::MessageLog>("MessageLog");
+        self.register_resource::<crate::clock::GameClock>("GameClock");
+        self.register_resource::<crate::rng::Rng>("Rng");
+    }
+
     /// Create a snapshot of the given world.
     pub fn snapshot(&self, world: &World) -> WorldSnapshot {
         let mut snapshot = WorldSnapshot::default();
