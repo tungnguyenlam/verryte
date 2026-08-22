@@ -1,0 +1,10 @@
+--- prototype/wuthering-terminal/README.md
++++ prototype/wuthering-terminal/README.md
+@@ -29,6 +29,7 @@
+ - **Turn-based** with action points (2 per character per turn)
+ - **Elemental reactions**: Ice+Lightning=Shatter, Lightning+Nature=Overgrowth, Nature+Ice=Bloom
+ - **Telegraphed attacks**: enemy danger zones shown on the grid before executing
++- **Assassin Teleport**: Enemies with the Assassin archetype (like VoidTerror) can use Shadow Step to teleport to flanking positions for sudden attacks.
+ - **Echo absorption**: defeated enemies drop equippable abilities (Swift, Frostbite, Thorns)
+ - **QTE team swap**: spend concert energy for instant swap with intro skill
+ - **Boss phases**: multi-phase fight with stat boosts and new attack patterns

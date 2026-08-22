@@ -302,6 +302,8 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
         Tile::CrackedFloor => "Cracked Floor",
         Tile::PressurePlate => "Pressure Plate",
         Tile::ThornBush => "Thorn Bush",
+        Tile::SteamVent => "Steam Vent",
+        Tile::ExplodingBarrel => "Exploding Barrel",
     };
 
     let hovered_str = if let Some((target_entity, target_team, target_stats, target_class)) =
@@ -487,6 +489,26 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     // Render Overlay if in SkillTree state
     if state.ui_state == crate::components::UIState::SkillTree {
         render_skill_tree(grid, world, term_w, term_h);
+    }
+
+    // Render Overlay if in CombatLog state
+    if state.ui_state == crate::components::UIState::CombatLog {
+        render_combat_log(grid, world, term_w, term_h);
+    }
+
+    // Render Overlay if in Console state
+    if state.ui_state == crate::components::UIState::Console {
+        render_console(grid, world, term_w, term_h);
+    }
+
+    // Render Overlay if in SaveLoadMenu state
+    if state.ui_state == crate::components::UIState::SaveLoadMenu {
+        render_save_load_menu(grid, world, term_w, term_h);
+    }
+
+    // Render Overlay if in InspectCharacter state
+    if state.ui_state == crate::components::UIState::InspectCharacter {
+        render_inspect_character(grid, world, term_w, term_h);
     }
 }
 
@@ -904,6 +926,8 @@ pub fn render_minimap(grid: &mut Grid, world: &World, board_h: u16) {
                 Tile::CrackedFloor => ('%', Color(120, 100, 80)),
                 Tile::PressurePlate => ('_', Color(180, 180, 50)),
                 Tile::ThornBush => ('*', Color(80, 120, 40)),
+                Tile::SteamVent => ('v', Color(200, 130, 80)),
+                Tile::ExplodingBarrel => ('o', Color(255, 128, 0)),
             };
             grid.put(
                 inner_x + tx,
@@ -1264,4 +1288,428 @@ pub fn render_bestiary(grid: &mut Grid, world: &World, term_w: u16, term_h: u16)
     } else {
         let _ = grid.write_rich(lx, ly, "[fg:888888]No lore journal data loaded[/fg]");
     }
+}
+
+pub fn render_combat_log(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
+    let state = world.resource::<GameState>().unwrap();
+    let Some(log) = world.resource::<MessageLog>() else {
+        return;
+    };
+
+    let main_rect = verryte_terminal::Rect::new(0, 0, term_w, term_h);
+    let layout = verryte_terminal::Layout::horizontal()
+        .add_percent(10)
+        .add_percent(80)
+        .add_percent(10)
+        .split(main_rect);
+
+    let sub_layout = verryte_terminal::Layout::vertical()
+        .add_percent(10)
+        .add_percent(80)
+        .add_percent(10)
+        .split(layout[1]);
+
+    let panel_rect = sub_layout[1];
+    let panel_bg = Color(15, 10, 20);
+    grid.fill_rect(panel_rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        panel_rect,
+        " COMBAT HISTORY LOG (Up/Down to scroll, Esc/G to close) ",
+        Color::YELLOW,
+        panel_bg,
+        Color::WHITE,
+    );
+
+    let messages = log.messages();
+    let max_visible = panel_rect.height.saturating_sub(4) as usize;
+    let len = messages.len();
+    let scroll = state.log_scroll_offset.min(len.saturating_sub(max_visible));
+    let end_idx = len.saturating_sub(scroll);
+    let start_idx = end_idx.saturating_sub(max_visible);
+    let visible_slice = &messages[start_idx..end_idx];
+
+    let mut y = panel_rect.y + 2;
+    for msg in visible_slice {
+        grid.write_str(panel_rect.x + 2, y, msg, Color::WHITE, panel_bg);
+        y += 1;
+    }
+}
+
+pub fn render_console(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
+    let Some(input) = world.resource::<verryte_input::TextInput>() else {
+        return;
+    };
+
+    let panel_h = 3;
+    let panel_y = term_h.saturating_sub(panel_h);
+    let panel_rect = verryte_terminal::Rect::new(
+        2,
+        panel_y.saturating_sub(1),
+        term_w.saturating_sub(4),
+        panel_h,
+    );
+    let panel_bg = Color(10, 20, 30);
+    grid.fill_rect(panel_rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        panel_rect,
+        " CHEAT CONSOLE ",
+        Color::CYAN,
+        panel_bg,
+        Color::WHITE,
+    );
+
+    grid.write_str(
+        panel_rect.x + 2,
+        panel_rect.y + 1,
+        "> ",
+        Color::YELLOW,
+        panel_bg,
+    );
+    let text = input.text();
+    grid.write_str(
+        panel_rect.x + 4,
+        panel_rect.y + 1,
+        text,
+        Color::WHITE,
+        panel_bg,
+    );
+
+    // Draw cursor
+    let cursor_pos = input.cursor();
+    let cursor_x = panel_rect.x + 4 + cursor_pos as u16;
+    if cursor_x < panel_rect.right() {
+        if let Some(cell) = grid.get_mut(cursor_x, panel_rect.y + 1) {
+            cell.bg = Color(255, 255, 255);
+            cell.fg = Color(0, 0, 0);
+        }
+    }
+}
+
+pub fn render_save_load_menu(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
+    let layout = verryte_terminal::Layout::vertical()
+        .add_percent(15)
+        .add_percent(70)
+        .add_percent(15)
+        .split(verryte_terminal::Rect::new(0, 0, term_w, term_h));
+
+    let main_rect = layout[1];
+    let sub_layout = verryte_terminal::Layout::horizontal()
+        .add_percent(25)
+        .add_percent(50)
+        .add_percent(25)
+        .split(main_rect);
+
+    let panel_rect = sub_layout[1];
+    let panel_bg = Color(20, 20, 35);
+    grid.fill_rect(panel_rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        panel_rect,
+        " SAVE / LOAD GAME ",
+        Color::CYAN,
+        panel_bg,
+        Color::WHITE,
+    );
+
+    let Some(state) = world.resource::<GameState>() else {
+        return;
+    };
+
+    let mut y = panel_rect.y + 3;
+    for slot in 0..3 {
+        let is_selected = state.selected_save_slot == slot;
+        let slot_color = if is_selected {
+            Color::YELLOW
+        } else {
+            Color::GREY
+        };
+        let prefix = if is_selected { "=> " } else { "   " };
+
+        let info = get_slot_info(slot);
+
+        let row_str = format!("{}{}", prefix, info);
+        grid.write_str(panel_rect.x + 2, y, &row_str, slot_color, panel_bg);
+        y += 2;
+    }
+
+    y = panel_rect.bottom() - 3;
+    grid.write_str(panel_rect.x + 2, y, "Controls:", Color::CYAN, panel_bg);
+    grid.write_str(
+        panel_rect.x + 2,
+        y + 1,
+        "[↑/↓] Select Slot | [F5/S] Save | [F9/Enter] Load",
+        Color::WHITE,
+        panel_bg,
+    );
+}
+
+fn get_slot_info(slot: usize) -> String {
+    let base_path = crate::game::saves_dir();
+    let filename = format!("save_slot_{}.json", slot);
+    let path = format!("{}/{}", base_path, filename);
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+            let turn = v["world"]["resources"]["GameState"]["turn"]
+                .as_u64()
+                .unwrap_or(0);
+            let floor = v["world"]["resources"]["GameState"]["floor"]
+                .as_u64()
+                .unwrap_or(0);
+            let timestamp_str = v["timestamp"].as_str().unwrap_or("unknown");
+
+            let time_desc = if let Ok(ts) = timestamp_str.parse::<u64>() {
+                let formatted_time = format_unix_timestamp(ts);
+                format!(
+                    "Slot {}: Floor {}, Turn {} ({})",
+                    slot + 1,
+                    floor,
+                    turn,
+                    formatted_time
+                )
+            } else {
+                format!("Slot {}: Floor {}, Turn {}", slot + 1, floor, turn)
+            };
+            return time_desc;
+        }
+    }
+    format!("Slot {}: <Empty Slot>", slot + 1)
+}
+
+fn format_unix_timestamp(ts: u64) -> String {
+    let hours = (ts / 3600) % 24;
+    let minutes = (ts / 60) % 60;
+    let seconds = ts % 60;
+    format!("{:02}:{:02}:{:02} UTC", hours, minutes, seconds)
+}
+
+pub fn render_inspect_character(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
+    let layout = verryte_terminal::Layout::vertical()
+        .add_percent(5)
+        .add_percent(90)
+        .add_percent(5)
+        .split(verryte_terminal::Rect::new(0, 0, term_w, term_h));
+
+    let main_rect = layout[1];
+    let sub_layout = verryte_terminal::Layout::horizontal()
+        .add_percent(15)
+        .add_percent(70)
+        .add_percent(15)
+        .split(main_rect);
+
+    let panel_rect = sub_layout[1];
+    let panel_bg = Color(15, 20, 25);
+    grid.fill_rect(panel_rect, Cell::new(' ').with_bg(panel_bg));
+    grid.draw_rounded_panel(
+        panel_rect,
+        " CHARACTER SHEET ",
+        Color::CYAN,
+        panel_bg,
+        Color::WHITE,
+    );
+
+    let Some(state) = world.resource::<GameState>() else {
+        return;
+    };
+
+    let target_ent = if let Some(sel) = state.selected_entity {
+        Some(sel)
+    } else {
+        world
+            .query2::<Team, CharacterClass>()
+            .iter()
+            .find(|(_, team, _)| **team == Team::Player)
+            .map(|(e, _, _)| *e)
+    };
+
+    let Some(ent) = target_ent else {
+        grid.write_str(
+            panel_rect.x + 4,
+            panel_rect.y + 4,
+            "No character selected.",
+            Color::YELLOW,
+            panel_bg,
+        );
+        return;
+    };
+
+    let class = world
+        .get::<CharacterClass>(ent)
+        .copied()
+        .unwrap_or(CharacterClass::Warrior);
+    let name = Game::get_class_name(class);
+
+    let stats = world.get::<Stats>(ent).cloned().unwrap_or_else(|| Stats {
+        hp: 0,
+        max_hp: 0,
+        atk: 0,
+        def: 0,
+        spd: 0,
+        ap: 0,
+        max_ap: 0,
+        level: 1,
+        xp: 0,
+    });
+
+    let header = format!("{}  --  Level {}", name, stats.level);
+    grid.write_str(
+        panel_rect.x + 4,
+        panel_rect.y + 2,
+        &header,
+        Color::CYAN,
+        panel_bg,
+    );
+
+    let mut y = panel_rect.y + 4;
+    let xp_needed = stats.level * 100;
+
+    grid.write_str(
+        panel_rect.x + 4,
+        y,
+        &format!("HP:  {}/{}", stats.hp, stats.max_hp),
+        Color::WHITE,
+        panel_bg,
+    );
+    grid.write_str(
+        panel_rect.x + 4,
+        y + 1,
+        &format!("AP:  {}/{}", stats.ap, stats.max_ap),
+        Color::WHITE,
+        panel_bg,
+    );
+    grid.write_str(
+        panel_rect.x + 4,
+        y + 2,
+        &format!("XP:  {}/{}", stats.xp, xp_needed),
+        Color::WHITE,
+        panel_bg,
+    );
+
+    y += 4;
+    grid.write_str(
+        panel_rect.x + 4,
+        y,
+        &format!("Base ATK:  {}", stats.atk),
+        Color::WHITE,
+        panel_bg,
+    );
+    grid.write_str(
+        panel_rect.x + 4,
+        y + 1,
+        &format!("Base DEF:  {}", stats.def),
+        Color::WHITE,
+        panel_bg,
+    );
+    grid.write_str(
+        panel_rect.x + 4,
+        y + 2,
+        &format!("Base SPD:  {}", stats.spd),
+        Color::WHITE,
+        panel_bg,
+    );
+
+    y += 4;
+    grid.write_str(
+        panel_rect.x + 4,
+        y,
+        "--- TRAIT ---",
+        Color::YELLOW,
+        panel_bg,
+    );
+    if let Some(tr) = world.get::<crate::components::CharacterTrait>(ent) {
+        let (trait_name, desc) = match tr.trait_type {
+            crate::components::HeroTrait::SwiftFoot => ("Swift Foot", "+1 bonus AP on turn start"),
+            crate::components::HeroTrait::StormChaser => {
+                ("Storm Chaser", "+10 damage to Lightning reactions")
+            }
+            crate::components::HeroTrait::PurifyingTouch => {
+                ("Purifying Touch", "50% chance to cleanse on healing")
+            }
+            crate::components::HeroTrait::IceWalker => {
+                ("Ice Walker", "prevents sliding on Ice terrain")
+            }
+            crate::components::HeroTrait::ShadowStrike => {
+                ("Shadow Strike", "+5 flanking attack damage")
+            }
+        };
+        grid.write_str(
+            panel_rect.x + 4,
+            y + 1,
+            &format!("{}: {}", trait_name, desc),
+            Color::WHITE,
+            panel_bg,
+        );
+    } else {
+        grid.write_str(panel_rect.x + 4, y + 1, "None", Color::GREY, panel_bg);
+    }
+
+    let right_col = panel_rect.x + (panel_rect.width / 2) + 2;
+    let mut ey = panel_rect.y + 4;
+    grid.write_str(
+        right_col,
+        ey,
+        "--- EQUIPPED GEAR ---",
+        Color::YELLOW,
+        panel_bg,
+    );
+    ey += 2;
+
+    if let Some(equipped) = world.get::<crate::components::EquippedItems>(ent) {
+        let slots = [
+            ("Weapon", &equipped.weapon),
+            ("Armor", &equipped.armor),
+            ("Accessory", &equipped.accessory),
+        ];
+
+        for (slot_name, item_opt) in slots {
+            grid.write_str(
+                right_col,
+                ey,
+                &format!("{}:", slot_name),
+                Color::CYAN,
+                panel_bg,
+            );
+            if let Some(item) = item_opt {
+                grid.write_str(right_col + 12, ey, &item.name, Color::WHITE, panel_bg);
+
+                let mut bonuses = Vec::new();
+                if item.atk_bonus > 0 {
+                    bonuses.push(format!("+{} ATK", item.atk_bonus));
+                }
+                if item.def_bonus > 0 {
+                    bonuses.push(format!("+{} DEF", item.def_bonus));
+                }
+                if item.hp_bonus > 0 {
+                    bonuses.push(format!("+{} HP", item.hp_bonus));
+                }
+                if item.spd_bonus > 0 {
+                    bonuses.push(format!("+{} SPD", item.spd_bonus));
+                }
+
+                let bonus_str = if bonuses.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" ({})", bonuses.join(", "))
+                };
+                grid.write_str(right_col + 12, ey + 1, &bonus_str, Color::GREEN, panel_bg);
+            } else {
+                grid.write_str(right_col + 12, ey, "<Empty Slot>", Color::GREY, panel_bg);
+            }
+            ey += 3;
+        }
+    } else {
+        grid.write_str(
+            right_col,
+            ey,
+            "No equipment component found.",
+            Color::GREY,
+            panel_bg,
+        );
+    }
+
+    grid.write_str(
+        panel_rect.x + 4,
+        panel_rect.bottom() - 2,
+        "Press [Esc] or [C] to return",
+        Color::GREY,
+        panel_bg,
+    );
 }

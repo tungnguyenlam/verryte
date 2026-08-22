@@ -25,7 +25,10 @@ pub use direction::{Direction, Direction8};
 pub use error::GridError;
 pub use grid::TileGrid;
 pub use grid3::TileGrid3;
-pub use line::{compress_path_to_waypoints, line_between, path_to_directions, LineIter};
+pub use line::{
+    compress_path_to_waypoints, has_line_of_sight, line_between, path_to_directions, raycast,
+    LineIter,
+};
 pub use point::{Point, Point3};
 pub use reachability::ReachabilityMap;
 pub use rect::Rect;

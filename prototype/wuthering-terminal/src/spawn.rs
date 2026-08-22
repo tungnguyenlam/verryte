@@ -48,11 +48,75 @@ impl Spawner for World {
         floor: u32,
     ) -> Entity {
         let base = base_stats(class);
-        let stats = if team == Team::Enemy && floor > 1 {
+        let mut stats = if team == Team::Enemy && floor > 1 {
             scale_stats_by_floor(&base, floor)
         } else {
             base
         };
+
+        let mut elite_modifiers = Vec::new();
+        if team == Team::Enemy {
+            let seed = pos.x as u32 * 31 + pos.y as u32 * 17 + floor * 7;
+            let mut rng_state = seed | 1;
+            let mut next_u32 = || {
+                rng_state ^= rng_state << 13;
+                rng_state ^= rng_state >> 7;
+                rng_state ^= rng_state << 17;
+                rng_state
+            };
+            let rng_val = next_u32() % 100;
+            let is_always_elite = matches!(
+                class,
+                CharacterClass::GlacialGolem
+                    | CharacterClass::VoidTerror
+                    | CharacterClass::EliteBerserker
+                    | CharacterClass::EliteTactician
+                    | CharacterClass::EliteSummoner
+                    | CharacterClass::EliteAssassin
+            );
+            let chance = if floor == 2 {
+                20
+            } else if floor >= 3 {
+                40
+            } else {
+                0
+            };
+            if class != CharacterClass::Boss && (is_always_elite || rng_val < chance) {
+                let mod_count = 1;
+                let possible_mods = [
+                    crate::components::EliteModifier::Vampiric,
+                    crate::components::EliteModifier::Fiery,
+                    crate::components::EliteModifier::Sturdy,
+                    crate::components::EliteModifier::Swift,
+                ];
+                for _ in 0..mod_count {
+                    let idx = (next_u32() as usize) % possible_mods.len();
+                    let m = possible_mods[idx];
+                    if !elite_modifiers.contains(&m) {
+                        elite_modifiers.push(m);
+                    }
+                }
+                if elite_modifiers.is_empty() {
+                    elite_modifiers.push(crate::components::EliteModifier::Sturdy);
+                }
+
+                for m in &elite_modifiers {
+                    match m {
+                        crate::components::EliteModifier::Sturdy => {
+                            stats.max_hp = (stats.max_hp as f32 * 1.5) as i32;
+                            stats.hp = stats.max_hp;
+                            stats.def += 5;
+                        }
+                        crate::components::EliteModifier::Swift => {
+                            stats.max_ap += 1;
+                            stats.ap = stats.max_ap;
+                            stats.spd += 3;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         let trait_opt = match class {
             CharacterClass::Warrior => Some(crate::components::CharacterTrait {
@@ -108,6 +172,12 @@ impl Spawner for World {
             .with(element)
             .with(Inventory::default());
 
+        if !elite_modifiers.is_empty() {
+            builder = builder.with(crate::components::EliteEnemy {
+                modifiers: elite_modifiers,
+            });
+        }
+
         if let Some(t) = trait_opt {
             builder = builder.with(t);
         }
@@ -142,9 +212,10 @@ impl Spawner for World {
                 CharacterClass::Summoner | CharacterClass::EliteSummoner => {
                     crate::components::AIArchetype::Summoner
                 }
-                CharacterClass::Assassin | CharacterClass::EliteAssassin => {
-                    crate::components::AIArchetype::Assassin
-                }
+                CharacterClass::Assassin
+                | CharacterClass::EliteAssassin
+                | CharacterClass::VoidTerror => crate::components::AIArchetype::Assassin,
+                CharacterClass::FrozenSentinel => crate::components::AIArchetype::Defender,
                 CharacterClass::DestructibleObject => crate::components::AIArchetype::Chaser,
                 _ => crate::components::AIArchetype::Chaser,
             };
@@ -194,7 +265,7 @@ impl Spawner for World {
                 hp: 20,
                 max_hp: 20,
                 destroyed: false,
-                replacement_tile: crate::map::Tile::Grass,
+                replacement_tile: crate::map::Tile::Lava,
             })
             .with(ElementalStatus::None)
             .build()
@@ -421,6 +492,17 @@ pub fn base_stats(class: CharacterClass) -> Stats {
             ap: 5,
             max_ap: 5,
             level: 7,
+            xp: 0,
+        },
+        CharacterClass::FrozenSentinel => Stats {
+            hp: 150,
+            max_hp: 150,
+            atk: 15,
+            def: 25,
+            spd: 3,
+            ap: 2,
+            max_ap: 2,
+            level: 4,
             xp: 0,
         },
         CharacterClass::DestructibleObject => Stats {

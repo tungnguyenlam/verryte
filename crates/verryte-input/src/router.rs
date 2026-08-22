@@ -671,7 +671,6 @@ impl<A: Clone> InputRouter<A> {
         if let Some(ref act) = action {
             self.history.push(act.clone());
             self.apply_history_limit();
-            self.record_if_active(act);
         }
         action
     }
@@ -681,9 +680,6 @@ impl<A: Clone> InputRouter<A> {
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = A> + '_ {
-        if self.recording_path.is_some() {
-            self.recorded_actions.extend(self.pending.iter().cloned());
-        }
         for act in &self.pending {
             self.history.push(act.clone());
         }
@@ -692,9 +688,6 @@ impl<A: Clone> InputRouter<A> {
     }
 
     pub fn drain_queued(&mut self) -> vec_deque::Drain<'_, QueuedAction<A>> {
-        if self.recording_path.is_some() {
-            self.recorded_actions.extend(self.pending.iter().cloned());
-        }
         for act in &self.pending {
             self.history.push(act.clone());
         }
@@ -704,9 +697,6 @@ impl<A: Clone> InputRouter<A> {
 
     /// Drain the pending queue into a replayable trace, preserving sources.
     pub fn drain_trace(&mut self) -> ActionTrace<A> {
-        if self.recording_path.is_some() {
-            self.recorded_actions.extend(self.pending.iter().cloned());
-        }
         for act in &self.pending {
             self.history.push(act.clone());
         }

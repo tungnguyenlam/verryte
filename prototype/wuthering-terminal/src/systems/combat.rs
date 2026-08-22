@@ -1,9 +1,11 @@
 use crate::components::{
-    AvailableCombos, BossConfig, BossPhase, CharacterClass, CharacterElement, ComboSkill,
-    ComboSkillDef, EchoItem, ElementalShield, ElementalStatus, EquippedItems, GameEvent, GameState,
-    Outcome, Position, Rooted, ShieldType, Stats, Team, Weather, WeatherType,
+    AIArchetype, ActiveFloorModifiers, AvailableCombos, BossConfig, BossPhase, CharacterClass,
+    CharacterElement, ComboSkill, ComboSkillDef, EchoItem, ElementalShield, ElementalStatus,
+    EquippedItems, FloorModifier, GameEvent, GameState, Outcome, Position, Rooted, ShieldType,
+    Stats, Team, Weather, WeatherType,
 };
 use crate::game::Game;
+use crate::map::{TacticalMap, Tile};
 
 use verryte_core::{Entity, Events, MessageLog, Rng, World};
 use verryte_terminal::{vfx::VfxSystem, Color};
@@ -128,7 +130,48 @@ pub fn resolve_combat_hit(
             );
         }
     }
-    let damage = damage + lightning_bonus;
+    let mut damage = damage + lightning_bonus;
+
+    // Berserker Frenzy checks
+    let is_berserker = |e: Entity, w: &World| -> bool {
+        w.get::<AIArchetype>(e)
+            .is_some_and(|a| *a == AIArchetype::Berserker)
+            || w.get::<CharacterClass>(e).is_some_and(|c| {
+                matches!(
+                    *c,
+                    CharacterClass::Berserker | CharacterClass::EliteBerserker
+                )
+            })
+    };
+
+    if let Some(attacker_ent) = attacker {
+        if is_berserker(attacker_ent, world) {
+            let below_50 = if let Some(stats) = world.get::<Stats>(attacker_ent) {
+                stats.hp < stats.max_hp / 2
+            } else {
+                false
+            };
+            if below_50 {
+                damage = (damage as f32 * 1.5) as i32;
+                log(
+                    world,
+                    "[fg:FF3333][b]FRENZY![/] Berserker attacker deals +50% extra damage![/fg]",
+                );
+            }
+        }
+    }
+
+    if is_berserker(target, world) {
+        let below_50 = if let Some(stats) = world.get::<Stats>(target) {
+            stats.hp < stats.max_hp / 2
+        } else {
+            false
+        };
+        if below_50 {
+            damage = (damage as f32 * 1.5) as i32;
+            log(world, "[fg:FF3333][b]FRENZY VULNERABILITY![/] Berserker target receives +50% extra damage![/fg]");
+        }
+    }
 
     let mut shield_absorbed = 0;
     let mut shield_broke = false;
@@ -153,31 +196,99 @@ pub fn resolve_combat_hit(
     let actual_damage = damage - shield_absorbed;
     let mut defeated = false;
     let mut final_hp = 0;
-    if let Some(stats) = world.get_mut::<Stats>(target) {
-        stats.hp -= actual_damage;
-        final_hp = stats.hp;
-        if stats.hp <= 0 {
-            defeated = true;
+
+    let has_reversal = world
+        .resource::<ActiveFloorModifiers>()
+        .is_some_and(|m| m.modifiers.contains(&FloorModifier::Reversal));
+
+    if has_reversal {
+        // Under Reversal: damage heals the target!
+        if let Some(stats) = world.get_mut::<Stats>(target) {
+            stats.hp = (stats.hp + actual_damage).min(stats.max_hp);
+            final_hp = stats.hp;
+        }
+        log(
+            world,
+            format!(
+                "[fg:32FF32]Reversal: {} was healed for {} HP by the attack! (HP: {})[/fg]",
+                target_name, actual_damage, final_hp
+            ),
+        );
+    } else {
+        if let Some(stats) = world.get_mut::<Stats>(target) {
+            stats.hp -= actual_damage;
+            final_hp = stats.hp;
+            if stats.hp <= 0 {
+                defeated = true;
+            }
         }
     }
 
-    if let Some(attacker) = attacker {
-        let equipment_lifesteal_percent = world
-            .get::<EquippedItems>(attacker)
-            .map(|equipped| equipped.total_lifesteal_percent())
-            .unwrap_or(0);
-        let equipment_lifesteal = actual_damage * equipment_lifesteal_percent as i32 / 100;
-        if equipment_lifesteal > 0 {
-            let mut healed = 0;
-            if let Some(stats) = world.get_mut::<Stats>(attacker) {
-                let before = stats.hp;
-                stats.hp = (stats.hp + equipment_lifesteal).min(stats.max_hp);
-                healed = stats.hp - before;
+    if !has_reversal {
+        if let Some(attacker) = attacker {
+            let equipment_lifesteal_percent = world
+                .get::<EquippedItems>(attacker)
+                .map(|equipped| equipped.total_lifesteal_percent())
+                .unwrap_or(0);
+            let equipment_lifesteal = actual_damage * equipment_lifesteal_percent as i32 / 100;
+            if equipment_lifesteal > 0 {
+                let mut healed = 0;
+                if let Some(stats) = world.get_mut::<Stats>(attacker) {
+                    let before = stats.hp;
+                    stats.hp = (stats.hp + equipment_lifesteal).min(stats.max_hp);
+                    healed = stats.hp - before;
+                }
+                if healed > 0 {
+                    log(
+                        world,
+                        format!("{}'s equipment restored {} HP!", attacker_name, healed),
+                    );
+                }
             }
-            if healed > 0 {
+
+            let is_vampiric = world
+                .get::<crate::components::EliteEnemy>(attacker)
+                .is_some_and(|ee| {
+                    ee.modifiers
+                        .contains(&crate::components::EliteModifier::Vampiric)
+                });
+            if is_vampiric {
+                let vampiric_heal = actual_damage * 30 / 100;
+                if vampiric_heal > 0 {
+                    let mut healed = 0;
+                    if let Some(stats) = world.get_mut::<Stats>(attacker) {
+                        let before = stats.hp;
+                        stats.hp = (stats.hp + vampiric_heal).min(stats.max_hp);
+                        healed = stats.hp - before;
+                    }
+                    if healed > 0 {
+                        log(
+                            world,
+                            format!(
+                                "[fg:FF3333]{} (Vampiric) drained {} HP![/fg]",
+                                attacker_name, healed
+                            ),
+                        );
+                    }
+                }
+            }
+
+            let is_fiery = world
+                .get::<crate::components::EliteEnemy>(attacker)
+                .is_some_and(|ee| {
+                    ee.modifiers
+                        .contains(&crate::components::EliteModifier::Fiery)
+                });
+            if is_fiery {
+                if let Some(map) = world.resource_mut::<crate::map::TacticalMap>() {
+                    map.tiles.set(pos, crate::map::Tile::Lava);
+                }
                 log(
                     world,
-                    format!("{}'s equipment restored {} HP!", attacker_name, healed),
+                    format!(
+                        "[fg:FF4500]{} (Fiery) ignites the ground into Lava at ({}, {})![/fg]",
+                        attacker_name, pos.x, pos.y
+                    ),
                 );
             }
         }
@@ -564,6 +675,7 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
             ElementalStatus::Lightning { duration } => duration,
             ElementalStatus::Nature { duration } => duration,
             ElementalStatus::Poison { duration } => duration,
+            ElementalStatus::Fire { duration } => duration,
             ElementalStatus::Regen { duration } => duration,
             _ => 0,
         };
@@ -572,6 +684,7 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
             ElementalStatus::Lightning { duration } => duration,
             ElementalStatus::Nature { duration } => duration,
             ElementalStatus::Poison { duration } => duration,
+            ElementalStatus::Fire { duration } => duration,
             ElementalStatus::Regen { duration } => duration,
             _ => 0,
         };
@@ -711,9 +824,9 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
                     .get::<Position>(ally)
                     .copied()
                     .unwrap_or(Position::new(0, 0));
+                let (healed_amount, _healed_def) = apply_heal(world, ally, healing_amount);
                 let mut final_hp = 0;
-                if let Some(stats) = world.get_mut::<Stats>(ally) {
-                    stats.hp = std::cmp::min(stats.max_hp, stats.hp + healing_amount);
+                if let Some(stats) = world.get::<Stats>(ally) {
                     final_hp = stats.hp;
                 }
                 log(
@@ -721,7 +834,7 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
                     format!(
                         "[fg:32FF32]Bloom healed {} for [b]{} HP![/] (HP: {})[/fg]",
                         Game::get_class_name(a_class),
-                        healing_amount,
+                        healed_amount,
                         final_hp
                     ),
                 );
@@ -749,6 +862,108 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
             }
             world.insert(target, ElementalStatus::None);
         }
+        // Melt: Fire + Ice
+        (ElementalStatus::Fire { .. }, ElementalStatus::Ice { .. })
+        | (ElementalStatus::Ice { .. }, ElementalStatus::Fire { .. }) => {
+            log(
+                world,
+                format!(
+                    "[fg:FF4500][b]Elemental Reaction: MELT[/] on {} via spread![/fg]",
+                    target_name
+                ),
+            );
+            let bonus_damage = 25;
+            let mut defeated = false;
+            if let Some(stats) = world.get_mut::<Stats>(target) {
+                stats.hp -= bonus_damage;
+                if stats.hp <= 0 {
+                    defeated = true;
+                }
+            }
+            let (tx, ty) = get_tile_center_pixels(world, target_pos);
+            if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                vfx.floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        tx,
+                        ty - 1.0,
+                        &format!("MELT! -{}", bonus_damage),
+                        Color(255, 128, 0),
+                        true,
+                    ));
+                vfx.particles
+                    .extend(verryte_terminal::vfx::emit_burst(tx, ty, 15, Color(255, 200, 100), &['~', '°', '·']));
+            }
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::ReactionTriggered {
+                    entity: target,
+                    reaction: "Melt".to_owned(),
+                    damage: bonus_damage,
+                    healing: 0,
+                });
+            }
+            world.insert(target, ElementalStatus::None);
+
+            // If on Ice tile, melt it to Water
+            let mut melted_tile = false;
+            if let Some(map) = world.resource_mut::<TacticalMap>() {
+                if map.tile(target_pos.x, target_pos.y) == Tile::Ice {
+                    map.tiles.set(target_pos, Tile::Water);
+                    melted_tile = true;
+                }
+            }
+            if melted_tile {
+                log(world, format!("The ice patch at ({}, {}) has melted into water!", target_pos.x, target_pos.y));
+            }
+
+            if defeated {
+                handle_defeat(world, target, target_name, target_class, target_pos);
+            }
+        }
+        // Combustion: Fire + Nature
+        (ElementalStatus::Fire { .. }, ElementalStatus::Nature { .. })
+        | (ElementalStatus::Nature { .. }, ElementalStatus::Fire { .. }) => {
+            log(
+                world,
+                format!(
+                    "[fg:FF0000][b]Elemental Reaction: COMBUSTION[/] on {} via spread![/fg]",
+                    target_name
+                ),
+            );
+            let bonus_damage = 15;
+            let mut defeated = false;
+            if let Some(stats) = world.get_mut::<Stats>(target) {
+                stats.hp -= bonus_damage;
+                if stats.hp <= 0 {
+                    defeated = true;
+                }
+            }
+            let (tx, ty) = get_tile_center_pixels(world, target_pos);
+            if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                vfx.floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        tx,
+                        ty - 1.0,
+                        &format!("COMBUSTION! -{}", bonus_damage),
+                        Color(255, 50, 0),
+                        true,
+                    ));
+                vfx.particles
+                    .extend(verryte_terminal::vfx::emit_burst(tx, ty, 20, Color(255, 0, 0), &['*', '!', '^']));
+            }
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::ReactionTriggered {
+                    entity: target,
+                    reaction: "Combustion".to_owned(),
+                    damage: bonus_damage,
+                    healing: 0,
+                });
+            }
+            // Combustion keeps Fire status but with refreshed/extended duration
+            world.insert(target, ElementalStatus::Fire { duration: 4 });
+            if defeated {
+                handle_defeat(world, target, target_name, target_class, target_pos);
+            }
+        }
         _ => {
             world.insert(target, new_status);
             let badge = match new_status {
@@ -756,6 +971,7 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
                 ElementalStatus::Lightning { .. } => "Lightning",
                 ElementalStatus::Nature { .. } => "Nature",
                 ElementalStatus::Poison { .. } => "Poison",
+                ElementalStatus::Fire { .. } => "Fire",
                 ElementalStatus::Regen { .. } => "Regen",
                 _ => "None",
             };
@@ -764,6 +980,7 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
                 "Lightning" => "FFFF64",
                 "Nature" => "32DC64",
                 "Poison" => "A020F0",
+                "Fire" => "FF4500",
                 "Regen" => "32CD32",
                 _ => "FFFFFF",
             };
@@ -852,16 +1069,57 @@ pub fn process_team_status_effects(world: &mut World, team: Team) {
                     ElementalStatus::None
                 };
             }
-            ElementalStatus::Regen { duration } => {
+            ElementalStatus::Fire { duration } => {
                 if let Some(stats) = world.get_mut::<Stats>(entity) {
-                    stats.hp = (stats.hp + 10).min(stats.max_hp);
+                    stats.hp = (stats.hp - 15).max(0);
+                    current_hp = stats.hp;
+                    if stats.hp <= 0 {
+                        defeated = true;
+                    }
+                }
+                log(
+                    world,
+                    format!(
+                        "{} suffered [fg:FF4500][b]15 Fire damage![/] (HP: {})",
+                        target_name, current_hp
+                    ),
+                );
+                let (tx, ty) = get_tile_center_pixels(world, pos);
+                if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                    vfx.floating_texts
+                        .push(verryte_terminal::vfx::FloatingText::new(
+                            tx,
+                            ty - 1.0,
+                            "-15 (Fire)",
+                            Color(255, 69, 0),
+                            true,
+                        ));
+                    vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                        tx,
+                        ty,
+                        12,
+                        Color(255, 69, 0),
+                        &['^', '*', '·'],
+                    ));
+                }
+                next_status = if duration > 1 && !defeated {
+                    ElementalStatus::Fire {
+                        duration: duration - 1,
+                    }
+                } else {
+                    ElementalStatus::None
+                };
+            }
+            ElementalStatus::Regen { duration } => {
+                let (healed_amount, _healed_def) = apply_heal(world, entity, 10);
+                if let Some(stats) = world.get::<Stats>(entity) {
                     current_hp = stats.hp;
                 }
                 log(
                     world,
                     format!(
-                        "{} healed for [fg:32CD32][b]10 HP[/] via Regen. (HP: {})",
-                        target_name, current_hp
+                        "{} healed for [fg:32CD32][b]{} HP[/] via Regen. (HP: {})",
+                        target_name, healed_amount, current_hp
                     ),
                 );
                 let (tx, ty) = get_tile_center_pixels(world, pos);
@@ -935,6 +1193,9 @@ pub fn process_team_status_effects(world: &mut World, team: Team) {
                 duration: duration.saturating_sub(1).max(1),
             }),
             ElementalStatus::Nature { duration } => Some(ElementalStatus::Nature {
+                duration: duration.saturating_sub(1).max(1),
+            }),
+            ElementalStatus::Fire { duration } => Some(ElementalStatus::Fire {
                 duration: duration.saturating_sub(1).max(1),
             }),
             _ => None,
@@ -1063,5 +1324,185 @@ pub fn combo_detection_system(world: &mut World) {
         *resource = AvailableCombos { combos };
     } else {
         world.insert_resource(AvailableCombos { combos });
+    }
+}
+
+pub fn apply_heal(world: &mut World, target: Entity, amount: i32) -> (i32, bool) {
+    let has_reversal = world
+        .resource::<ActiveFloorModifiers>()
+        .is_some_and(|m| m.modifiers.contains(&FloorModifier::Reversal));
+
+    let mut actual_change = amount;
+    let mut defeated = false;
+
+    let target_class = world
+        .get::<CharacterClass>(target)
+        .copied()
+        .unwrap_or(CharacterClass::Warrior);
+
+    if has_reversal {
+        // Healing damages
+        let mut final_hp = 0;
+        if let Some(stats) = world.get_mut::<Stats>(target) {
+            stats.hp -= amount;
+            if stats.hp <= 0 {
+                stats.hp = 0;
+                defeated = true;
+            }
+            final_hp = stats.hp;
+        }
+        log(
+            world,
+            format!(
+                "[fg:FF3333]Reversal: healing dealt {} damage to {}! (HP: {})[/fg]",
+                amount,
+                Game::get_class_name(target_class),
+                final_hp
+            ),
+        );
+        let (cx, cy) = get_tile_center_pixels(world, *world.get::<Position>(target).unwrap());
+        if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+            vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                cx,
+                cy,
+                15,
+                Color(255, 50, 50),
+                &['x', '*'],
+            ));
+            vfx.floating_texts
+                .push(verryte_terminal::vfx::FloatingText::new(
+                    cx,
+                    cy - 2.0,
+                    &format!("-{} (Heal Reversal)", amount),
+                    Color(255, 50, 50),
+                    true,
+                ));
+        }
+        if defeated {
+            let name = Game::get_class_name(target_class).to_string();
+            let pos = world
+                .get::<Position>(target)
+                .copied()
+                .unwrap_or(Position::new(0, 0));
+            handle_defeat(world, target, &name, target_class, pos);
+        }
+        (-amount, defeated)
+    } else {
+        // Normal healing
+        if let Some(stats) = world.get_mut::<Stats>(target) {
+            let before = stats.hp;
+            stats.hp = (stats.hp + amount).min(stats.max_hp);
+            actual_change = stats.hp - before;
+        }
+        (actual_change, false)
+    }
+}
+
+pub fn trigger_steam_vent_explosion(world: &mut World, trigger_pos: Position) {
+    let adjacent = [
+        Position::new(trigger_pos.x, trigger_pos.y - 1),
+        Position::new(trigger_pos.x, trigger_pos.y + 1),
+        Position::new(trigger_pos.x - 1, trigger_pos.y),
+        Position::new(trigger_pos.x + 1, trigger_pos.y),
+    ];
+
+    // Find all entities on these adjacent positions
+    let mut victims = Vec::new();
+    for (e, p, class) in world.query2::<Position, CharacterClass>() {
+        if adjacent.contains(p) && *class != CharacterClass::DestructibleObject {
+            victims.push((e, *p, *class));
+        }
+    }
+
+    let (cx, cy) = get_tile_center_pixels(world, trigger_pos);
+    if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+        vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+            cx,
+            cy,
+            25,
+            Color(255, 140, 0), // Orange
+            &['░', '▒', '░', 'v', 'V'],
+        ));
+    }
+
+    for (victim, vpos, vclass) in victims {
+        let vname = Game::get_class_name(vclass);
+        let mut v_hp = 0;
+        let mut defeated = false;
+        if let Some(stats) = world.get_mut::<Stats>(victim) {
+            stats.hp = (stats.hp - 5).clamp(0, stats.max_hp);
+            v_hp = stats.hp;
+            if stats.hp <= 0 {
+                defeated = true;
+            }
+        }
+        log(
+            world,
+            format!(
+                "[fg:FF8C00]Steam blast hits {} at ({}, {}) for 5 damage! (HP: {})[/fg]",
+                vname, vpos.x, vpos.y, v_hp
+            ),
+        );
+
+        let (vcx, vcy) = get_tile_center_pixels(world, vpos);
+        if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+            vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                vcx,
+                vcy,
+                8,
+                Color(255, 140, 0),
+                &['·', '*'],
+            ));
+            vfx.floating_texts
+                .push(verryte_terminal::vfx::FloatingText::new(
+                    vcx,
+                    vcy - 2.0,
+                    "-5",
+                    Color(255, 140, 0),
+                    true,
+                ));
+        }
+
+        if defeated {
+            let name_str = vname.to_string();
+            handle_defeat(world, victim, &name_str, vclass, vpos);
+        }
+    }
+}
+
+pub fn sturdy_immunity_system(world: &mut World) {
+    let mut immune = Vec::new();
+    for (e, ee) in world.query::<crate::components::EliteEnemy>() {
+        if ee
+            .modifiers
+            .contains(&crate::components::EliteModifier::Sturdy)
+        {
+            immune.push(e);
+        }
+    }
+    for e in immune {
+        let mut removed = false;
+        if world.get::<crate::components::Rooted>(e).is_some() {
+            world.remove::<crate::components::Rooted>(e);
+            removed = true;
+        }
+        if world.get::<crate::components::Stunned>(e).is_some() {
+            world.remove::<crate::components::Stunned>(e);
+            removed = true;
+        }
+        if removed {
+            let class = world
+                .get::<CharacterClass>(e)
+                .copied()
+                .unwrap_or(CharacterClass::Warrior);
+            let name = Game::get_class_name(class);
+            log(
+                world,
+                format!(
+                    "[fg:CCCCCC]{} is [b]Sturdy[/b] and resists the crowd control effect![/fg]",
+                    name
+                ),
+            );
+        }
     }
 }

@@ -1,6 +1,7 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    CharacterClass, EquippedItems, GameState, Inventory, Outcome, Stats, Team, TurnPhase,
+    CharacterClass, DynamicFloorEvents, EquippedItems, FloorEventKind, FloorModifier, GameState,
+    Inventory, Outcome, Stats, Team, TurnPhase,
 };
 use wuthering_terminal::snapshot::{ActionOutcome, FullSaveState, CURRENT_SAVE_VERSION};
 use wuthering_terminal::{Action, Game, Position};
@@ -545,6 +546,23 @@ fn load_wrong_magic_fails_gracefully() {
 }
 
 #[test]
+fn load_checksum_mismatch_fails_gracefully() {
+    let mut game = Game::new();
+    let valid = game.save_state().unwrap();
+    // Tamper with the world state slightly by modifying the timestamp
+    let bad = valid.replace("\"timestamp\":\"", "\"timestamp\":\"9999999999");
+    let result = game.load_state(&bad);
+    assert!(
+        result.is_err(),
+        "Tampered JSON with mismatching checksum should fail"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("corruption"),
+        "Error should mention corruption or checksum mismatch"
+    );
+}
+
+#[test]
 fn load_future_version_fails_gracefully() {
     let mut game = Game::new();
     let valid = game.save_state().unwrap();
@@ -952,6 +970,9 @@ fn action_outcome_variants_roundtrip() {
         ActionOutcome::ModifiersRerolled {
             modifiers: vec!["Darkness".to_string(), "Frenzy".to_string()],
         },
+        ActionOutcome::FloorEventTriggered {
+            description: "Void Terror invaded at (20, 8)".to_string(),
+        },
         ActionOutcome::GameSaved {
             path: "saves/quicksave.json".to_string(),
         },
@@ -987,4 +1008,30 @@ fn action_outcome_variants_roundtrip() {
         let restored: ActionOutcome = serde_json::from_str(&json).unwrap();
         assert_eq!(outcome, restored);
     }
+}
+
+#[test]
+fn save_load_preserves_dynamic_floor_event_schedule_and_history() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::GravityWell,
+            duration: 5,
+        },
+    );
+    game.world
+        .resource_mut::<DynamicFloorEvents>()
+        .unwrap()
+        .next_event_turn = 7;
+
+    let saved = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&saved).unwrap();
+
+    let events = restored.world.resource::<DynamicFloorEvents>().unwrap();
+    assert_eq!(events.next_event_turn, 7);
+    assert_eq!(events.history.len(), 1);
+    assert!(events.history[0].description.contains("Gravity Well"));
 }

@@ -77,3 +77,25 @@ fn test_action_interceptor() {
     assert_eq!(router.next_action(), Some(MyAction::Move));
     assert_eq!(router.next_action(), None);
 }
+
+#[test]
+fn recording_counts_each_queued_action_once_when_drained() {
+    let mut router = InputRouter::new(Bindings::<MyAction>::new());
+    router.start_recording("unused-recording.json");
+
+    router.inject_from(MyAction::Move, crate::action::ActionSource::Script);
+    assert_eq!(router.recorded_count(), 1);
+
+    assert_eq!(router.next_action(), Some(MyAction::Move));
+    assert_eq!(router.recorded_count(), 1);
+
+    router.inject(MyAction::Attack);
+    let drained: Vec<_> = router.drain().collect();
+    assert_eq!(drained, vec![MyAction::Attack]);
+    assert_eq!(router.recorded_count(), 2);
+
+    let trace = router.take_recording();
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace.steps()[0].action, MyAction::Move);
+    assert_eq!(trace.steps()[1].action, MyAction::Attack);
+}

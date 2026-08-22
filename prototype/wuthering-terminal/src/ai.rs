@@ -235,6 +235,7 @@ impl TacticalAI {
             }
             AIArchetype::Summoner => Self::cleric_strategy(enemy_pos, &stats, &allies, &players),
             AIArchetype::Assassin => Self::chaser_strategy(enemy_pos, &stats, &players, assessment),
+            AIArchetype::Defender => Self::defender_strategy(enemy_pos, &stats, &allies, &players),
         }
     }
 
@@ -297,6 +298,70 @@ impl TacticalAI {
                 return AIAction::Attack(target_ent);
             }
             return AIAction::MoveTo(target_pos);
+        }
+
+        AIAction::Defend
+    }
+
+    pub fn defender_strategy(
+        enemy_pos: Position,
+        stats: &Stats,
+        allies: &[(Entity, Position, Stats)],
+        players: &[(Entity, Position, Stats)],
+    ) -> AIAction {
+        if allies.is_empty() {
+            return Self::chaser_strategy(
+                enemy_pos,
+                stats,
+                players,
+                &TacticalAssessment::default(),
+            );
+        }
+
+        // 1. Find the highest priority ally to protect
+        let priority_ally = allies
+            .iter()
+            .min_by_key(|(_, _, s)| {
+                // Heuristically: Boss is priority 0, then based on HP pct
+                // We don't have CharacterClass here easily without a query,
+                // but we can assume lower max_hp might be more fragile or
+                // just use a placeholder for now since we can't easily query
+                // character class from just Stats.
+                // Actually, let's just pick the one with lowest HP percentage.
+                if s.max_hp > 0 {
+                    (s.hp * 100) / s.max_hp
+                } else {
+                    100
+                }
+            });
+
+        if let Some((_ally_ent, ally_pos, _)) = priority_ally {
+            let dist_to_ally = (enemy_pos.x - ally_pos.x).abs() + (enemy_pos.y - ally_pos.y).abs();
+
+            if dist_to_ally > 1 {
+                // Move towards ally
+                return AIAction::MoveTo(*ally_pos);
+            } else {
+                // We are near the ally, look for nearby enemies to attack
+                let nearest_player = players
+                    .iter()
+                    .min_by_key(|(_, pp, _)| (pp.x - ally_pos.x).abs() + (pp.y - ally_pos.y).abs());
+
+                if let Some((player_ent, player_pos, _)) = nearest_player {
+                    let dist_player_to_ally =
+                        (player_pos.x - ally_pos.x).abs() + (player_pos.y - ally_pos.y).abs();
+                    if dist_player_to_ally <= 3 {
+                        // Player is threatening the ally
+                        let dist_to_player =
+                            (enemy_pos.x - player_pos.x).abs() + (enemy_pos.y - player_pos.y).abs();
+                        if dist_to_player <= 2 {
+                            return AIAction::Attack(*player_ent);
+                        } else {
+                            return AIAction::MoveTo(*player_pos);
+                        }
+                    }
+                }
+            }
         }
 
         AIAction::Defend

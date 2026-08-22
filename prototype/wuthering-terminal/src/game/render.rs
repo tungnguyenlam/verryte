@@ -1,5 +1,5 @@
 use super::Game;
-use crate::components::{GameState, Position, Team, CharacterClass, Outcome, Stats, BattleStats};
+use crate::components::{BattleStats, CharacterClass, GameState, Position, Stats, Team};
 use crate::map::{TacticalMap, Tile};
 use verryte_core::{Events, GameClock};
 use verryte_terminal::{Cell, Color, Grid, VisualRegistry};
@@ -72,6 +72,8 @@ impl Game {
                     Tile::CrackedFloor => Color(90, 70, 50),
                     Tile::PressurePlate => Color(140, 140, 60),
                     Tile::ThornBush => Color(50, 100, 20),
+                    Tile::SteamVent => Color(200, 100, 50),
+                    Tile::ExplodingBarrel => Color(255, 128, 0),
                 };
 
                 if matches!(vis, verryte_map::Visibility::Explored) {
@@ -148,6 +150,65 @@ impl Game {
             }
         }
 
+        // 1.5. Threat Range Overlay
+        if state.show_threat_map {
+            let mut threat_tiles = std::collections::HashSet::new();
+            for (_e, ep, enemy_class, enemy_stats, enemy_team) in
+                self.world.query4::<Position, CharacterClass, Stats, Team>()
+            {
+                if *enemy_team == Team::Enemy {
+                    let move_range = enemy_stats.ap;
+                    let atk_range = match enemy_class {
+                        CharacterClass::Warrior => 1,
+                        CharacterClass::Mage => 3,
+                        CharacterClass::Healer => 2,
+                        CharacterClass::Boss => 2,
+                        CharacterClass::CorruptedSpore => 1,
+                        CharacterClass::CursedSentinel => 3,
+                        CharacterClass::PlagueWraith => 2,
+                        CharacterClass::EnemyCleric => 2,
+                        _ => 1,
+                    };
+                    let total_range = move_range as i32 + atk_range;
+
+                    for dy in -total_range..=total_range {
+                        for dx in -total_range..=total_range {
+                            if dy.abs() + dx.abs() <= total_range {
+                                let tx = ep.x + dx as i16;
+                                let ty = ep.y + dy as i16;
+                                if tx >= 0
+                                    && tx < map.width as i16
+                                    && ty >= 0
+                                    && ty < map.height as i16
+                                {
+                                    threat_tiles.insert(Position::new(tx, ty));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            for pos in threat_tiles {
+                let vis = visibility.get(pos);
+                if matches!(vis, verryte_map::Visibility::Hidden) {
+                    continue;
+                }
+                let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
+                for dy in 0..tile_h {
+                    for dx in 0..tile_w {
+                        let tx = sx + dx as i32;
+                        let ty = sy + dy as i32;
+                        if viewport.rect.contains(tx as u16, ty as u16) {
+                            let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
+                            cell.bg =
+                                verryte_terminal::vfx::blend_color(cell.bg, Color(150, 0, 0), 0.25);
+                        }
+                    }
+                }
+            }
+        }
+
         // 2. Overlays (Range, Path, Telegraphs)
         if state.targeting == crate::components::TargetingMode::None {
             if let Some(sel_entity) = state.selected_entity {
@@ -173,7 +234,28 @@ impl Game {
                 // Draw path preview
                 if reachable.contains(&state.cursor) {
                     if let Some(path) = self.get_path_to(sel_entity, state.cursor) {
-                        for pos in path {
+                        let mut total_cost = 0;
+                        let gravity_bonus =
+                            crate::systems::floor_modifier_gravity_cost(&self.world);
+                        let weather = self
+                            .world
+                            .resource::<crate::components::Weather>()
+                            .map(|w| w.current)
+                            .unwrap_or(crate::components::WeatherType::Sunny);
+
+                        for pos in &path {
+                            let tile = map.tile(pos.x, pos.y);
+                            let step_cost = match (tile, weather) {
+                                (Tile::Water, crate::components::WeatherType::Rainy) => 1,
+                                (Tile::Ice, crate::components::WeatherType::Snowing) => 0,
+                                (Tile::Water | Tile::Lava, _) => 2,
+                                (Tile::Mud, _) => 3,
+                                _ => 1,
+                            };
+                            total_cost += step_cost + gravity_bonus;
+                        }
+
+                        for pos in &path {
                             let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
                             for dy in 0..tile_h {
                                 for dx in 0..tile_w {
@@ -186,7 +268,29 @@ impl Game {
                                             Color(0, 150, 220),
                                             0.4,
                                         );
+                                        // Waypoint dot marker
+                                        if dx == tile_w / 2 && dy == tile_h / 2 {
+                                            cell.glyph = '·';
+                                            cell.fg = Color(255, 255, 255);
+                                        }
                                     }
+                                }
+                            }
+                        }
+
+                        // Display AP cost badge next to the cursor
+                        let (cx, cy) =
+                            viewport.world_to_screen(state.cursor.x as f32, state.cursor.y as f32);
+                        let ap_str = format!("{} AP", total_cost);
+                        let ap_x = cx + tile_w as i32;
+                        let ap_y = cy + (tile_h as i32 / 2);
+                        for (i, ch) in ap_str.chars().enumerate() {
+                            let tx = ap_x + i as i32;
+                            if viewport.rect.contains(tx as u16, ap_y as u16) {
+                                if let Some(cell) = screen.get_mut(tx as u16, ap_y as u16) {
+                                    cell.glyph = ch;
+                                    cell.fg = Color(255, 255, 0); // Yellow text
+                                    cell.bg = Color(10, 10, 15);
                                 }
                             }
                         }
@@ -344,6 +448,7 @@ impl Game {
                 CharacterClass::EliteTactician => "lyra",
                 CharacterClass::EliteSummoner => "blight-sovereign",
                 CharacterClass::EliteAssassin => "kael",
+                CharacterClass::FrozenSentinel => "blight-sovereign",
                 CharacterClass::DestructibleObject => "barrel",
             };
 
@@ -739,6 +844,32 @@ impl Game {
                     m.modifiers
                         .iter()
                         .map(|fm| fm.display_name().to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            active_modifier_durations: self
+                .world
+                .resource::<crate::components::ActiveFloorModifiers>()
+                .map(|m| m.turns_remaining.clone())
+                .unwrap_or_default(),
+            weather_danger_zones: self
+                .world
+                .resource::<crate::components::Weather>()
+                .map(|w| w.danger_zones.clone())
+                .unwrap_or_default(),
+            next_floor_event_turn: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .map(|events| events.next_event_turn)
+                .unwrap_or_default(),
+            recent_floor_events: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .map(|events| {
+                    events
+                        .history
+                        .iter()
+                        .map(|event| event.description.clone())
                         .collect()
                 })
                 .unwrap_or_default(),

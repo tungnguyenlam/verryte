@@ -170,7 +170,7 @@ fn main() {
                 match game.router.inject_script_with(
                     &default_commands(),
                     &line,
-                    ActionSource::Script,
+                    ActionSource::Agent,
                     resolve_command_token,
                 ) {
                     Ok(count) if count > 0 => {

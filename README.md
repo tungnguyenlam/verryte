@@ -216,12 +216,23 @@ Wuthering Terminal includes two runners:
 cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "inspect:4,4 confirm inspect:4,5 confirm"
 ```
 
+**Agent runner** (line-oriented JSON protocol):
+```sh
+printf 'snapshot\nnorth\n' | cargo run -p wuthering-terminal --bin wuthering-terminal-agent
+```
+
+Agent commands use `ActionSource::Agent` in their step reports, keeping agent
+control distinguishable from scripts without changing the shared action path.
+Snapshots expose active modifier names alongside their remaining turns and
+weather danger-zone coordinates so a headless controller can plan from state
+rather than scrape the rendered frame.
+
 **Interactive TTY** (real terminal):
 ```sh
 cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
-`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, save/load, recording, replay controls, UI/tool toggles, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, echo absorption, boss phase transition, save/load, recording/replay state changes, replay steps, rest recovery, floor modifier rerolls, status views, and precise failure reports for invalid inventory/crafting/floor/replay actions.
+`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, save/load, recording, replay controls, UI/tool toggles, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, echo absorption, boss phase transition, save/load, recording/replay state changes, replay steps, rest recovery, floor modifier rerolls, scheduled deeper-floor events, status views, and precise failure reports for invalid inventory/crafting/floor/replay actions.
 The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
 
 ## Verification

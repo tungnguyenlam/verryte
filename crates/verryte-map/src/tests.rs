@@ -2075,6 +2075,24 @@ fn test_reachability_map() {
     assert_eq!(path, vec![Point::new(0, 0), Point::new(0, 1)]);
 }
 
+#[test]
+fn reachability_points_are_stable_and_cost_ordered() {
+    let grid = TileGrid::new(3, 2, '.');
+    let reach = ReachabilityMap::compute(&grid, Point::new(0, 0), 3, |_, _| true, |_, _| 1);
+
+    assert_eq!(
+        reach.points(),
+        vec![
+            Point::new(0, 0),
+            Point::new(1, 0),
+            Point::new(0, 1),
+            Point::new(2, 0),
+            Point::new(1, 1),
+            Point::new(2, 1),
+        ]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Pathfinding edge cases
 // ---------------------------------------------------------------------------
@@ -2668,4 +2686,28 @@ fn reachable_points4_empty_for_out_of_bounds_start() {
     let grid = TileGrid::new(5, 5, '.');
     let reachable = grid.reachable_points4(Point::new(-1, -1), |_, _| true);
     assert!(reachable.is_empty());
+}
+
+#[test]
+fn test_raycast_and_line_of_sight() {
+    let mut grid = TileGrid::new(5, 5, '.');
+    grid.set(Point::new(2, 2), '#');
+
+    let start = Point::new(0, 2);
+    let end = Point::new(4, 2);
+
+    // Obstacle is #
+    let obstacle_check = |p: Point| *grid.get(p).unwrap_or(&'.') == '#';
+
+    // Tracing from (0,2) to (4,2) should hit the obstacle at (2,2)
+    let hit = crate::raycast(start, end, obstacle_check);
+    assert_eq!(hit, Some(Point::new(2, 2)));
+
+    // Line of sight from (0,2) to (4,2) is blocked
+    assert!(!crate::has_line_of_sight(start, end, obstacle_check));
+
+    // From (0,2) to (0,4) should be clear
+    let clear_end = Point::new(0, 4);
+    assert!(crate::has_line_of_sight(start, clear_end, obstacle_check));
+    assert_eq!(crate::raycast(start, clear_end, obstacle_check), None);
 }

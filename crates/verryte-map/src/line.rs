@@ -116,3 +116,28 @@ pub fn path_to_directions(path: &[Point]) -> Result<Vec<crate::Direction8>, &'st
     }
     Ok(directions)
 }
+
+/// Traces a straight line from `start` to `end` and returns the point where it collides
+/// with an obstacle (according to `is_obstacle`), or `None` if it reaches `end` without colliding.
+pub fn raycast<F>(start: Point, end: Point, mut is_obstacle: F) -> Option<Point>
+where
+    F: FnMut(Point) -> bool,
+{
+    for pt in LineIter::new(start, end) {
+        if pt == start {
+            continue;
+        }
+        if is_obstacle(pt) {
+            return Some(pt);
+        }
+    }
+    None
+}
+
+/// Checks if there is a clear line of sight (no obstacles) from `start` to `end`.
+pub fn has_line_of_sight<F>(start: Point, end: Point, is_obstacle: F) -> bool
+where
+    F: FnMut(Point) -> bool,
+{
+    raycast(start, end, is_obstacle).is_none()
+}

@@ -6,10 +6,10 @@ use crate::components::{
 };
 use crate::map::{TacticalMap, Tile};
 use crate::snapshot::ActionOutcome;
-use std::collections::HashSet;
 use crate::spawn::Spawner;
-use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, World};
-use verryte_input::{ActionSource};
+use std::collections::HashSet;
+use verryte_core::{Entity, Events, GameClock, MessageLog, Rng};
+use verryte_input::ActionSource;
 use verryte_map::Direction;
 use verryte_terminal::Color;
 
@@ -401,22 +401,23 @@ impl Game {
 
         // Improved floating text with horizontal velocity and easing
         let rng = self.world.resource_mut::<Rng>().unwrap();
-        let vx = if is_player { 
-            2.0 + rng.next_f64() as f32 * 2.0 
-        } else { 
-            -2.0 - rng.next_f64() as f32 * 2.0 
+        let vx = if is_player {
+            2.0 + rng.next_f64() as f32 * 2.0
+        } else {
+            -2.0 - rng.next_f64() as f32 * 2.0
         };
-        
-        self.vfx_mut()
-            .floating_texts
-            .push(verryte_terminal::vfx::FloatingText::new_eased(
+
+        self.vfx_mut().floating_texts.push(
+            verryte_terminal::vfx::FloatingText::new_eased(
                 tcx,
                 tcy - 1.5,
                 &float_text,
                 float_color,
                 is_crit,
                 verryte_terminal::vfx::EasingMode::QuadOut,
-            ).with_velocity(vx, -4.0));
+            )
+            .with_velocity(vx, -4.0),
+        );
 
         if is_player && new_combo > 0 {
             self.vfx_mut()
@@ -438,9 +439,13 @@ impl Game {
                 tcy,
                 if is_crit { 2.0 } else { 1.0 },
             ));
-        
+
         // Add hit sparks
-        let spark_color = if is_crit { Color(255, 255, 200) } else { Color(255, 200, 50) };
+        let spark_color = if is_crit {
+            Color(255, 255, 200)
+        } else {
+            Color(255, 200, 50)
+        };
         self.vfx_mut()
             .particles
             .extend(verryte_terminal::vfx::emit_burst(
@@ -453,7 +458,7 @@ impl Game {
 
         // Extra shatter effect for crits
         if is_crit {
-             self.vfx_mut()
+            self.vfx_mut()
                 .particles
                 .extend(verryte_terminal::vfx::emit_shatter(tcx, tcy, 10));
         }
@@ -466,9 +471,13 @@ impl Game {
                 shake_intensity,
                 shake_duration,
             ));
-        
+
         // Regional flash on hit
-        let flash_color = if is_crit { Color(255, 255, 255) } else { Color(255, 200, 100) };
+        let flash_color = if is_crit {
+            Color(255, 255, 255)
+        } else {
+            Color(255, 200, 100)
+        };
         let (tw, th) = self.get_tile_dimensions();
         self.vfx_mut().trigger_flash_region(
             flash_color,
@@ -735,44 +744,17 @@ impl Game {
             }
         }
 
-        // BFS with terrain cost tracking
-        let mut reachable = Vec::new();
-        let mut best_cost: std::collections::HashMap<Position, i32> =
-            std::collections::HashMap::new();
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back((pos, 0i32));
-        best_cost.insert(pos, 0);
+        let reachable = verryte_map::ReachabilityMap::compute(
+            &map.tiles,
+            pos,
+            max_ap.max(0) as u32,
+            |point, tile| !matches!(tile, Tile::Wall) && !occupied.contains(&point),
+            |point, _tile| {
+                (map.movement_cost_with_weather(point, weather) + gravity_bonus).max(0) as u32
+            },
+        );
 
-        while let Some((current, cost_so_far)) = queue.pop_front() {
-            reachable.push(current);
-            for neighbor in current.neighbors4() {
-                if neighbor.x < 0
-                    || neighbor.x >= map.width as i16
-                    || neighbor.y < 0
-                    || neighbor.y >= map.height as i16
-                {
-                    continue;
-                }
-                if occupied.contains(&neighbor) {
-                    continue;
-                }
-                let tile = map.tile(neighbor.x, neighbor.y);
-                if matches!(tile, Tile::Wall) {
-                    continue;
-                }
-                let move_cost = map.movement_cost_with_weather(neighbor, weather) + gravity_bonus;
-                let new_cost = cost_so_far + move_cost;
-                if new_cost <= max_ap {
-                    let entry = best_cost.entry(neighbor).or_insert(i32::MAX);
-                    if new_cost < *entry {
-                        *entry = new_cost;
-                        queue.push_back((neighbor, new_cost));
-                    }
-                }
-            }
-        }
-
-        reachable
+        reachable.points()
     }
 
     pub fn get_path_to(&self, entity: Entity, target: Position) -> Option<Vec<Position>> {
@@ -792,12 +774,7 @@ impl Game {
         map.tiles.shortest_path4_weighted(
             pos,
             target,
-            |pt, tile| {
-                matches!(
-                    tile,
-                    Tile::Grass | Tile::Water | Tile::Lava | Tile::Ice | Tile::Stairs | Tile::Mud
-                ) && !occupied.contains(&pt)
-            },
+            |pt, tile| !matches!(tile, Tile::Wall) && !occupied.contains(&pt),
             |_from, _to, tile| match (tile, weather) {
                 (Tile::Water, crate::components::WeatherType::Rainy) => 1,
                 (Tile::Ice, crate::components::WeatherType::Snowing) => 0,
@@ -995,9 +972,15 @@ impl Game {
         if class == CharacterClass::DestructibleObject {
             self.log("BOOM! The barrel exploded!");
             let (cx, cy) = self.get_tile_center_pixels(pos);
-            self.vfx_mut().particles.extend(
-                verryte_terminal::vfx::emit_burst(cx, cy, 50, Color(255, 100, 20), &['*', '#', '@']),
-            );
+            self.vfx_mut()
+                .particles
+                .extend(verryte_terminal::vfx::emit_burst(
+                    cx,
+                    cy,
+                    50,
+                    Color(255, 100, 20),
+                    &['*', '#', '@'],
+                ));
             self.vfx_mut()
                 .shakes
                 .push(verryte_terminal::vfx::ScreenShake::new(5.0, 0.5));
@@ -1009,30 +992,97 @@ impl Game {
                 ));
             self.play_spatial_sfx("explosion", pos);
 
-            // Deal AOE damage
+            // Transform cross shape tiles to lava (ignoring walls)
+            if let Some(map) = self.world.resource_mut::<TacticalMap>() {
+                for dx in -1..=1 {
+                    let nx = pos.x + dx;
+                    if nx >= 0 && nx < map.width as i16 && map.tile(nx, pos.y) != Tile::Wall {
+                        map.tiles.set(Position::new(nx, pos.y), Tile::Lava);
+                    }
+                }
+                for dy in -1..=1 {
+                    let ny = pos.y + dy;
+                    if ny >= 0 && ny < map.height as i16 && map.tile(pos.x, ny) != Tile::Wall {
+                        map.tiles.set(Position::new(pos.x, ny), Tile::Lava);
+                    }
+                }
+            }
+
+            // Deal cross-shape AOE fire damage (radius 2)
             let mut affected = Vec::new();
             for (e, p, _stats) in self.world.query2::<Position, Stats>() {
-                if e == entity { continue; }
-                let dist = (p.x - pos.x).abs() + (p.y - pos.y).abs();
-                if dist <= 2 {
+                if e == entity {
+                    continue;
+                }
+                let in_cross = (p.x == pos.x && (p.y - pos.y).abs() <= 2)
+                    || (p.y == pos.y && (p.x - pos.x).abs() <= 2);
+                if in_cross {
                     affected.push(e);
                 }
             }
 
             for e in affected {
-                let (tx, ty) = self.world.get::<Position>(e).map(|p| self.get_tile_center_pixels(*p)).unwrap_or((cx, cy));
+                let (tx, ty) = self
+                    .world
+                    .get::<Position>(e)
+                    .map(|p| self.get_tile_center_pixels(*p))
+                    .unwrap_or((cx, cy));
                 let stats = self.world.get_mut::<Stats>(e).unwrap();
                 let dmg = 30;
                 stats.hp = stats.hp.saturating_sub(dmg);
-                self.vfx_mut().floating_texts.push(
-                    verryte_terminal::vfx::FloatingText::new(
+                self.vfx_mut()
+                    .floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
                         tx,
                         ty - 1.0,
                         &format!("-{}", dmg),
                         Color(255, 50, 50),
                         true,
-                    ),
-                );
+                    ));
+            }
+        }
+
+        if class == CharacterClass::CorruptedSpore {
+            self.log("The Corrupted Spore bursts, releasing toxic spores!");
+            let (cx, cy) = self.get_tile_center_pixels(pos);
+            self.vfx_mut()
+                .particles
+                .extend(verryte_terminal::vfx::emit_burst(
+                    cx,
+                    cy,
+                    30,
+                    Color(50, 200, 50),
+                    &['.', ',', '*', 'o'],
+                ));
+            self.vfx_mut()
+                .flashes
+                .push(verryte_terminal::vfx::Flash::full_screen(
+                    Color(50, 150, 50),
+                    0.25,
+                ));
+            self.play_spatial_sfx("explosion", pos);
+
+            let mut adjacent_entities = Vec::new();
+            for (e, p, _stats) in self.world.query2::<Position, Stats>() {
+                if e == entity {
+                    continue;
+                }
+                let dist = (p.x - pos.x).abs() + (p.y - pos.y).abs();
+                if dist <= 1 {
+                    adjacent_entities.push(e);
+                }
+            }
+            for e in adjacent_entities {
+                if let Some(status) = self.world.get_mut::<crate::components::ElementalStatus>(e) {
+                    *status = crate::components::ElementalStatus::Poison { duration: 3 };
+                    let target_class = self
+                        .world
+                        .get::<CharacterClass>(e)
+                        .copied()
+                        .unwrap_or(CharacterClass::DestructibleObject);
+                    let name = Self::get_class_name(target_class);
+                    self.log(format!("{} is poisoned by the spores!", name));
+                }
             }
         }
 
@@ -2822,6 +2872,184 @@ impl Game {
                 }
             }
 
+            // Reaction: Poison + Lightning -> Toxic Shock (or Lightning + Poison -> Toxic Shock)
+            (
+                crate::components::ElementalStatus::Poison { .. },
+                crate::components::ElementalStatus::Lightning { .. },
+            )
+            | (
+                crate::components::ElementalStatus::Lightning { .. },
+                crate::components::ElementalStatus::Poison { .. },
+            ) => {
+                self.log(format!(
+                    "[fg:A020F0][b]Elemental Reaction: TOXIC SHOCK[/] on {}![/fg]",
+                    target_name
+                ));
+                let bonus_damage = if is_storm_chaser { 40 } else { 30 };
+                let mut defeated = false;
+                if let Some(stats) = self.world.get_mut::<Stats>(target) {
+                    stats.hp -= bonus_damage;
+                    if stats.hp <= 0 {
+                        defeated = true;
+                    }
+                }
+
+                // Poison adjacent entities
+                let mut adjacent_enemies = Vec::new();
+                for (e, p) in self.world.query::<Position>() {
+                    if e == target {
+                        continue;
+                    }
+                    let dist = (p.x - target_pos.x).abs() + (p.y - target_pos.y).abs();
+                    if dist <= 1 {
+                        adjacent_enemies.push(e);
+                    }
+                }
+                for e in adjacent_enemies {
+                    if let Some(status) =
+                        self.world.get_mut::<crate::components::ElementalStatus>(e)
+                    {
+                        *status = crate::components::ElementalStatus::Poison { duration: 3 };
+                        let name = Self::get_class_name(
+                            self.world
+                                .get::<CharacterClass>(e)
+                                .copied()
+                                .unwrap_or(CharacterClass::Warrior),
+                        );
+                        self.log(format!("{} is infected by the toxic shock burst!", name));
+                    }
+                }
+
+                // Toxic Shock VFX
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        t_cx,
+                        t_cy,
+                        20,
+                        Color(160, 32, 240),
+                        &['*', 'x', 'o'],
+                    ));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                        Color(150, 50, 200),
+                        0.4,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
+                    ));
+                self.vfx_mut()
+                    .floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        t_cx,
+                        t_cy - 1.0,
+                        &format!("TOXIC SHOCK! -{}", bonus_damage),
+                        Color(160, 32, 240),
+                        true,
+                    ));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ReactionTriggered {
+                        entity: target,
+                        reaction: "Toxic Shock".to_owned(),
+                        damage: bonus_damage,
+                        healing: 0,
+                    });
+                }
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
+                    events.send(verryte_core::AudioEvent::play("shatter"));
+                }
+
+                if let Some(status) = self
+                    .world
+                    .get_mut::<crate::components::ElementalStatus>(target)
+                {
+                    *status = crate::components::ElementalStatus::None;
+                }
+
+                if defeated {
+                    let name_str = target_name.to_string();
+                    self.handle_defeat(target, &name_str, target_class, target_pos);
+                }
+            }
+
+            // Reaction: Nature + Poison -> Purification (or Poison + Nature -> Purification)
+            (
+                crate::components::ElementalStatus::Nature { .. },
+                crate::components::ElementalStatus::Poison { .. },
+            )
+            | (
+                crate::components::ElementalStatus::Poison { .. },
+                crate::components::ElementalStatus::Nature { .. },
+            ) => {
+                self.log(format!(
+                    "[fg:32CD32][b]Elemental Reaction: PURIFICATION[/] on {}![/fg]",
+                    target_name
+                ));
+                let healing_amount = 30;
+                let mut final_hp = 0;
+                if let Some(stats) = self.world.get_mut::<Stats>(target) {
+                    stats.hp = std::cmp::min(stats.max_hp, stats.hp + healing_amount);
+                    final_hp = stats.hp;
+                }
+
+                // Purification VFX (green burst)
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        t_cx,
+                        t_cy,
+                        20,
+                        Color(50, 205, 50),
+                        &['✦', '✧', '*'],
+                    ));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                        Color(100, 255, 100),
+                        0.4,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
+                    ));
+                self.vfx_mut()
+                    .floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        t_cx,
+                        t_cy - 1.0,
+                        &format!("PURIFIED! +{}", healing_amount),
+                        Color(50, 255, 50),
+                        true,
+                    ));
+
+                self.log(format!(
+                    "Purified status! {} was healed for [b]{} HP![/] (HP: {})",
+                    target_name, healing_amount, final_hp
+                ));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ReactionTriggered {
+                        entity: target,
+                        reaction: "Purification".to_owned(),
+                        damage: 0,
+                        healing: healing_amount,
+                    });
+                }
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
+                    events.send(verryte_core::AudioEvent::play("heal"));
+                }
+
+                if let Some(status) = self
+                    .world
+                    .get_mut::<crate::components::ElementalStatus>(target)
+                {
+                    *status = crate::components::ElementalStatus::None;
+                }
+            }
+
             // Reaction: Nature + Ice -> Bloom (or Ice + Nature -> Bloom)
             (
                 crate::components::ElementalStatus::Nature { .. },
@@ -2909,6 +3137,167 @@ impl Game {
                 }
             }
 
+            // Reaction: Fire + Ice -> Melt (or Ice + Fire -> Melt)
+            (
+                crate::components::ElementalStatus::Fire { .. },
+                crate::components::ElementalStatus::Ice { .. },
+            )
+            | (
+                crate::components::ElementalStatus::Ice { .. },
+                crate::components::ElementalStatus::Fire { .. },
+            ) => {
+                self.log(format!(
+                    "[fg:FF4500][b]Elemental Reaction: MELT[/] on {}![/fg]",
+                    target_name
+                ));
+                let bonus_damage = 25;
+                let mut defeated = false;
+                if let Some(stats) = self.world.get_mut::<Stats>(target) {
+                    stats.hp -= bonus_damage;
+                    if stats.hp <= 0 {
+                        defeated = true;
+                    }
+                }
+
+                // Melt VFX
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        t_cx,
+                        t_cy,
+                        15,
+                        Color(255, 128, 0),
+                        &['~', '°', '·'],
+                    ));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                        Color(255, 200, 100),
+                        0.4,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
+                    ));
+                self.vfx_mut()
+                    .floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        t_cx,
+                        t_cy - 1.0,
+                        &format!("MELT! -{}", bonus_damage),
+                        Color(255, 128, 0),
+                        true,
+                    ));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ReactionTriggered {
+                        entity: target,
+                        reaction: "Melt".to_owned(),
+                        damage: bonus_damage,
+                        healing: 0,
+                    });
+                }
+                if let Some(events) = self
+                    .world
+                    .resource_mut::<Events<verryte_core::AudioEvent>>()
+                {
+                    events.send(verryte_core::AudioEvent::play("cleanse"));
+                }
+
+                if let Some(status) = self
+                    .world
+                    .get_mut::<crate::components::ElementalStatus>(target)
+                {
+                    *status = crate::components::ElementalStatus::None;
+                }
+
+                // If on Ice tile, melt it to Water
+                let mut melted_tile = false;
+                if let Some(map) = self.world.resource_mut::<TacticalMap>() {
+                    if map.tile(target_pos.x, target_pos.y) == Tile::Ice {
+                        map.tiles.set(target_pos, Tile::Water);
+                        melted_tile = true;
+                    }
+                }
+                if melted_tile {
+                    self.log(format!("The ice patch at ({}, {}) has melted into water!", target_pos.x, target_pos.y));
+                }
+
+                if defeated {
+                    let name_str = target_name.to_string();
+                    self.handle_defeat(target, &name_str, target_class, target_pos);
+                }
+            }
+
+            // Reaction: Fire + Nature -> Combustion (or Nature + Fire -> Combustion)
+            (
+                crate::components::ElementalStatus::Fire { .. },
+                crate::components::ElementalStatus::Nature { .. },
+            )
+            | (
+                crate::components::ElementalStatus::Nature { .. },
+                crate::components::ElementalStatus::Fire { .. },
+            ) => {
+                self.log(format!(
+                    "[fg:FF0000][b]Elemental Reaction: COMBUSTION[/] on {}![/fg]",
+                    target_name
+                ));
+                let bonus_damage = 15;
+                let mut defeated = false;
+                if let Some(stats) = self.world.get_mut::<Stats>(target) {
+                    stats.hp -= bonus_damage;
+                    if stats.hp <= 0 {
+                        defeated = true;
+                    }
+                }
+
+                // Combustion VFX
+                self.vfx_mut()
+                    .particles
+                    .extend(verryte_terminal::vfx::emit_burst(
+                        t_cx,
+                        t_cy,
+                        20,
+                        Color(255, 0, 0),
+                        &['*', '!', '^'],
+                    ));
+                self.vfx_mut()
+                    .flashes
+                    .push(verryte_terminal::vfx::Flash::full_screen_eased(
+                        Color(255, 50, 0),
+                        0.4,
+                        verryte_terminal::vfx::EasingMode::QuadOut,
+                    ));
+                self.vfx_mut()
+                    .floating_texts
+                    .push(verryte_terminal::vfx::FloatingText::new(
+                        t_cx,
+                        t_cy - 1.0,
+                        &format!("COMBUSTION! -{}", bonus_damage),
+                        Color(255, 50, 0),
+                        true,
+                    ));
+
+                if let Some(log) = self.world.resource_mut::<Events<GameEvent>>() {
+                    log.send(GameEvent::ReactionTriggered {
+                        entity: target,
+                        reaction: "Combustion".to_owned(),
+                        damage: bonus_damage,
+                        healing: 0,
+                    });
+                }
+
+                // Refresh Fire status
+                if let Some(status) = self
+                    .world
+                    .get_mut::<crate::components::ElementalStatus>(target)
+                {
+                    *status = crate::components::ElementalStatus::Fire { duration: 4 };
+                }
+
+                if defeated {
+                    let name_str = target_name.to_string();
+                    self.handle_defeat(target, &name_str, target_class, target_pos);
+                }
+            }
+
             (_, new) => {
                 if let Some(status) = self
                     .world
@@ -2922,6 +3311,7 @@ impl Game {
                     crate::components::ElementalStatus::Lightning { .. } => "Lightning",
                     crate::components::ElementalStatus::Nature { .. } => "Nature",
                     crate::components::ElementalStatus::Poison { .. } => "Poison",
+                    crate::components::ElementalStatus::Fire { .. } => "Fire",
                     crate::components::ElementalStatus::Regen { .. } => "Regen",
                     _ => "None",
                 };
@@ -2931,6 +3321,7 @@ impl Game {
                     "Lightning" => "FFFF64",
                     "Nature" => "32DC64",
                     "Poison" => "A020F0",
+                    "Fire" => "FF4500",
                     "Regen" => "32CD32",
                     _ => "FFFFFF",
                 };
@@ -3314,6 +3705,21 @@ impl Game {
             }
         }
 
+        if let Some(event) = self
+            .world
+            .resource::<Events<GameEvent>>()
+            .and_then(|events| {
+                events.iter().find_map(|event| match event {
+                    GameEvent::FloorEventTriggered(record) => Some(record),
+                    _ => None,
+                })
+            })
+        {
+            return ActionOutcome::FloorEventTriggered {
+                description: event.description.clone(),
+            };
+        }
+
         match (&self.last_outcome, action) {
             (ActionOutcome::Failed { .. }, _) => return self.last_outcome.clone(),
             (
@@ -3329,6 +3735,7 @@ impl Game {
             | (ActionOutcome::StatusViewed { .. }, Action::ViewPrestige)
             | (ActionOutcome::Rested { .. }, Action::Rest)
             | (ActionOutcome::ModifiersRerolled { .. }, Action::RerollModifiers)
+            | (ActionOutcome::FloorEventTriggered { .. }, _)
             | (ActionOutcome::GameSaved { .. }, Action::Save)
             | (ActionOutcome::GameLoaded { .. }, Action::Load)
             | (ActionOutcome::RecordingChanged { .. }, Action::ToggleRecording)
@@ -3566,6 +3973,189 @@ impl Game {
         }
 
         if self.world.resource::<GameState>().unwrap().ui_state
+            == crate::components::UIState::SaveLoadMenu
+        {
+            match action {
+                Action::Cancel | Action::ToggleSaveLoadMenu => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.log("Save/Load menu closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "save_load_menu".to_string(),
+                        enabled: false,
+                    };
+                    return;
+                }
+                Action::MoveNorth => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.selected_save_slot = state.selected_save_slot.saturating_sub(1);
+                    return;
+                }
+                Action::MoveSouth => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.selected_save_slot = (state.selected_save_slot + 1).min(2);
+                    return;
+                }
+                Action::Save => {
+                    let slot = self
+                        .world
+                        .resource::<GameState>()
+                        .unwrap()
+                        .selected_save_slot;
+                    let base_path = super::saves_dir();
+                    let _ = std::fs::create_dir_all(&base_path);
+                    if let Ok(state_str) = self.save_state() {
+                        let filename = format!("save_slot_{}.json", slot);
+                        let path = format!("{}/{}", base_path, filename);
+                        match std::fs::write(&path, &state_str) {
+                            Ok(()) => {
+                                self.log(format!("Game saved to slot {}", slot + 1));
+                                self.last_outcome = ActionOutcome::GameSaved { path };
+                            }
+                            Err(err) => {
+                                let reason = format!("Failed to save game: {}", err);
+                                self.log(reason.clone());
+                                self.last_outcome = ActionOutcome::Failed { reason };
+                            }
+                        }
+                    }
+                    return;
+                }
+                Action::Confirm | Action::Load => {
+                    let slot = self
+                        .world
+                        .resource::<GameState>()
+                        .unwrap()
+                        .selected_save_slot;
+                    let base_path = super::saves_dir();
+                    let filename = format!("save_slot_{}.json", slot);
+                    let path = format!("{}/{}", base_path, filename);
+                    if let Ok(state_str) = std::fs::read_to_string(&path) {
+                        if self.load_state(&state_str).is_ok() {
+                            self.log(format!("Game loaded from slot {}", slot + 1));
+                            self.last_outcome = ActionOutcome::GameLoaded { path };
+                            self.world.resource_mut::<GameState>().unwrap().ui_state =
+                                crate::components::UIState::Normal;
+                        } else {
+                            let reason = format!("Failed to load slot {}", slot + 1);
+                            self.log(reason.clone());
+                            self.last_outcome = ActionOutcome::Failed { reason };
+                        }
+                    } else {
+                        let reason = format!("No save file found in slot {}", slot + 1);
+                        self.log(reason.clone());
+                        self.last_outcome = ActionOutcome::Failed { reason };
+                    }
+                    return;
+                }
+                Action::Quit => {}
+                _ => return,
+            }
+        }
+
+        if self.world.resource::<GameState>().unwrap().ui_state
+            == crate::components::UIState::InspectCharacter
+        {
+            match action {
+                Action::Cancel | Action::ToggleInspectCharacter => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.log("Character inspector closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "inspect_character".to_string(),
+                        enabled: false,
+                    };
+                    return;
+                }
+                Action::Quit => {}
+                _ => return,
+            }
+        }
+
+        if self.world.resource::<GameState>().unwrap().ui_state
+            == crate::components::UIState::CombatLog
+        {
+            match action {
+                Action::Cancel | Action::ToggleCombatLog => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.ui_state = crate::components::UIState::Normal;
+                    state.log_scroll_offset = 0;
+                    self.log("Combat log closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "combat_log".to_string(),
+                        enabled: false,
+                    };
+                    return;
+                }
+                Action::MoveNorth => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.log_scroll_offset = state.log_scroll_offset.saturating_add(1);
+                    return;
+                }
+                Action::MoveSouth => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.log_scroll_offset = state.log_scroll_offset.saturating_sub(1);
+                    return;
+                }
+                Action::Quit => {}
+                _ => return, // Ignore others in combat log
+            }
+        }
+
+        if self.world.resource::<GameState>().unwrap().ui_state
+            == crate::components::UIState::Console
+        {
+            match action {
+                Action::Cancel | Action::ToggleConsole => {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.ui_state = crate::components::UIState::Normal;
+                    if let Some(input) = self.world.resource_mut::<verryte_input::TextInput>() {
+                        input.clear();
+                    }
+                    self.log("Console closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "console".to_string(),
+                        enabled: false,
+                    };
+                    return;
+                }
+                Action::ConsoleKey(key) => {
+                    let mut input = self
+                        .world
+                        .resource_mut::<verryte_input::TextInput>()
+                        .unwrap()
+                        .clone();
+                    let submitted = input.handle_key(key);
+                    *self
+                        .world
+                        .resource_mut::<verryte_input::TextInput>()
+                        .unwrap() = input.clone();
+                    if submitted {
+                        let cmd = input.text().to_string();
+                        self.execute_console_command(&cmd);
+                        let state = self.world.resource_mut::<GameState>().unwrap();
+                        state.ui_state = crate::components::UIState::Normal;
+                        self.world
+                            .resource_mut::<verryte_input::TextInput>()
+                            .unwrap()
+                            .clear();
+                    } else if key == verryte_input::Key::Esc {
+                        let state = self.world.resource_mut::<GameState>().unwrap();
+                        state.ui_state = crate::components::UIState::Normal;
+                        self.world
+                            .resource_mut::<verryte_input::TextInput>()
+                            .unwrap()
+                            .clear();
+                        self.log("Console closed.");
+                    }
+                    return;
+                }
+                Action::Quit => {}
+                _ => return, // Ignore others in console
+            }
+        }
+
+        if self.world.resource::<GameState>().unwrap().ui_state
             == crate::components::UIState::Inventory
         {
             match action {
@@ -3760,6 +4350,20 @@ impl Game {
                         return;
                     }
 
+                    let needs_los = caster_class != CharacterClass::Mage;
+                    if needs_los && effective_range > 1 {
+                        let map = self
+                            .world
+                            .resource::<TacticalMap>()
+                            .expect("TacticalMap registered");
+                        if !verryte_map::has_line_of_sight(caster_pos, cursor, |pt| {
+                            map.tile(pt.x, pt.y) == Tile::Wall
+                        }) {
+                            self.log("Line of sight blocked by a wall!");
+                            return;
+                        }
+                    }
+
                     let mut ap_ok = false;
                     if let Some(stats) = self.world.get_mut::<Stats>(sel_entity) {
                         if stats.ap >= effective_ap_cost {
@@ -3811,117 +4415,138 @@ impl Game {
                                 _ => 1,
                             };
                             let dist = (sel_pos.x - cursor.x).abs() + (sel_pos.y - cursor.y).abs();
-                            if dist <= range {
-                                let mut ap_ok = false;
-                                let mut atk_val = 0;
-                                if let Some(sel_stats) = self.world.get_mut::<Stats>(sel_entity) {
-                                    if sel_stats.ap >= 1 {
-                                        sel_stats.ap -= 1;
-                                        ap_ok = true;
-                                        atk_val = sel_stats.atk;
+                            if dist > range {
+                                self.log("Target is out of attack range!");
+                            } else {
+                                let needs_los = sel_class != CharacterClass::Mage;
+                                let mut has_los = true;
+                                if needs_los && range > 1 {
+                                    let map = self
+                                        .world
+                                        .resource::<TacticalMap>()
+                                        .expect("TacticalMap registered");
+                                    if !verryte_map::has_line_of_sight(sel_pos, cursor, |pt| {
+                                        map.tile(pt.x, pt.y) == Tile::Wall
+                                    }) {
+                                        has_los = false;
                                     }
                                 }
-                                if ap_ok {
-                                    let base_damage = std::cmp::max(1, atk_val - target_stats.def);
-                                    let attacker_name = Self::get_class_name(sel_class);
-                                    let target_name = Self::get_class_name(target_class);
-                                    let (damage, mut defeated) = self.resolve_combat_hit(
-                                        sel_entity,
-                                        target_entity,
-                                        base_damage,
-                                        attacker_name,
-                                        target_name,
-                                        cursor,
-                                    );
 
-                                    if let Some(log) =
-                                        self.world.resource_mut::<Events<GameEvent>>()
+                                if !has_los {
+                                    self.log("Line of sight blocked by a wall!");
+                                } else {
+                                    let mut ap_ok = false;
+                                    let mut atk_val = 0;
+                                    if let Some(sel_stats) = self.world.get_mut::<Stats>(sel_entity)
                                     {
-                                        log.send(GameEvent::Attacked {
-                                            attacker: sel_entity,
-                                            target: target_entity,
-                                            damage,
-                                        });
+                                        if sel_stats.ap >= 1 {
+                                            sel_stats.ap -= 1;
+                                            ap_ok = true;
+                                            atk_val = sel_stats.atk;
+                                        }
                                     }
+                                    if ap_ok {
+                                        let base_damage =
+                                            std::cmp::max(1, atk_val - target_stats.def);
+                                        let attacker_name = Self::get_class_name(sel_class);
+                                        let target_name = Self::get_class_name(target_class);
+                                        let (damage, mut defeated) = self.resolve_combat_hit(
+                                            sel_entity,
+                                            target_entity,
+                                            base_damage,
+                                            attacker_name,
+                                            target_name,
+                                            cursor,
+                                        );
 
-                                    if !defeated {
-                                        let mut attacker_element = match sel_class {
-                                            CharacterClass::Warrior => {
-                                                crate::components::ElementalStatus::Ice {
-                                                    duration: 3,
-                                                }
-                                            }
-                                            CharacterClass::Mage => {
-                                                crate::components::ElementalStatus::Lightning {
-                                                    duration: 3,
-                                                }
-                                            }
-                                            CharacterClass::Healer => {
-                                                crate::components::ElementalStatus::Nature {
-                                                    duration: 3,
-                                                }
-                                            }
-                                            _ => crate::components::ElementalStatus::None,
-                                        };
-
-                                        // Frostbite Echo: 20% chance to apply Ice regardless of class
-                                        if let Some(echoes) =
-                                            self.world
-                                                .resource::<crate::components::EquippedEchoes>()
+                                        if let Some(log) =
+                                            self.world.resource_mut::<Events<GameEvent>>()
                                         {
-                                            if echoes.abilities.contains(
-                                                &crate::components::EchoAbility::Frostbite,
-                                            ) {
-                                                let rng = self.world.resource_mut::<Rng>().unwrap();
-                                                if rng.chance(0.2) {
-                                                    attacker_element =
+                                            log.send(GameEvent::Attacked {
+                                                attacker: sel_entity,
+                                                target: target_entity,
+                                                damage,
+                                            });
+                                        }
+
+                                        if !defeated {
+                                            let mut attacker_element = match sel_class {
+                                                CharacterClass::Warrior => {
+                                                    crate::components::ElementalStatus::Ice {
+                                                        duration: 3,
+                                                    }
+                                                }
+                                                CharacterClass::Mage => {
+                                                    crate::components::ElementalStatus::Lightning {
+                                                        duration: 3,
+                                                    }
+                                                }
+                                                CharacterClass::Healer => {
+                                                    crate::components::ElementalStatus::Nature {
+                                                        duration: 3,
+                                                    }
+                                                }
+                                                _ => crate::components::ElementalStatus::None,
+                                            };
+
+                                            // Frostbite Echo: 20% chance to apply Ice regardless of class
+                                            if let Some(echoes) =
+                                                self.world
+                                                    .resource::<crate::components::EquippedEchoes>()
+                                            {
+                                                if echoes.abilities.contains(
+                                                    &crate::components::EchoAbility::Frostbite,
+                                                ) {
+                                                    let rng =
+                                                        self.world.resource_mut::<Rng>().unwrap();
+                                                    if rng.chance(0.2) {
+                                                        attacker_element =
                                                         crate::components::ElementalStatus::Ice {
                                                             duration: 2,
                                                         };
+                                                    }
+                                                }
+                                            }
+
+                                            if attacker_element
+                                                != crate::components::ElementalStatus::None
+                                            {
+                                                self.apply_elemental_status(
+                                                    target_entity,
+                                                    attacker_element,
+                                                );
+                                            }
+                                            if let Some(t_stats) =
+                                                self.world.get::<Stats>(target_entity)
+                                            {
+                                                if t_stats.hp <= 0 {
+                                                    defeated = true;
                                                 }
                                             }
                                         }
 
-                                        if attacker_element
-                                            != crate::components::ElementalStatus::None
-                                        {
-                                            self.apply_elemental_status(
+                                        if defeated {
+                                            let name_str = target_name.to_string();
+                                            self.handle_defeat(
                                                 target_entity,
-                                                attacker_element,
+                                                &name_str,
+                                                target_class,
+                                                cursor,
                                             );
+                                        } else {
+                                            self.check_parry(cursor);
                                         }
-                                        if let Some(t_stats) =
-                                            self.world.get::<Stats>(target_entity)
-                                        {
-                                            if t_stats.hp <= 0 {
-                                                defeated = true;
-                                            }
-                                        }
-                                    }
 
-                                    if defeated {
-                                        let name_str = target_name.to_string();
-                                        self.handle_defeat(
-                                            target_entity,
-                                            &name_str,
-                                            target_class,
-                                            cursor,
-                                        );
+                                        self.build_concert_energy(20);
+
+                                        self.world
+                                            .resource_mut::<GameState>()
+                                            .unwrap()
+                                            .selected_entity = None;
                                     } else {
-                                        self.check_parry(cursor);
+                                        self.log("Not enough AP to attack!");
                                     }
-
-                                    self.build_concert_energy(20);
-
-                                    self.world
-                                        .resource_mut::<GameState>()
-                                        .unwrap()
-                                        .selected_entity = None;
-                                } else {
-                                    self.log("Not enough AP to attack!");
                                 }
-                            } else {
-                                self.log("Target is out of range!");
                             }
                         } else if target_team == Team::Player {
                             let sel_class = *self.world.get::<CharacterClass>(sel_entity).unwrap();
@@ -4274,6 +4899,7 @@ impl Game {
                                                                 );
                                                             }
                                                         }
+                                                        let is_steam = result.hazard_type == crate::components::HazardType::SteamVent;
                                                         if let Some(hazards_mut) = self
                                                             .world
                                                             .resource_mut::<crate::components::ActiveHazards>()
@@ -4282,6 +4908,9 @@ impl Game {
                                                                 hazards_mut,
                                                                 final_dest,
                                                             );
+                                                        }
+                                                        if is_steam {
+                                                            crate::systems::trigger_steam_vent_explosion(&mut self.world, final_dest);
                                                         }
                                                         let (tcx, tcy) =
                                                             self.get_tile_center_pixels(final_dest);
@@ -4471,53 +5100,58 @@ impl Game {
 
                                 match effect {
                                     crate::components::ItemEffect::Heal(amount) => {
-                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
-                                            stats.hp =
-                                                std::cmp::min(stats.max_hp, stats.hp + amount);
-                                            self.log(format!("Healed for {} HP.", amount));
-                                            let (tcx, tcy) = self.get_tile_center_pixels(
-                                                *self.world.get::<Position>(entity).unwrap(),
-                                            );
-                                            self.vfx_mut().particles.extend(
-                                                verryte_terminal::vfx::emit_heal(tcx, tcy, 20),
-                                            );
-                                            if let Some(events) = self
-                                                .world
-                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                            {
-                                                events.send(verryte_core::AudioEvent::play("heal"));
-                                            }
+                                        let (healed, _def) = crate::systems::apply_heal(
+                                            &mut self.world,
+                                            entity,
+                                            amount,
+                                        );
+                                        self.log(format!("Healed for {} HP.", healed));
+                                        let (tcx, tcy) = self.get_tile_center_pixels(
+                                            *self.world.get::<Position>(entity).unwrap(),
+                                        );
+                                        self.vfx_mut()
+                                            .particles
+                                            .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 20));
+                                        if let Some(events) = self
+                                            .world
+                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                        {
+                                            events.send(verryte_core::AudioEvent::play("heal"));
                                         }
                                     }
                                     crate::components::ItemEffect::Combined(heal, ap) => {
+                                        let (healed, _def) = crate::systems::apply_heal(
+                                            &mut self.world,
+                                            entity,
+                                            heal,
+                                        );
                                         if let Some(stats) = self.world.get_mut::<Stats>(entity) {
-                                            stats.hp = std::cmp::min(stats.max_hp, stats.hp + heal);
                                             stats.ap = std::cmp::min(stats.max_ap, stats.ap + ap);
-                                            self.log(format!("Combined effect! Healed for {} HP and replenished {} AP.", heal, ap));
-                                            let (tcx, tcy) = self.get_tile_center_pixels(
-                                                *self.world.get::<Position>(entity).unwrap(),
-                                            );
-                                            self.vfx_mut().particles.extend(
-                                                verryte_terminal::vfx::emit_heal(tcx, tcy, 20),
-                                            );
-                                            self.vfx_mut().particles.extend(
-                                                verryte_terminal::vfx::emit_burst(
-                                                    tcx,
-                                                    tcy,
-                                                    12,
-                                                    Color(255, 255, 100),
-                                                    &['+', '⚡'],
-                                                ),
-                                            );
-                                            if let Some(events) = self
-                                                .world
-                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                            {
-                                                events.send(verryte_core::AudioEvent::play("heal"));
-                                                events.send(verryte_core::AudioEvent::play(
-                                                    "replenish_ap",
-                                                ));
-                                            }
+                                        }
+                                        self.log(format!("Combined effect! Healed for {} HP and replenished {} AP.", healed, ap));
+                                        let (tcx, tcy) = self.get_tile_center_pixels(
+                                            *self.world.get::<Position>(entity).unwrap(),
+                                        );
+                                        self.vfx_mut()
+                                            .particles
+                                            .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 20));
+                                        self.vfx_mut().particles.extend(
+                                            verryte_terminal::vfx::emit_burst(
+                                                tcx,
+                                                tcy,
+                                                12,
+                                                Color(255, 255, 100),
+                                                &['+', '⚡'],
+                                            ),
+                                        );
+                                        if let Some(events) = self
+                                            .world
+                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                        {
+                                            events.send(verryte_core::AudioEvent::play("heal"));
+                                            events.send(verryte_core::AudioEvent::play(
+                                                "replenish_ap",
+                                            ));
                                         }
                                     }
                                     crate::components::ItemEffect::ReplenishAp(amount) => {
@@ -4554,15 +5188,18 @@ impl Game {
                                         );
                                         self.world.remove::<crate::components::Rooted>(entity);
                                         self.world.remove::<crate::components::Stunned>(entity);
+                                        let (healed, _def) = crate::systems::apply_heal(
+                                            &mut self.world,
+                                            entity,
+                                            amount,
+                                        );
                                         let mut final_hp = 0;
-                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
-                                            stats.hp =
-                                                std::cmp::min(stats.max_hp, stats.hp + amount);
+                                        if let Some(stats) = self.world.get::<Stats>(entity) {
                                             final_hp = stats.hp;
                                         }
                                         self.log(format!(
                                             "Cleansed and healed for {} HP! (HP: {})",
-                                            amount, final_hp
+                                            healed, final_hp
                                         ));
                                         let (tcx, tcy) = self.get_tile_center_pixels(
                                             *self.world.get::<Position>(entity).unwrap(),
@@ -4720,6 +5357,132 @@ impl Game {
                         enabled: true,
                     };
                 }
+            }
+            Action::ToggleCombatLog => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.ui_state == crate::components::UIState::CombatLog {
+                    state.ui_state = crate::components::UIState::Normal;
+                    state.log_scroll_offset = 0;
+                    self.log("Combat log closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "combat_log".to_string(),
+                        enabled: false,
+                    };
+                } else {
+                    state.ui_state = crate::components::UIState::CombatLog;
+                    state.log_scroll_offset = 0;
+                    self.log("Combat log opened. Use Up/Down arrows to scroll.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "combat_log".to_string(),
+                        enabled: true,
+                    };
+                }
+            }
+            Action::ToggleConsole => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.ui_state == crate::components::UIState::Console {
+                    state.ui_state = crate::components::UIState::Normal;
+                    if let Some(input) = self.world.resource_mut::<verryte_input::TextInput>() {
+                        input.clear();
+                    }
+                    self.log("Console closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "console".to_string(),
+                        enabled: false,
+                    };
+                } else {
+                    state.ui_state = crate::components::UIState::Console;
+                    if let Some(input) = self.world.resource_mut::<verryte_input::TextInput>() {
+                        input.clear();
+                    }
+                    self.log("Console opened. Type cheat commands (/heal, /damage, /xp, /spawn, /modifier).");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "console".to_string(),
+                        enabled: true,
+                    };
+                }
+            }
+            Action::ConsoleKey(key)
+                if self.world.resource::<GameState>().unwrap().ui_state
+                    == crate::components::UIState::Console =>
+            {
+                let mut input = self
+                    .world
+                    .resource_mut::<verryte_input::TextInput>()
+                    .unwrap()
+                    .clone();
+                let submitted = input.handle_key(key);
+                *self
+                    .world
+                    .resource_mut::<verryte_input::TextInput>()
+                    .unwrap() = input.clone();
+                if submitted {
+                    let cmd = input.text().to_string();
+                    self.execute_console_command(&cmd);
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.world
+                        .resource_mut::<verryte_input::TextInput>()
+                        .unwrap()
+                        .clear();
+                } else if key == verryte_input::Key::Esc {
+                    let state = self.world.resource_mut::<GameState>().unwrap();
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.world
+                        .resource_mut::<verryte_input::TextInput>()
+                        .unwrap()
+                        .clear();
+                    self.log("Console closed.");
+                }
+            }
+            Action::ToggleSaveLoadMenu => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.ui_state == crate::components::UIState::SaveLoadMenu {
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.log("Save/Load menu closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "save_load_menu".to_string(),
+                        enabled: false,
+                    };
+                } else {
+                    state.ui_state = crate::components::UIState::SaveLoadMenu;
+                    self.log("Save/Load menu opened. [F5/S] to save, [F9/Enter] to load.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "save_load_menu".to_string(),
+                        enabled: true,
+                    };
+                }
+            }
+            Action::ToggleInspectCharacter => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                if state.ui_state == crate::components::UIState::InspectCharacter {
+                    state.ui_state = crate::components::UIState::Normal;
+                    self.log("Character inspector closed.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "inspect_character".to_string(),
+                        enabled: false,
+                    };
+                } else {
+                    state.ui_state = crate::components::UIState::InspectCharacter;
+                    self.log("Character inspector opened.");
+                    self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                        name: "inspect_character".to_string(),
+                        enabled: true,
+                    };
+                }
+            }
+            Action::ToggleThreatMap => {
+                let state = self.world.resource_mut::<GameState>().unwrap();
+                state.show_threat_map = !state.show_threat_map;
+                let enabled = state.show_threat_map;
+                self.log(format!(
+                    "Enemy threat map {}.",
+                    if enabled { "enabled" } else { "disabled" }
+                ));
+                self.last_outcome = crate::snapshot::ActionOutcome::ToggleChanged {
+                    name: "threat_map".to_string(),
+                    enabled,
+                };
             }
             Action::EndTurn => {
                 let phase = self.world.resource::<GameState>().unwrap().phase;
@@ -5772,6 +6535,320 @@ impl Game {
             }
         } else {
             self.log("No reachable safe tiles found!");
+        }
+    }
+
+    pub fn execute_console_command(&mut self, cmd: &str) {
+        let cmd = cmd.trim();
+        if cmd.is_empty() {
+            return;
+        }
+
+        if cmd.starts_with("/heal") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            let amount = parts
+                .get(1)
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(100);
+            if let Some(sel) = self.world.resource::<GameState>().unwrap().selected_entity {
+                if let Some(stats) = self.world.get_mut::<Stats>(sel) {
+                    stats.hp = (stats.hp + amount).min(stats.max_hp);
+                }
+                self.log(format!("Healed selected character for {} HP.", amount));
+            } else {
+                // Heal all player characters
+                let mut players = Vec::new();
+                for (e, team) in self.world.query::<crate::components::Team>() {
+                    if *team == crate::components::Team::Player {
+                        players.push(e);
+                    }
+                }
+                for e in players {
+                    if let Some(stats) = self.world.get_mut::<Stats>(e) {
+                        stats.hp = (stats.hp + amount).min(stats.max_hp);
+                    }
+                }
+                self.log(format!("Healed all player characters for {} HP.", amount));
+            }
+        } else if cmd.starts_with("/damage") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            let amount = parts
+                .get(1)
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(20);
+            if let Some(sel) = self.world.resource::<GameState>().unwrap().selected_entity {
+                let mut defeated = false;
+                let mut class = CharacterClass::DestructibleObject;
+                let mut pos = Position::new(0, 0);
+                if let Some(stats) = self.world.get_mut::<Stats>(sel) {
+                    stats.hp = stats.hp.saturating_sub(amount);
+                    if stats.hp == 0 {
+                        defeated = true;
+                        class = self
+                            .world
+                            .get::<CharacterClass>(sel)
+                            .copied()
+                            .unwrap_or(CharacterClass::DestructibleObject);
+                        pos = self
+                            .world
+                            .get::<Position>(sel)
+                            .copied()
+                            .unwrap_or(Position::new(0, 0));
+                    }
+                }
+                self.log(format!("Dealt {} damage to selected character.", amount));
+                if defeated {
+                    let name = Self::get_class_name(class);
+                    self.handle_defeat(sel, name, class, pos);
+                }
+            } else {
+                // Damage all enemies
+                let mut targets = Vec::new();
+                for (e, team, pos, class) in self
+                    .world
+                    .query3::<crate::components::Team, Position, CharacterClass>()
+                {
+                    if *team == crate::components::Team::Enemy {
+                        targets.push((e, *pos, *class));
+                    }
+                }
+                let mut defeated_list = Vec::new();
+                for (e, pos, class) in targets {
+                    if let Some(stats) = self.world.get_mut::<Stats>(e) {
+                        stats.hp = stats.hp.saturating_sub(amount);
+                        if stats.hp == 0 {
+                            defeated_list.push((e, class, pos));
+                        }
+                    }
+                }
+                self.log(format!("Dealt {} damage to all enemies.", amount));
+                for (e, class, pos) in defeated_list {
+                    let name = Self::get_class_name(class);
+                    self.handle_defeat(e, name, class, pos);
+                }
+            }
+        } else if cmd.starts_with("/xp") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            let amount = parts
+                .get(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(50);
+            if let Some(sel) = self.world.resource::<GameState>().unwrap().selected_entity {
+                let mut lvl_up = false;
+                let mut new_lvl = 0;
+                let mut pos = Position::new(0, 0);
+                if let Some(stats) = self.world.get_mut::<Stats>(sel) {
+                    stats.xp += amount;
+                    let needed = stats.level * 100;
+                    if stats.xp >= needed {
+                        stats.xp -= needed;
+                        stats.level += 1;
+                        stats.max_hp += 10;
+                        stats.hp = stats.max_hp;
+                        stats.atk += 2;
+                        stats.def += 1;
+                        lvl_up = true;
+                        new_lvl = stats.level;
+                        pos = self
+                            .world
+                            .get::<Position>(sel)
+                            .copied()
+                            .unwrap_or(Position::new(0, 0));
+                    }
+                }
+                if lvl_up {
+                    if let Some(tree) = self.world.get_mut::<crate::components::SkillTree>(sel) {
+                        tree.skill_points += 1;
+                    }
+                    self.log(format!(
+                        "Level up! Selected character reached level {}.",
+                        new_lvl
+                    ));
+                    let (cx, cy) = (pos.x as f32 * 4.0, pos.y as f32 * 2.0);
+                    if let Some(vfx) = self
+                        .world
+                        .resource_mut::<verryte_terminal::vfx::VfxSystem>()
+                    {
+                        vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                            cx,
+                            cy,
+                            30,
+                            Color(255, 215, 0),
+                            &['✦', '✧', '*', '★'],
+                        ));
+                    }
+                } else {
+                    self.log(format!("Added {} XP to selected character.", amount));
+                }
+            } else {
+                self.log("Select a player character first to grant XP.");
+            }
+        } else if cmd.starts_with("/spawn") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if let Some(class_str) = parts.get(1) {
+                let class = match class_str.to_lowercase().as_str() {
+                    "corruptedspore" | "spore" => Some(CharacterClass::CorruptedSpore),
+                    "cursedsentinel" | "sentinel" => Some(CharacterClass::CursedSentinel),
+                    "plaguewraith" | "wraith" => Some(CharacterClass::PlagueWraith),
+                    "enemycleric" | "cleric" => Some(CharacterClass::EnemyCleric),
+                    "boss" | "crownless" => Some(CharacterClass::Boss),
+                    _ => None,
+                };
+                if let Some(class) = class {
+                    let mut spawn_pos = self.world.resource::<GameState>().unwrap().cursor;
+                    if parts.len() >= 4 {
+                        if let (Ok(px), Ok(py)) = (parts[2].parse::<i16>(), parts[3].parse::<i16>())
+                        {
+                            spawn_pos = Position::new(px, py);
+                        }
+                    }
+                    let mut to_clear = Vec::new();
+                    for (e, p) in self.world.query::<Position>() {
+                        if *p == spawn_pos {
+                            to_clear.push(e);
+                        }
+                    }
+                    for e in to_clear {
+                        self.world.despawn(e);
+                    }
+                    self.world
+                        .spawn_character(spawn_pos, crate::components::Team::Enemy, class);
+                    self.log(format!("Spawned {:?} at {:?}", class, spawn_pos));
+                } else {
+                    self.log(format!("Unknown enemy class: {}", class_str));
+                }
+            } else {
+                self.log("Usage: /spawn [spore|sentinel|wraith|cleric|boss] [x] [y]");
+            }
+        } else if cmd.starts_with("/modifier") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if let Some(mod_name) = parts.get(1) {
+                let modifier = match mod_name.to_lowercase().as_str() {
+                    "darkness" => Some(crate::components::FloorModifier::Darkness),
+                    "gravitywell" => Some(crate::components::FloorModifier::GravityWell),
+                    "elementalstorm" => Some(crate::components::FloorModifier::ElementalStorm),
+                    "healingsurge" => Some(crate::components::FloorModifier::HealingSurge),
+                    "frenzy" => Some(crate::components::FloorModifier::Frenzy),
+                    "fogofwar" => Some(crate::components::FloorModifier::FogOfWar),
+                    "reversal" => Some(crate::components::FloorModifier::Reversal),
+                    _ => None,
+                };
+                if let Some(m) = modifier {
+                    if let Some(mods) = self
+                        .world
+                        .resource_mut::<crate::components::ActiveFloorModifiers>()
+                    {
+                        mods.modifiers.push(m);
+                        mods.turns_remaining.push(99);
+                    }
+                    self.log(format!("Added floor modifier: {}", mod_name));
+                } else {
+                    self.log(format!("Unknown floor modifier: {}", mod_name));
+                }
+            } else {
+                self.log("Usage: /modifier [modifier_name]");
+            }
+        } else if cmd.starts_with("/weather") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if let Some(&type_str) = parts.get(1) {
+                let w = match type_str.to_lowercase().as_str() {
+                    "sunny" => Some(crate::components::WeatherType::Sunny),
+                    "rainy" => Some(crate::components::WeatherType::Rainy),
+                    "lightning" | "lightningstorm" | "storm" => {
+                        Some(crate::components::WeatherType::LightningStorm)
+                    }
+                    "snowing" | "snow" => Some(crate::components::WeatherType::Snowing),
+                    _ => None,
+                };
+                if let Some(wt) = w {
+                    if let Some(weather) = self.world.resource_mut::<crate::components::Weather>() {
+                        weather.current = wt;
+                        weather.danger_zones.clear();
+                    }
+                    self.update_weather_ambient(wt);
+                    self.log(format!("Weather manually set to {:?}.", wt));
+                } else {
+                    self.log("Invalid weather type. Choose from: sunny, rainy, lightning, snow.");
+                }
+            } else {
+                self.log("Usage: /weather <sunny|rainy|lightning|snow>");
+            }
+        } else if cmd.starts_with("/floor") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if let Some(&floor_str) = parts.get(1) {
+                if let Ok(target_floor) = floor_str.parse::<u32>() {
+                    if target_floor >= 1 {
+                        let current_floor = self.world.resource::<GameState>().unwrap().floor;
+                        if target_floor > current_floor {
+                            for _ in current_floor..target_floor {
+                                self.transition_to_next_floor();
+                            }
+                            self.log(format!("Transitioned to Floor {}.", target_floor));
+                        } else {
+                            self.log("Cannot transition to a previous floor.");
+                        }
+                    }
+                }
+            } else {
+                self.log("Usage: /floor <num>");
+            }
+        } else if cmd.starts_with("/elite") {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if let Some(&mod_str) = parts.get(1) {
+                let modifier = match mod_str.to_lowercase().as_str() {
+                    "vampiric" => Some(crate::components::EliteModifier::Vampiric),
+                    "fiery" => Some(crate::components::EliteModifier::Fiery),
+                    "sturdy" => Some(crate::components::EliteModifier::Sturdy),
+                    "swift" => Some(crate::components::EliteModifier::Swift),
+                    _ => None,
+                };
+                if let Some(m) = modifier {
+                    if let Some(sel) = self.world.resource::<GameState>().unwrap().selected_entity {
+                        let mut ee = self.world.get_mut::<crate::components::EliteEnemy>(sel);
+                        if let Some(ref mut ee_comp) = ee {
+                            if !ee_comp.modifiers.contains(&m) {
+                                ee_comp.modifiers.push(m);
+                            }
+                        } else {
+                            self.world
+                                .insert(sel, crate::components::EliteEnemy { modifiers: vec![m] });
+                        }
+
+                        // Apply stats changes
+                        if let Some(stats) = self.world.get_mut::<Stats>(sel) {
+                            match m {
+                                crate::components::EliteModifier::Sturdy => {
+                                    stats.max_hp = (stats.max_hp as f32 * 1.5) as i32;
+                                    stats.hp = stats.max_hp;
+                                    stats.def += 5;
+                                }
+                                crate::components::EliteModifier::Swift => {
+                                    stats.max_ap += 1;
+                                    stats.ap = stats.max_ap;
+                                    stats.spd += 3;
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        let class = self
+                            .world
+                            .get::<CharacterClass>(sel)
+                            .copied()
+                            .unwrap_or(CharacterClass::Warrior);
+                        let name = Self::get_class_name(class);
+                        self.log(format!("Granted {:?} modifier to {}.", m, name));
+                    } else {
+                        self.log("Select a character first to grant modifier.");
+                    }
+                } else {
+                    self.log("Invalid modifier. Choose from: vampiric, fiery, sturdy, swift.");
+                }
+            } else {
+                self.log("Usage: /elite <vampiric|fiery|sturdy|swift>");
+            }
+        } else {
+            self.log(format!("Unknown console command: {}", cmd));
         }
     }
 

@@ -1,5 +1,102 @@
 # Verryte Worklog
 
+## 2026-08-12 - dynamic floor events
+
+**Goal.** Add observable mid-floor events to the tactical RPG without creating
+a separate control or simulation path.
+
+**Accomplishments.**
+- Added a serializable `DynamicFloorEvents` resource that schedules one
+  seed-driven event every three turns on Floor 2+: either a timed modifier
+  surge or a scaled mini-boss incursion on a deterministic free tile.
+- Reused the existing floor-modifier, spawn-scaling, RNG, message-log, and event
+  systems. Events emit `GameEvent::FloorEventTriggered` and are promoted to a
+  structured `ActionOutcome::FloorEventTriggered` on the shared action-report
+  path.
+- Extended snapshots and agent JSON with `next_floor_event_turn` and a bounded
+  `recent_floor_events` history. Registered the resource for save/load and added
+  missing-resource fallback for older saves.
+- Added focused coverage for once-per-turn scheduling, snapshot/report
+  observability, outcome serialization, and save/load preservation.
+
+**Verification.** `cargo test --workspace` passes, including 270 Wuthering unit
+tests, 58 integration tests, 18 mechanics tests, and 42 save/load tests. The
+agent runner produced correctly sized 80x24 and 120x40 frames with the new
+snapshot fields. `cargo fmt --check` remains blocked by pre-existing formatting
+drift in unrelated dirty-worktree edits; new sections were kept rustfmt-clean.
+
+**Next Steps.** Add event-specific telegraphs or player choices while retaining
+the same event, action, and snapshot surfaces.
+
+## 2026-08-12 - autonomous engine run
+
+**Goal.** Strengthen the shared control and observability path while removing
+prototype-local movement logic.
+
+**Accomplishments.**
+- Fixed `verryte-input` recording so an action is captured once when queued,
+  rather than duplicated when it is later drained. Added regression coverage
+  for single-action, batch-drain, and trace behavior.
+- Updated the headless Wuthering agent runner to tag injected commands as
+  `ActionSource::Agent`, preserving provenance without creating a second game
+  path.
+- Extended Wuthering snapshots with timed floor-modifier durations and active
+  weather danger zones for structured agent planning.
+- Added deterministic cost/row/column ordering to
+  `verryte-map::ReachabilityMap::points` and migrated Wuthering's reachable-tile
+  calculation to that reusable weighted primitive.
+- Removed the level-editor unreachable fallback and fixed stale test warnings.
+
+**Verification.** Targeted input, map, and Wuthering snapshot tests pass. Full
+workspace verification remains the final step for this run.
+
+**Next Steps.** Implement a small dynamic floor-event resource that can emit
+structured events (modifier changes or mini-boss spawns) through the existing
+action reports, using the new snapshot surfaces for agent control.
+
+## 2026-06-18
+
+**Goal.** Enhance tactical RPG prototype with Advanced AI and Reactive Environments.
+
+**Accomplishments.**
+- **New Character Class**: Added `FrozenSentinel`, a heavily armored defender-type enemy.
+- **Defender AI Archetype**: Implemented a new AI strategy where units prioritize staying near and protecting high-value allies (like the Boss or Clerics).
+- **Fire Elemental Status**: Introduced `Fire` as a new elemental status that deals damage over time and enables new reactions.
+- **Reactive Environments**:
+  - **Melt Reaction**: Fire + Ice on an entity deals bonus damage and cleanses both. If the entity is on an `Ice` tile, the tile melts into `Water`.
+  - **Combustion Reaction**: Fire + Nature deals bonus damage and refreshes the Fire duration.
+- **Verification**: Added 18 tests to `new_mechanics.rs` and updated existing bestiary tests to account for the new character class. Verified the shared control path via `wuthering-terminal-agent`.
+
+**Next Steps.**
+- Implement **Dynamic Floor Events**: Random events that change floor modifiers or spawn mini-bosses mid-floor.
+- Expand **Equipment Crafting**: Add more recipes and a dedicated UI for the crafting system.
+- Refine **Level Editor**: Add more tile types and entity placement options.
+
+**Goal.** Continue expanding tactical RPG prototype content and mechanics, picking up from previous completion of the core roadmap.
+
+**Accomplishments.**
+- **Assassin Teleport AI**: Upgraded the `Assassin` AI archetype (used by VoidTerror) to possess a "Shadow Step" ability. If a player is within 5 tiles but not adjacent, and the enemy has enough AP, it will actively teleport to a flanking position (or any valid adjacent tile) before attacking.
+- This teleport dynamically utilizes the engine's VFX system (`emit_burst` and `Flash::region` in purple colors) to visually telegraph the mechanic.
+- Fixed minor state synchronization issues within `enemy_ai_system` when `Position` is updated during enemy turns to ensure the combat and VFX system target the correct coordinates.
+
+**Verification**: Ran all workspace unit and integration tests successfully (`cargo test --workspace`).
+
+**Next Steps**: Further expansions of character rosters, unique boss encounters, or deeper level editor mechanics.
+
+## 2026-06-14 (Part 2)
+
+**Goal.** Since the initial roadmap for `wuthering-terminal` was fully complete, expand content and add tooling as suggested by the last worklog entry.
+
+**Accomplishments.**
+- **Dedicated Level Editor**: Built `prototype/wuthering-terminal/src/bin/editor.rs`, a standalone interactive TUI editor using `verryte-tty` and `verryte-terminal::Grid`. It provides a canvas to paint `TacticalMap` tiles with a selectable palette (Wall, Grass, Water, Lava, etc.) and camera offset logic.
+- **VoidTerror Content Expansion**: Fully integrated the `VoidTerror` enemy into the game.
+  - Assigned it to the `Assassin` AI archetype to allow flanking and pursuit behavior.
+  - Added its Bestiary entry detailing its lore and drop table (`Void Core`, `Dark Essence`).
+  - Increased its spawn frequency significantly for procedural dungeon generation on Floor 2 and beyond.
+- **Cleanup**: Fixed missing or failing assertions in tests related to Bestiary totals and eliminated several unused import warnings using `cargo fix`.
+
+**Verification**: Confirmed all 360+ workspace tests pass. Verified the `editor` binary compiles successfully without warnings.
+
 ## 2026-06-14
 
 ### Context: Tactical RPG Prototype & VFX System Integration

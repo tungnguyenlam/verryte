@@ -50,6 +50,12 @@ pub enum Action {
     ToggleCameraLock,
     ZoomIn,
     ZoomOut,
+    ToggleCombatLog,
+    ToggleConsole,
+    ConsoleKey(verryte_input::Key),
+    ToggleSaveLoadMenu,
+    ToggleInspectCharacter,
+    ToggleThreatMap,
 }
 
 impl Action {
@@ -135,8 +141,10 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('H'), Action::ToggleHelp);
 
     // Camera
-    b.bind(Key::Char('c'), Action::ToggleCameraLock);
-    b.bind(Key::Char('C'), Action::ToggleCameraLock);
+    b.bind(Key::Char('o'), Action::ToggleCameraLock);
+    b.bind(Key::Char('O'), Action::ToggleCameraLock);
+    b.bind(Key::Char('c'), Action::ToggleInspectCharacter);
+    b.bind(Key::Char('C'), Action::ToggleInspectCharacter);
     b.bind(
         Key::modified('↑', false, false, true),
         Action::PanCamera(Direction::North),
@@ -177,6 +185,22 @@ pub fn default_bindings() -> Bindings<Action> {
     // Bestiary
     b.bind(Key::Char('j'), Action::ToggleBestiary);
     b.bind(Key::Char('J'), Action::ToggleBestiary);
+
+    // Combat Log
+    b.bind(Key::Char('g'), Action::ToggleCombatLog);
+    b.bind(Key::Char('G'), Action::ToggleCombatLog);
+
+    // Console
+    b.bind(Key::Char('/'), Action::ToggleConsole);
+    b.bind(Key::Char('`'), Action::ToggleConsole);
+
+    // Save/Load Menu
+    b.bind(Key::Char('l'), Action::ToggleSaveLoadMenu);
+    b.bind(Key::Char('L'), Action::ToggleSaveLoadMenu);
+
+    // Threat Map
+    b.bind(Key::Char('k'), Action::ToggleThreatMap);
+    b.bind(Key::Char('K'), Action::ToggleThreatMap);
 
     b
 }
@@ -221,6 +245,11 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("rest", Action::Rest);
     c.bind_name("bestiary", Action::ToggleBestiary);
     c.bind_name("lore", Action::ToggleBestiary);
+    c.bind_name("combat_log", Action::ToggleCombatLog);
+    c.bind_name("console", Action::ToggleConsole);
+    c.bind_name("save_load_menu", Action::ToggleSaveLoadMenu);
+    c.bind_name("inspect", Action::ToggleInspectCharacter);
+    c.bind_name("threat_map", Action::ToggleThreatMap);
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('s', Action::MoveSouth);
@@ -248,6 +277,9 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('t', Action::ToggleSkillTree);
     c.bind_glyph('v', Action::ViewPrestige);
     c.bind_glyph('j', Action::ToggleBestiary);
+    c.bind_glyph('g', Action::ToggleCombatLog);
+    c.bind_glyph('l', Action::ToggleSaveLoadMenu);
+    c.bind_glyph('k', Action::ToggleThreatMap);
 
     c
 }
@@ -333,6 +365,14 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
 
     if token == "rest" {
         return Some(Action::Rest);
+    }
+
+    if token == "combat_log" || token == "log" {
+        return Some(Action::ToggleCombatLog);
+    }
+
+    if token == "console" || token == "prompt" {
+        return Some(Action::ToggleConsole);
     }
 
     if token == "bestiary" || token == "lore" {

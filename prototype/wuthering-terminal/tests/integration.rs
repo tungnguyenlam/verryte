@@ -1,7 +1,8 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    CharacterClass, EchoItem, EquipmentSlot, EquippedEchoes, EquippedItems, Fatigue, GameState,
-    Inventory, ItemEffect, Morale, Outcome, ReplayState, Stats, TurnPhase, TurnTransition, UIState,
+    CharacterClass, DynamicFloorEvents, EchoItem, EquipmentSlot, EquippedEchoes, EquippedItems,
+    Fatigue, FloorEventKind, FloorModifier, GameEvent, GameState, Inventory, ItemEffect, Morale,
+    Outcome, ReplayState, Stats, TurnPhase, TurnTransition, UIState,
 };
 use wuthering_terminal::equipment;
 use wuthering_terminal::snapshot::{ActionOutcome, FailureCategory};
@@ -573,6 +574,68 @@ fn reroll_modifiers_reports_active_modifier_names() {
         other => panic!("expected modifier reroll outcome, got {other:?}"),
     }
     assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
+fn dynamic_floor_event_is_observable_through_snapshot_and_step_report() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+
+    let record = wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::Darkness,
+            duration: 4,
+        },
+    );
+    let snapshot = game.snapshot();
+    assert_eq!(
+        snapshot.recent_floor_events,
+        vec![record.description.clone()]
+    );
+    assert!(snapshot.active_modifiers.contains(&"Darkness".to_string()));
+    assert!(game
+        .world
+        .resource::<verryte_core::Events<GameEvent>>()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(event, GameEvent::FloorEventTriggered(_))));
+
+    let report = game.apply_action(Action::Inspect(Position::new(5, 5)), ActionSource::Agent);
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::FloorEventTriggered {
+            description: record.description,
+        }
+    );
+    assert!(report
+        .events
+        .iter()
+        .any(|event| matches!(event, GameEvent::FloorEventTriggered(_))));
+}
+
+#[test]
+fn dynamic_floor_event_schedule_triggers_once_per_due_turn() {
+    let mut game = Game::new();
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.floor = 2;
+        state.turn = 3;
+        state.phase = TurnPhase::Player;
+    }
+    {
+        let events = game.world.resource_mut::<DynamicFloorEvents>().unwrap();
+        events.next_event_turn = 3;
+        events.interval = 2;
+    }
+
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+
+    let events = game.world.resource::<DynamicFloorEvents>().unwrap();
+    assert_eq!(events.history.len(), 1);
+    assert_eq!(events.next_event_turn, 5);
+    assert_eq!(game.snapshot().next_floor_event_turn, 5);
 }
 
 #[test]

@@ -1,9 +1,10 @@
 use crate::components::{
-    ActiveFloorModifiers, CharacterClass, FloorModifier, GameState, Position, Stats, Team,
-    TurnPhase, Weather, WeatherType,
+    ActiveFloorModifiers, CharacterClass, DynamicFloorEvents, FloorEventKind, FloorEventRecord,
+    FloorModifier, GameEvent, GameState, Position, Stats, Team, TurnPhase, Weather, WeatherType,
 };
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
+use crate::spawn::Spawner;
 
 use verryte_core::{Events, Rng, World};
 use verryte_terminal::{vfx::VfxSystem, Color};
@@ -63,6 +64,53 @@ pub fn weather_cycle_system(world: &mut World) {
         world,
         format!("[fg:87CEEB][b]Weather changed to {:?}![/][/fg]", next),
     );
+
+    // Trigger visual/audio feedback for weather transitions
+    if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
+        events.send(verryte_core::AudioEvent::play("cleanse")); // Weather change blip
+    }
+
+    if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+        let cx = 40.0;
+        let cy = 12.0; // Viewport center approximations
+        match next {
+            WeatherType::LightningStorm => {
+                vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(
+                    Color(255, 255, 220),
+                    0.25,
+                ));
+                vfx.shakes
+                    .push(verryte_terminal::vfx::ScreenShake::new(3.0, 0.3));
+            }
+            WeatherType::Snowing => {
+                vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                    cx,
+                    cy,
+                    25,
+                    Color(200, 220, 255),
+                    &['❄', '*', '·'],
+                ));
+            }
+            WeatherType::Rainy => {
+                vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                    cx,
+                    cy,
+                    20,
+                    Color(100, 160, 255),
+                    &['│', '¦', '·'],
+                ));
+            }
+            WeatherType::Sunny => {
+                vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                    cx,
+                    cy,
+                    15,
+                    Color(255, 230, 120),
+                    &['·', '°', '∘'],
+                ));
+            }
+        }
+    }
 }
 
 fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
@@ -608,4 +656,158 @@ pub fn floor_modifier_healing_multiplier(world: &World) -> f32 {
     } else {
         1.0
     }
+}
+
+/// Triggers deterministic, seed-driven events on deeper floors. The resource
+/// guards against duplicate triggers when the schedule runs more than once in
+/// the same turn.
+pub fn dynamic_floor_event_system(world: &mut World) {
+    let (turn, floor, phase) = world
+        .resource::<GameState>()
+        .map(|state| (state.turn, state.floor, state.phase))
+        .unwrap_or((1, 1, TurnPhase::Player));
+    let due = world
+        .resource::<DynamicFloorEvents>()
+        .is_some_and(|events| {
+            floor >= 2 && phase == TurnPhase::Player && turn >= events.next_event_turn
+        });
+    if !due {
+        return;
+    }
+
+    let choose_modifier = world
+        .resource_mut::<Rng>()
+        .map(|rng| rng.next_u32(2) == 0)
+        .unwrap_or(true);
+    let kind = if choose_modifier {
+        let candidates = [
+            FloorModifier::Darkness,
+            FloorModifier::GravityWell,
+            FloorModifier::ElementalStorm,
+            FloorModifier::HealingSurge,
+            FloorModifier::FogOfWar,
+            FloorModifier::Reversal,
+        ];
+        let (index, duration) = world
+            .resource_mut::<Rng>()
+            .map(|rng| {
+                (
+                    rng.next_u32(candidates.len() as u32) as usize,
+                    3 + rng.next_u32(4),
+                )
+            })
+            .unwrap_or((0, 3));
+        FloorEventKind::ModifierSurge {
+            modifier: candidates[index].clone(),
+            duration,
+        }
+    } else {
+        let class = if floor >= 4 {
+            CharacterClass::FrozenSentinel
+        } else {
+            CharacterClass::VoidTerror
+        };
+        let Some(position) = floor_event_spawn_position(world) else {
+            advance_floor_event_schedule(world, turn);
+            return;
+        };
+        FloorEventKind::MiniBossIncursion { class, position }
+    };
+
+    trigger_floor_event(world, kind);
+    advance_floor_event_schedule(world, turn);
+}
+
+fn advance_floor_event_schedule(world: &mut World, turn: u32) {
+    if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
+        events.next_event_turn = turn.saturating_add(events.interval.max(1));
+    }
+}
+
+fn floor_event_spawn_position(world: &World) -> Option<Position> {
+    let map = world.resource::<TacticalMap>()?;
+    let occupied: std::collections::HashSet<Position> = world
+        .query::<Position>()
+        .into_iter()
+        .map(|(_, position)| *position)
+        .collect();
+    let preferred = Position::new(map.width as i16 - 3, map.height as i16 / 2);
+
+    let mut candidates = Vec::new();
+    for y in 0..map.height as i16 {
+        for x in 0..map.width as i16 {
+            let position = Position::new(x, y);
+            if map.is_walkable(position) && !occupied.contains(&position) {
+                let distance = (position.x - preferred.x).abs() + (position.y - preferred.y).abs();
+                candidates.push((distance, position.y, position.x, position));
+            }
+        }
+    }
+    candidates.sort_by_key(|candidate| (candidate.0, candidate.1, candidate.2));
+    candidates.first().map(|candidate| candidate.3)
+}
+
+/// Applies one event through existing modifier and spawn primitives and emits
+/// a structured game event for reports, replays, and agents.
+pub fn trigger_floor_event(world: &mut World, kind: FloorEventKind) -> FloorEventRecord {
+    let (turn, floor) = world
+        .resource::<GameState>()
+        .map(|state| (state.turn, state.floor))
+        .unwrap_or((1, 1));
+
+    let description = match &kind {
+        FloorEventKind::ModifierSurge { modifier, duration } => {
+            let mut refreshed = false;
+            if let Some(active) = world.resource_mut::<ActiveFloorModifiers>() {
+                if let Some(index) = active.modifiers.iter().position(|item| item == modifier) {
+                    if let Some(remaining) = active.turns_remaining.get_mut(index) {
+                        *remaining = (*remaining).max(*duration);
+                    }
+                    refreshed = true;
+                } else {
+                    active.modifiers.push(modifier.clone());
+                    active.turns_remaining.push(*duration);
+                }
+            }
+            format!(
+                "{} {} for {} turns",
+                modifier.display_name(),
+                if refreshed { "intensified" } else { "surged" },
+                duration
+            )
+        }
+        FloorEventKind::MiniBossIncursion { class, position } => {
+            world.spawn_character_scaled(*position, Team::Enemy, *class, floor);
+            format!(
+                "{} invaded at ({}, {})",
+                Game::get_class_name(*class),
+                position.x,
+                position.y
+            )
+        }
+    };
+
+    let record = FloorEventRecord {
+        turn,
+        floor,
+        kind,
+        description,
+    };
+    log(
+        world,
+        format!(
+            "[fg:FF8C00][b]Dynamic Floor Event:[/] {}[/fg]",
+            record.description
+        ),
+    );
+    if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
+        events.history.push(record.clone());
+        if events.history.len() > 8 {
+            events.history.remove(0);
+        }
+    }
+    if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+        events.send(GameEvent::FloorEventTriggered(record.clone()));
+    }
+    record
 }

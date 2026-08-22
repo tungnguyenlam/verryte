@@ -87,6 +87,23 @@ impl ReachabilityMap {
         self.reachable.get(&point).map(|&(c, _)| c)
     }
 
+    /// Return reachable points in a stable display order.
+    ///
+    /// The internal storage is a hash map because lookup and path
+    /// reconstruction are the primary operations. Consumers that render a
+    /// reachability overlay or serialize it for an agent can use this method
+    /// to avoid hash iteration order leaking into output: lower travel cost is
+    /// listed first, followed by row and column.
+    pub fn points(&self) -> Vec<Point> {
+        let mut points: Vec<(Point, u32)> = self
+            .reachable
+            .iter()
+            .map(|(&point, &(cost, _))| (point, cost))
+            .collect();
+        points.sort_by_key(|(point, cost)| (*cost, point.y, point.x));
+        points.into_iter().map(|(point, _)| point).collect()
+    }
+
     /// Reconstruct the shortest path from the start point to the target point.
     /// Returns None if the target is not reachable.
     pub fn path_to(&self, target: Point) -> Option<Vec<Point>> {

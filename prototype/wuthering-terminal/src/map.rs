@@ -16,6 +16,8 @@ pub enum Tile {
     CrackedFloor,
     PressurePlate,
     ThornBush,
+    SteamVent,
+    ExplodingBarrel,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -55,6 +57,8 @@ impl TacticalMap {
                     '%' => Tile::CrackedFloor,
                     'T' => Tile::PressurePlate,
                     '*' => Tile::ThornBush,
+                    'v' | 'V' => Tile::SteamVent,
+                    'o' => Tile::ExplodingBarrel,
                     _ => Tile::Grass,
                 };
                 tiles.set(Point::new(x as i16, y as i16), tile);
@@ -90,6 +94,7 @@ impl TacticalMap {
                 | Tile::CrackedFloor
                 | Tile::PressurePlate
                 | Tile::ThornBush
+                | Tile::SteamVent
         )
     }
 
@@ -103,8 +108,10 @@ impl TacticalMap {
             | Tile::PoisonCloud
             | Tile::HealingSpring
             | Tile::CrackedFloor
-            | Tile::PressurePlate => 1,
+            | Tile::PressurePlate
+            | Tile::SteamVent => 1,
             Tile::ThornBush => 2,
+            Tile::ExplodingBarrel => 999,
         }
     }
 

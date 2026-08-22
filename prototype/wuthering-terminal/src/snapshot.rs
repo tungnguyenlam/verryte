@@ -61,6 +61,18 @@ pub struct Snapshot {
     pub lore_total: u32,
     #[serde(default)]
     pub active_modifiers: Vec<String>,
+    /// Remaining turns for each entry in `active_modifiers`, by index.
+    #[serde(default)]
+    pub active_modifier_durations: Vec<u32>,
+    /// Tiles currently marked as dangerous by the weather system.
+    #[serde(default)]
+    pub weather_danger_zones: Vec<Position>,
+    /// Turn on which the next deeper-floor event is scheduled.
+    #[serde(default)]
+    pub next_floor_event_turn: u32,
+    /// Bounded, oldest-to-newest descriptions of triggered floor events.
+    #[serde(default)]
+    pub recent_floor_events: Vec<String>,
     #[serde(default)]
     pub active_set_bonuses: Vec<String>,
 }
@@ -148,6 +160,8 @@ pub enum ActionOutcome {
     },
     /// Active floor modifiers were rerolled.
     ModifiersRerolled { modifiers: Vec<String> },
+    /// A scheduled dynamic floor event fired.
+    FloorEventTriggered { description: String },
     /// The current game state was saved.
     GameSaved { path: String },
     /// A saved game state was loaded.
@@ -251,6 +265,7 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_component::<crate::components::AIArchetype>("AIArchetype");
     reg.register_component::<crate::components::Destructible>("Destructible");
     reg.register_component::<crate::components::SkillTree>("SkillTree");
+    reg.register_component::<crate::components::EliteEnemy>("EliteEnemy");
 
     // Resources
     reg.register_core_resources();
@@ -270,12 +285,81 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_resource::<crate::components::Bestiary>("Bestiary");
     reg.register_resource::<crate::components::LoreJournal>("LoreJournal");
     reg.register_resource::<crate::components::ActiveFloorModifiers>("ActiveFloorModifiers");
+    reg.register_resource::<crate::components::DynamicFloorEvents>("DynamicFloorEvents");
     reg.register_resource::<crate::components::ActiveHazards>("ActiveHazards");
 
     reg
 }
 
-pub const CURRENT_SAVE_VERSION: u32 = 2;
+pub const CURRENT_SAVE_VERSION: u32 = 3;
+
+pub fn update_hash(hash: &mut u64, bytes: &[u8]) {
+    for &byte in bytes {
+        *hash ^= byte as u64;
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
+}
+
+pub fn hash_json_value(value: &serde_json::Value, hash: &mut u64) {
+    match value {
+        serde_json::Value::Null => update_hash(hash, b"null"),
+        serde_json::Value::Bool(b) => update_hash(hash, if *b { b"true" } else { b"false" }),
+        serde_json::Value::Number(n) => update_hash(hash, n.to_string().as_bytes()),
+        serde_json::Value::String(s) => update_hash(hash, s.as_bytes()),
+        serde_json::Value::Array(arr) => {
+            update_hash(hash, b"[");
+            for item in arr {
+                hash_json_value(item, hash);
+            }
+            update_hash(hash, b"]");
+        }
+        serde_json::Value::Object(obj) => {
+            update_hash(hash, b"{");
+            let mut keys: Vec<&String> = obj.keys().collect();
+            keys.sort();
+            for k in keys {
+                update_hash(hash, k.as_bytes());
+                hash_json_value(&obj[k], hash);
+            }
+            update_hash(hash, b"}");
+        }
+    }
+}
+
+pub fn calculate_save_checksum(state: &FullSaveState) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+
+    update_hash(&mut hash, state.magic.as_bytes());
+    update_hash(&mut hash, &state.version.to_ne_bytes());
+    update_hash(&mut hash, state.timestamp.as_bytes());
+    for mig in &state.migrations_applied {
+        update_hash(&mut hash, mig.as_bytes());
+    }
+
+    // Hash the world snapshot resources in sorted order
+    let mut res_keys: Vec<&String> = state.world.resources.keys().collect();
+    res_keys.sort();
+    for k in res_keys {
+        update_hash(&mut hash, k.as_bytes());
+        hash_json_value(&state.world.resources[k], &mut hash);
+    }
+
+    // Hash the entities in sorted order
+    let mut entities = state.world.entities.clone();
+    entities.sort_by_key(|e| e.entity);
+    for ent in &entities {
+        update_hash(&mut hash, &ent.entity.index().to_ne_bytes());
+        update_hash(&mut hash, &ent.entity.generation().to_ne_bytes());
+        let mut comp_keys: Vec<&String> = ent.components.keys().collect();
+        comp_keys.sort();
+        for k in comp_keys {
+            update_hash(&mut hash, k.as_bytes());
+            hash_json_value(&ent.components[k], &mut hash);
+        }
+    }
+
+    format!("{:016x}", hash)
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FullSaveState {
@@ -285,6 +369,8 @@ pub struct FullSaveState {
     pub world: WorldSnapshot,
     #[serde(default)]
     pub migrations_applied: Vec<String>,
+    #[serde(default)]
+    pub checksum: String,
 }
 
 /// Per-character summary for diagnostics.

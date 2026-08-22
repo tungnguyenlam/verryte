@@ -123,8 +123,19 @@ pub fn turn_management_system(world: &mut World) {
                         ),
                     );
                 } else {
+                    let is_berserker = world
+                        .get::<crate::components::AIArchetype>(e)
+                        .is_some_and(|a| *a == crate::components::AIArchetype::Berserker)
+                        || world.get::<CharacterClass>(e).is_some_and(|c| {
+                            matches!(
+                                *c,
+                                CharacterClass::Berserker | CharacterClass::EliteBerserker
+                            )
+                        });
                     if let Some(stats) = world.get_mut::<Stats>(e) {
-                        stats.ap = stats.max_ap;
+                        let is_frenzied = is_berserker && stats.hp < stats.max_hp / 2;
+                        let bonus = if is_frenzied { 1 } else { 0 };
+                        stats.ap = stats.max_ap + bonus;
                     }
                 }
             }
@@ -227,12 +238,25 @@ pub fn turn_management_system(world: &mut World) {
                     let has_swift_foot = world
                         .get::<crate::components::CharacterTrait>(e)
                         .is_some_and(|t| t.trait_type == crate::components::HeroTrait::SwiftFoot);
+                    let is_berserker = world
+                        .get::<crate::components::AIArchetype>(e)
+                        .is_some_and(|a| *a == crate::components::AIArchetype::Berserker)
+                        || world.get::<CharacterClass>(e).is_some_and(|c| {
+                            matches!(
+                                *c,
+                                CharacterClass::Berserker | CharacterClass::EliteBerserker
+                            )
+                        });
                     if let Some(stats) = world.get_mut::<Stats>(e) {
                         let mut bonus = 0;
                         if has_swift {
-                            bonus = 1;
+                            bonus += 1;
                         }
                         if has_swift_foot {
+                            bonus += 1;
+                        }
+                        let is_frenzied = is_berserker && stats.hp < stats.max_hp / 2;
+                        if is_frenzied {
                             bonus += 1;
                         }
                         stats.ap = stats.max_ap + bonus;
@@ -260,13 +284,8 @@ fn apply_equipment_hp_regen(world: &mut World, team: Team) {
     }
 
     for (entity, amount) in heals {
-        let mut healed = 0;
-        if let Some(stats) = world.get_mut::<Stats>(entity) {
-            let before = stats.hp;
-            stats.hp = (stats.hp + amount).min(stats.max_hp);
-            healed = stats.hp - before;
-        }
-        if healed > 0 {
+        let (healed, _defeated) = apply_heal(world, entity, amount);
+        if healed != 0 {
             let class = world
                 .get::<CharacterClass>(entity)
                 .copied()

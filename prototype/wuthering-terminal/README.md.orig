@@ -34,7 +34,6 @@ Characters can have unique traits that modify gameplay:
 - **Turn-based** with action points (2 per character per turn)
 - **Elemental reactions**: Ice+Lightning=Shatter, Lightning+Nature=Overgrowth, Nature+Ice=Bloom
 - **Telegraphed attacks**: enemy danger zones shown on the grid before executing
-- **Assassin Teleport**: Enemies with the Assassin archetype (like VoidTerror) can use Shadow Step to teleport to flanking positions for sudden attacks.
 - **Echo absorption**: defeated enemies drop equippable abilities (Swift, Frostbite, Thorns)
 - **QTE team swap**: spend concert energy for instant swap with intro skill
 - **Boss phases**: multi-phase fight with stat boosts and new attack patterns
@@ -42,7 +41,6 @@ Characters can have unique traits that modify gameplay:
 - **Equipment**: class starter gear, enemy-awarded set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration. Equipment upgrades and set rewards are exposed as structured `ActionOutcome` values for scripts and replays. Upgrade Kits are used through `equip_upgrade:<slot>` and are not consumed by direct inventory use.
 - **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`. Successful crafts report `ActionOutcome::Crafted`; invalid recipes and slots report structured failures.
 - **Floor progression**: stairs spawn upon defeating enemies, triggering descent to deeper floors (using `Action::NextFloor` or keyboard key `>`). Floor 2+ features a procedural BSP dungeon layout, scaled enemy stats (+15% per floor), bonus loot, and an elite Glacial Golem encounter on Floor 3+. Boss shields scale with floor depth.
-- **Dynamic floor events**: beginning on Floor 2, seed-driven modifier surges or mini-boss incursions occur every three turns. The next scheduled turn and bounded event history are exposed in snapshots, while triggers are emitted as structured game events and action outcomes.
 - **Elemental shields**: absorb damage before HP
 - **Level-up system**: defeating enemies awards XP (scaled by floor depth). Level-ups grant +10 HP, +2 ATK, +1 DEF, and a skill point. Prestige classes (BladeMaster, Archmage, DivineHealer) unlock at milestones with VFX feedback.
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
@@ -110,13 +108,6 @@ UI/tool toggles, prestige status views, rest recovery, floor modifier rerolls,
 and invalid inventory, floor-transition, or replay attempts are reported through
 structured `ActionOutcome` values so scripts and replays do not need to scrape
 log text.
-
-The agent runner uses the same command parser and `Game::apply_action` path but
-labels queued actions as `Agent`. Its JSON snapshots also include
-`active_modifier_durations` and `weather_danger_zones`, allowing an external
-controller to reason about timed floor effects and imminent lightning strikes.
-`next_floor_event_turn` and `recent_floor_events` expose dynamic event timing
-and history without requiring frame or log scraping.
 
 ### Script tokens
 

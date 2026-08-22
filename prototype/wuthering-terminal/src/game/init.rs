@@ -1,14 +1,13 @@
 use super::Game;
 use crate::action::{default_bindings, Action};
 use crate::components::{
-    BattleStats, CharacterClass, GameEvent, GameState, Outcome, Position, Stats,
-    Team, TurnPhase,
+    BattleStats, CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team, TurnPhase,
 };
 use crate::map::{TacticalMap, Tile};
 use crate::spawn::Spawner;
-use verryte_core::{Events, GameClock, MessageLog, Rng, Schedule, World, Entity};
+use verryte_core::{Entity, Events, GameClock, MessageLog, Rng, Schedule, World};
 use verryte_input::InputRouter;
-use verryte_terminal::{Camera, VisualRegistry, Color};
+use verryte_terminal::{Camera, Color, VisualRegistry};
 
 impl Game {
     pub fn new() -> Self {
@@ -34,6 +33,9 @@ impl Game {
             show_minimap: true,
             combo_count: 0,
             floor: 1,
+            log_scroll_offset: 0,
+            selected_save_slot: 0,
+            show_threat_map: false,
         });
         world.insert_resource(crate::components::TelegraphZone::default());
         world.insert_resource(verryte_map::VisibilityMap::new(width, height));
@@ -56,8 +58,10 @@ impl Game {
         world.insert_resource(crate::components::Weather::default());
         world.insert_resource(crate::components::AvailableCombos::default());
         world.insert_resource(crate::components::ActiveFloorModifiers::default());
+        world.insert_resource(crate::components::DynamicFloorEvents::default());
         world.insert_resource(Self::create_initial_bestiary());
         world.insert_resource(Self::create_initial_lore_journal());
+        world.insert_resource(verryte_input::TextInput::new());
 
         let mut registry = VisualRegistry::new();
         crate::generated_assets::register_assets(&mut registry);
@@ -66,6 +70,10 @@ impl Game {
         let mut schedule = Schedule::new();
         schedule.add_named("visibility", crate::systems::visibility_system);
         schedule.add_named("turn_management", crate::systems::turn_management_system);
+        schedule.add_named(
+            "dynamic_floor_events",
+            crate::systems::dynamic_floor_event_system,
+        );
         schedule.add_named("floor_modifier", crate::systems::floor_modifier_system);
         schedule.add_named("auto_battle", crate::systems::auto_battle_system);
         schedule.add_named("enemy_ai", crate::systems::enemy_ai_system);
@@ -74,6 +82,7 @@ impl Game {
         schedule.add_named("prestige", crate::systems::prestige_system);
         schedule.add_named("morale_fatigue", crate::systems::morale_fatigue_system);
         schedule.add_named("weather_ambient", crate::systems::weather_ambient_system);
+        schedule.add_named("sturdy_immunity", crate::systems::sturdy_immunity_system);
 
         let mut audio_stream = None;
         if let Ok((mut player, stream)) = verryte_audio::AudioPlayer::try_new() {
@@ -103,7 +112,9 @@ impl Game {
             world,
             schedule,
             router: InputRouter::new(default_bindings()),
-            camera: Camera::new(0.0, 0.0).with_smooth(0.15).with_dead_zone(4.0, 2.0),
+            camera: Camera::new(0.0, 0.0)
+                .with_smooth(0.15)
+                .with_dead_zone(4.0, 2.0),
             camera_locked: true,
             last_outcome: crate::snapshot::ActionOutcome::NoOp,
             boss_transitioned: false,
@@ -155,6 +166,17 @@ impl Game {
         game.world.spawn_barrel(Position::new(10, 5));
         game.world.spawn_barrel(Position::new(15, 10));
         game.world.spawn_barrel(Position::new(8, 12));
+
+        // Scan tactical map for Tile::ExplodingBarrel and spawn barrel entities
+        let map_clone = game.world.resource::<TacticalMap>().unwrap().clone();
+        for y in 0..map_clone.height {
+            for x in 0..map_clone.width {
+                let pos = Position::new(x as i16, y as i16);
+                if map_clone.tile(pos.x, pos.y) == crate::map::Tile::ExplodingBarrel {
+                    game.world.spawn_barrel(pos);
+                }
+            }
+        }
         game.world.spawn_character(
             Position::new(10, 14),
             Team::Enemy,
@@ -226,8 +248,10 @@ impl Game {
                 BestiaryEntry { class: CharacterClass::CorruptedSpore, name: "Corrupted Spore".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Once benign forest spores, corrupted by the Blight into volatile living mines. They explode on proximity, dealing devastating area damage.".to_string(), drop_table: vec!["Nature Essence".to_string()] },
                 BestiaryEntry { class: CharacterClass::CursedSentinel, name: "Cursed Sentinel".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Ancient guardians turned to serve darkness. They prefer ranged attacks and retreat when approached.".to_string(), drop_table: vec!["Sentinel Core".to_string()] },
                 BestiaryEntry { class: CharacterClass::PlagueWraith, name: "Plague Wraith".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Spirits of plague victims, bound to spread decay. Their touch applies Nature status.".to_string(), drop_table: vec!["Wraith Shard".to_string(), "Plague Essence".to_string()] },
+                BestiaryEntry { class: CharacterClass::VoidTerror, name: "Void Terror".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "A monstrous manifestation of pure corruption. It tears through the fabric of reality, devastating those unfortunate enough to be near.".to_string(), drop_table: vec!["Void Core".to_string(), "Dark Essence".to_string()] },
                 BestiaryEntry { class: CharacterClass::GlacialGolem, name: "Glacial Golem".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Forged from eternal ice in the Sovereign's forge. Attacks apply Ice status, freezing victims in place.".to_string(), drop_table: vec!["Frost Core".to_string(), "Ice Walker Echo".to_string()] },
                 BestiaryEntry { class: CharacterClass::EnemyCleric, name: "Dark Cleric".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Fallen healers who chose darkness over light. They prioritize healing wounded allies.".to_string(), drop_table: vec!["Dark Blessing".to_string()] },
+                BestiaryEntry { class: CharacterClass::FrozenSentinel, name: "Frozen Sentinel".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "Heavily armored constructs designed to protect the Sovereign's inner sanctum. They focus on defending vulnerable allies.".to_string(), drop_table: vec!["Frozen Core".to_string()] },
                 BestiaryEntry { class: CharacterClass::Boss, name: "Blight Sovereign".to_string(), encountered: false, defeated_count: 0, times_killed_by: 0, hits_taken: 0, known_weakness: None, known_resistance: None, lore_text: "The source of all corruption. A multi-phase abomination. In Phase 2, it unleashes Celestial Ruin with telegraphed attacks that can be parried.".to_string(), drop_table: vec!["Sovereign's Echo".to_string(), "Blight Crystal".to_string()] },
             ],
         }
@@ -390,7 +414,7 @@ impl Game {
                 }
             } else {
                 // Floor 3+: add elite enemy variants with higher frequency
-                let class = if floor >= 3 && i % 6 == 0 {
+                let class = if (floor >= 3 && i % 6 == 0) || (floor >= 2 && i % 5 == 0) {
                     CharacterClass::VoidTerror
                 } else if floor >= 3 && i % 7 == 0 {
                     CharacterClass::GlacialGolem
@@ -400,6 +424,7 @@ impl Game {
                         1 => CharacterClass::CorruptedSpore,
                         2 => CharacterClass::GlacialGolem,
                         3 => CharacterClass::EnemyCleric,
+                        4 => CharacterClass::FrozenSentinel,
                         _ => CharacterClass::CursedSentinel,
                     }
                 };
@@ -453,6 +478,12 @@ impl Game {
             state.selected_entity = None;
             state.boss_phase = crate::components::BossPhase::Phase1;
             state.turn = 1;
+        }
+        if let Some(events) = self
+            .world
+            .resource_mut::<crate::components::DynamicFloorEvents>()
+        {
+            events.next_event_turn = 3;
         }
 
         // 7. Grant bonus items on deeper floors

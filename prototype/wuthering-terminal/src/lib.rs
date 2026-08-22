@@ -622,6 +622,7 @@ mod tests {
                 CharacterClass::EliteTactician => {}
                 CharacterClass::EliteSummoner => {}
                 CharacterClass::EliteAssassin => {}
+                CharacterClass::FrozenSentinel => {}
                 CharacterClass::DestructibleObject => {}
             }
         }
@@ -1275,7 +1276,7 @@ mod tests {
         assert_eq!(snap1.outcome, Outcome::Playing);
         assert_eq!(snap1.player_team.count, 4);
         assert_eq!(snap1.enemy_team.count, 11); // 8 original + 3 barrels
- // Boss + 2 stalkers + 2 spores + sentinel + wraith + cleric
+                                                // Boss + 2 stalkers + 2 spores + sentinel + wraith + cleric
 
         game.apply_action(Action::MoveNorth, ActionSource::Terminal);
         let snap2 = game.snapshot();
@@ -3740,7 +3741,7 @@ mod tests {
 
     #[test]
     fn test_save_version_is_current() {
-        assert_eq!(snapshot::CURRENT_SAVE_VERSION, 2);
+        assert_eq!(snapshot::CURRENT_SAVE_VERSION, 3);
     }
 
     #[test]
@@ -4302,7 +4303,7 @@ mod tests {
         let save = game.save_state().unwrap();
         let future_save = save.replace(
             &format!("\"version\":{}", snapshot::CURRENT_SAVE_VERSION),
-            "\"version\":3",
+            "\"version\":999",
         );
 
         let mut game2 = Game::new();
@@ -6790,7 +6791,11 @@ mod tests {
     fn test_floor_modifier_snapshot_display() {
         let mut game = Game::new();
 
-        crate::systems::select_floor_modifiers(&mut game.world);
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Darkness],
+            vec![7],
+        );
 
         let snap = game.snapshot();
         assert!(
@@ -6800,6 +6805,18 @@ mod tests {
         for name in &snap.active_modifiers {
             assert!(!name.is_empty(), "Modifier name should not be empty");
         }
+        assert_eq!(snap.active_modifier_durations, vec![7]);
+
+        let weather = game
+            .world
+            .resource_mut::<crate::components::Weather>()
+            .unwrap();
+        weather.danger_zones = vec![Position::new(2, 3), Position::new(4, 5)];
+        let snap = game.snapshot();
+        assert_eq!(
+            snap.weather_danger_zones,
+            vec![Position::new(2, 3), Position::new(4, 5)]
+        );
     }
 
     #[test]
@@ -6851,7 +6868,7 @@ mod tests {
             .world
             .resource::<crate::components::Bestiary>()
             .unwrap();
-        assert_eq!(bestiary.entries.len(), 7);
+        assert_eq!(bestiary.entries.len(), 9);
         for entry in &bestiary.entries {
             assert!(!entry.encountered);
             assert_eq!(entry.defeated_count, 0);
@@ -7017,9 +7034,8 @@ mod tests {
     fn test_snapshot_includes_bestiary_counts() {
         let mut game = Game::new();
         let snap = game.snapshot();
-        assert_eq!(snap.bestiary_total, 7);
         assert_eq!(snap.bestiary_discovered, 0);
-        assert_eq!(snap.lore_total, 10);
+        assert_eq!(snap.bestiary_total, 9);
         assert_eq!(snap.lore_discovered, 6);
 
         game.record_enemy_encounter(CharacterClass::ShadowStalker);

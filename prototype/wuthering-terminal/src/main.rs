@@ -28,6 +28,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Handle input
         while let Some(event) = poll_event() {
+            let ui_state = game
+                .world
+                .resource::<wuthering_terminal::components::GameState>()
+                .unwrap()
+                .ui_state;
+            if ui_state == wuthering_terminal::components::UIState::Console {
+                if let InputEvent::Key {
+                    key,
+                    kind: verryte_input::KeyEventKind::Press,
+                } = event
+                {
+                    game.apply_action(Action::ConsoleKey(key), ActionSource::Terminal);
+                }
+                continue;
+            }
+
             if let InputEvent::Resize {
                 width: _,
                 height: _,

@@ -1,10 +1,10 @@
 use crate::action::Action;
-use crate::components::{GameState, Outcome, Position, Stats, Team, CharacterClass, GameEvent, BattleStats};
+use crate::components::{CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team};
 use crate::map::TacticalMap;
 use crate::snapshot::ActionOutcome;
-use verryte_core::{Events, GameClock, MessageLog, Schedule, World};
+use verryte_core::{Events, MessageLog, Schedule, World};
 use verryte_input::InputRouter;
-use verryte_terminal::{Camera, Color, Grid, VisualRegistry};
+use verryte_terminal::Camera;
 
 pub mod actions;
 pub mod init;
@@ -95,11 +95,15 @@ impl Game {
             CharacterClass::EliteTactician => "Elite Tactician",
             CharacterClass::EliteSummoner => "Elite Summoner",
             CharacterClass::EliteAssassin => "Elite Assassin",
+            CharacterClass::FrozenSentinel => "Frozen Sentinel",
             CharacterClass::DestructibleObject => "Object",
         }
     }
 
-    pub fn get_entity_at(&self, pos: Position) -> Option<(verryte_core::Entity, Team, Stats, CharacterClass)> {
+    pub fn get_entity_at(
+        &self,
+        pos: Position,
+    ) -> Option<(verryte_core::Entity, Team, Stats, CharacterClass)> {
         for (e, p, team) in self.world.query2::<Position, Team>() {
             if *p == pos {
                 let stats = self.world.get::<Stats>(e)?.clone();
@@ -267,14 +271,24 @@ impl Game {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs().to_string())
             .unwrap_or_default();
-        let state = crate::snapshot::FullSaveState {
+        let mut state = crate::snapshot::FullSaveState {
             magic: "VERRYTE_SAVE".to_string(),
             version: crate::snapshot::CURRENT_SAVE_VERSION,
             timestamp,
             world: snapshot,
             migrations_applied: Vec::new(),
+            checksum: String::new(),
         };
 
+        // Normalize state via JSON serialization roundtrip to ensure the checksum calculation matches load_state deserialization.
+        let serialized_temp = serde_json::to_string(&state)?;
+        if let Ok(normalized_state) =
+            serde_json::from_str::<crate::snapshot::FullSaveState>(&serialized_temp)
+        {
+            state.checksum = crate::snapshot::calculate_save_checksum(&normalized_state);
+        } else {
+            state.checksum = crate::snapshot::calculate_save_checksum(&state);
+        }
         serde_json::to_string(&state)
     }
 
@@ -296,6 +310,22 @@ impl Game {
                     crate::snapshot::CURRENT_SAVE_VERSION
                 ),
             )));
+        }
+
+        if state.version >= 3 {
+            let original_checksum = state.checksum.clone();
+            let mut temp_state = state.clone();
+            temp_state.checksum = String::new();
+            let expected_checksum = crate::snapshot::calculate_save_checksum(&temp_state);
+            if original_checksum != expected_checksum {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Save corruption detected (checksum mismatch). Expected: {}, Got: {}",
+                        expected_checksum, original_checksum
+                    ),
+                )));
+            }
         }
 
         // Apply migrations for older save versions.
@@ -361,6 +391,14 @@ impl Game {
         {
             self.world
                 .insert_resource(Self::create_initial_lore_journal());
+        }
+        if self
+            .world
+            .resource::<crate::components::DynamicFloorEvents>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::DynamicFloorEvents::default());
         }
 
         // Sync camera from resource
@@ -442,7 +480,10 @@ impl Game {
             let ty = ty.floor() as i32;
             if tx >= 0 && tx < map.width as i32 && ty >= 0 && ty < map.height as i32 {
                 let point = verryte_map::Point::new(tx as i16, ty as i16);
-                self.apply_action(Action::Inspect(point), verryte_input::ActionSource::Terminal);
+                self.apply_action(
+                    Action::Inspect(point),
+                    verryte_input::ActionSource::Terminal,
+                );
                 return true;
             }
         }

@@ -31,6 +31,7 @@ pub enum CharacterClass {
     EliteTactician,
     EliteSummoner,
     EliteAssassin,
+    FrozenSentinel,
     DestructibleObject,
 }
 
@@ -113,6 +114,10 @@ pub enum UIState {
     Help,
     Bestiary,
     SkillTree,
+    CombatLog,
+    Console,
+    SaveLoadMenu,
+    InspectCharacter,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -178,6 +183,12 @@ pub struct GameState {
     pub combo_count: u32,
     #[serde(default = "default_floor")]
     pub floor: u32,
+    #[serde(default)]
+    pub log_scroll_offset: usize,
+    #[serde(default)]
+    pub selected_save_slot: usize,
+    #[serde(default)]
+    pub show_threat_map: bool,
 }
 
 fn default_floor() -> u32 {
@@ -207,6 +218,7 @@ pub enum ElementalStatus {
     Lightning { duration: u32 },
     Nature { duration: u32 },
     Poison { duration: u32 },
+    Fire { duration: u32 },
     Regen { duration: u32 },
 }
 
@@ -272,6 +284,7 @@ pub enum GameEvent {
         damage: i32,
         healing: i32,
     },
+    FloorEventTriggered(FloorEventRecord),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -360,6 +373,8 @@ pub enum HazardType {
     ThornBush,
     FireTile,
     IceTile,
+    SteamVent,
+    ExplodingBarrel,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -439,6 +454,7 @@ pub enum AIArchetype {
     Tactician,
     Summoner,
     Assassin,
+    Defender,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -461,6 +477,7 @@ impl AIBehavior {
             AIArchetype::Tactician => (70, 40, 85),
             AIArchetype::Summoner => (50, 30, 70),
             AIArchetype::Assassin => (85, 15, 50),
+            AIArchetype::Defender => (30, 80, 95),
         };
         Self {
             archetype,
@@ -882,6 +899,43 @@ pub struct ActiveFloorModifiers {
     pub turns_remaining: Vec<u32>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FloorEventKind {
+    ModifierSurge {
+        modifier: FloorModifier,
+        duration: u32,
+    },
+    MiniBossIncursion {
+        class: CharacterClass,
+        position: Position,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FloorEventRecord {
+    pub turn: u32,
+    pub floor: u32,
+    pub kind: FloorEventKind,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DynamicFloorEvents {
+    pub next_event_turn: u32,
+    pub interval: u32,
+    pub history: Vec<FloorEventRecord>,
+}
+
+impl Default for DynamicFloorEvents {
+    fn default() -> Self {
+        Self {
+            next_event_turn: 3,
+            interval: 3,
+            history: Vec::new(),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ComboSkill {
     BladeStorm,
@@ -1043,4 +1097,28 @@ pub struct PrestigeProgress {
     pub total_damage_dealt: i32,
     pub total_healing_done: i32,
     pub promoted: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum EliteModifier {
+    Vampiric,
+    Fiery,
+    Sturdy,
+    Swift,
+}
+
+impl EliteModifier {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            EliteModifier::Vampiric => "Vampiric",
+            EliteModifier::Fiery => "Fiery",
+            EliteModifier::Sturdy => "Sturdy",
+            EliteModifier::Swift => "Swift",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct EliteEnemy {
+    pub modifiers: Vec<EliteModifier>,
 }

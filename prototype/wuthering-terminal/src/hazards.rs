@@ -40,6 +40,8 @@ fn tile_to_hazard(tile: Tile) -> Option<(HazardType, i32, i32, Option<ElementalS
             Some(ElementalStatus::Ice { duration: 2 }),
             -1,
         )),
+        Tile::SteamVent => Some((HazardType::SteamVent, 12, 0, None, 3)),
+        Tile::ExplodingBarrel => Some((HazardType::ExplodingBarrel, 0, 0, None, 1)),
         _ => None,
     }
 }
@@ -86,6 +88,8 @@ impl HazardSystem {
                     HazardType::ThornBush => "Thorns tear at your skin!".to_string(),
                     HazardType::FireTile => "Searing heat from lava!".to_string(),
                     HazardType::IceTile => "The ice chills you to the bone!".to_string(),
+                    HazardType::SteamVent => "A steam vent erupted under you!".to_string(),
+                    HazardType::ExplodingBarrel => "An exploding barrel explodes!".to_string(),
                 };
                 return Some(HazardTriggerResult {
                     hazard_type: effect.hazard_type,

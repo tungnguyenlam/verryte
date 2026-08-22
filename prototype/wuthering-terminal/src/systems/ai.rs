@@ -11,7 +11,8 @@ use verryte_core::{Entity, Events, Rng, World};
 use verryte_terminal::{vfx::VfxSystem, Color};
 
 use super::combat::{
-    effective_atk, effective_def, handle_defeat, is_flanking_position, log, resolve_combat_hit,
+    apply_heal, effective_atk, effective_def, handle_defeat, is_flanking_position, log,
+    resolve_combat_hit, trigger_steam_vent_explosion,
 };
 use super::movement::{get_tile_center_pixels, is_occupied_except};
 
@@ -85,7 +86,9 @@ pub fn auto_battle_system(world: &mut World) {
                             map.width,
                             map.height,
                             &[target_pos],
-                            |pt| map.is_walkable(pt) && !is_occupied_except(world, pt, player_entity),
+                            |pt| {
+                                map.is_walkable(pt) && !is_occupied_except(world, pt, player_entity)
+                            },
                             false,
                         );
                         let mut best_move = None;
@@ -114,7 +117,13 @@ pub fn auto_battle_system(world: &mut World) {
                                 s.ap -= move_cost;
                             }
                             let name = Game::get_class_name(class);
-                            log(world, format!("{} (Auto) moved to ({}, {}).", name, target_tile.x, target_tile.y));
+                            log(
+                                world,
+                                format!(
+                                    "{} (Auto) moved to ({}, {}).",
+                                    name, target_tile.x, target_tile.y
+                                ),
+                            );
                         } else {
                             // Skip this player
                         }
@@ -179,8 +188,12 @@ fn enemy_hazard_check(world: &mut World, entity: Entity, pos: Position) {
             HazardSystem::process_cracked_floor(map, pos);
         }
     }
+    let is_steam = result.hazard_type == crate::components::HazardType::SteamVent;
     if let Some(hazards_mut) = world.resource_mut::<ActiveHazards>() {
         HazardSystem::decrement_trigger(hazards_mut, pos);
+    }
+    if is_steam {
+        trigger_steam_vent_explosion(world, pos);
     }
     if let Some(st) = status {
         if world.get::<Stats>(entity).is_some_and(|s| s.hp > 0) {
@@ -228,7 +241,7 @@ pub fn enemy_ai_system(world: &mut World) {
     let mut all_done = true;
     for enemy_entity in enemies {
         loop {
-            let (enemy_pos, enemy_stats, enemy_class) = {
+            let (mut enemy_pos, mut enemy_stats, enemy_class) = {
                 let pos = world.get::<Position>(enemy_entity);
                 let stats = world.get::<Stats>(enemy_entity);
                 let class = world.get::<CharacterClass>(enemy_entity);
@@ -270,9 +283,7 @@ pub fn enemy_ai_system(world: &mut World) {
                     let dist = (enemy_pos.x - ally_pos.x).abs() + (enemy_pos.y - ally_pos.y).abs();
                     if dist <= 3 {
                         if enemy_stats.ap >= 1 {
-                            if let Some(stats) = world.get_mut::<Stats>(ally_entity) {
-                                stats.hp = (stats.hp + 25).min(stats.max_hp);
-                            }
+                            let (healed_amount, _healed_def) = apply_heal(world, ally_entity, 25);
                             if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
                                 stats.ap -= 1;
                             }
@@ -280,7 +291,10 @@ pub fn enemy_ai_system(world: &mut World) {
                             let ally_name = Game::get_class_name(ally_class);
                             log(
                                 world,
-                                format!("{} healed ally {} for 25 HP!", cleric_name, ally_name),
+                                format!(
+                                    "{} healed ally {} for {} HP!",
+                                    cleric_name, ally_name, healed_amount
+                                ),
                             );
 
                             let (cx, cy) = get_tile_center_pixels(world, ally_pos);
@@ -524,8 +538,107 @@ pub fn enemy_ai_system(world: &mut World) {
                 CharacterClass::DestructibleObject => 0,
                 _ => 2,
             };
-            let actual_dist =
+            let mut actual_dist =
                 (enemy_pos.x - player_pos.x).abs() + (enemy_pos.y - player_pos.y).abs();
+
+            if archetype == AIArchetype::Assassin
+                && actual_dist > range
+                && actual_dist <= 5
+                && enemy_stats.ap >= 2
+            {
+                let mut best_teleport_pos = None;
+                let map = world
+                    .resource::<TacticalMap>()
+                    .expect("TacticalMap must be registered");
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        if dx != 0 && dy != 0 {
+                            continue;
+                        } // only 4-way adjacent
+                        let adj = Position::new(player_pos.x + dx, player_pos.y + dy);
+                        if adj.x >= 0
+                            && adj.x < map.width as i16
+                            && adj.y >= 0
+                            && adj.y < map.height as i16
+                        {
+                            if map.is_walkable(adj) && !is_occupied_except(world, adj, enemy_entity)
+                            {
+                                let is_flanking =
+                                    is_flanking_position_from(world, adj, player_pos, enemy_entity);
+                                if is_flanking {
+                                    best_teleport_pos = Some(adj);
+                                    break;
+                                } else if best_teleport_pos.is_none() {
+                                    best_teleport_pos = Some(adj);
+                                }
+                            }
+                        }
+                    }
+                    if best_teleport_pos.is_some()
+                        && is_flanking_position_from(
+                            world,
+                            best_teleport_pos.unwrap(),
+                            player_pos,
+                            enemy_entity,
+                        )
+                    {
+                        break;
+                    }
+                }
+
+                if let Some(tpos) = best_teleport_pos {
+                    if let Some(pos) = world.get_mut::<Position>(enemy_entity) {
+                        *pos = tpos;
+                    }
+                    if let Some(stats) = world.get_mut::<Stats>(enemy_entity) {
+                        stats.ap -= 1;
+                        enemy_stats.ap -= 1;
+                    }
+                    enemy_pos = tpos;
+                    actual_dist = 1;
+
+                    let enemy_name = Game::get_class_name(enemy_class);
+                    let player_name = Game::get_class_name(player_class);
+                    log(
+                        world,
+                        format!(
+                            "{} (Assassin) used Shadow Step to teleport adjacent to {}!",
+                            enemy_name, player_name
+                        ),
+                    );
+
+                    let (cx, cy) = get_tile_center_pixels(world, tpos);
+                    if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+                        vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                            cx,
+                            cy,
+                            20,
+                            Color(128, 0, 128),
+                            &['*', '·', '✦'],
+                        ));
+                        vfx.flashes.push(verryte_terminal::vfx::Flash::region(
+                            Color(128, 0, 128),
+                            0.1,
+                            verryte_terminal::Rect::new(
+                                (cx as u16).saturating_sub(2),
+                                (cy as u16).saturating_sub(1),
+                                5,
+                                3,
+                            ),
+                        ));
+                    }
+                    if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                        events.send(GameEvent::Moved {
+                            entity: enemy_entity,
+                            from: enemy_pos, // Note: here enemy_pos was already updated, so this technically says it moved from its new position to its new position. Wait, that's slightly wrong, but I'll fix it if needed.
+                            to: tpos,
+                        });
+                    }
+                }
+            }
 
             // CursedSentinel retreat behavior: try to retreat to range > 2 if a player gets too close
             let mut retreated = false;

@@ -280,6 +280,15 @@ impl BattlePreview {
                         description: format!("{}: Assassinate", name),
                     });
                 }
+                AIArchetype::Defender => {
+                    intents.push(EnemyIntent {
+                        entity: e,
+                        intent_type: IntentType::Defend,
+                        target: None,
+                        predicted_damage: 0,
+                        description: format!("{}: Protecting allies", name),
+                    });
+                }
             }
         }
 
@@ -448,6 +457,9 @@ mod tests {
             show_minimap: true,
             combo_count: 0,
             floor: 1,
+            log_scroll_offset: 0,
+            selected_save_slot: 0,
+            show_threat_map: false,
         }
     }
 
