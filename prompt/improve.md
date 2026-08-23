@@ -11,6 +11,45 @@ stop. After every verified batch, reassess the repository and start the next
 highest-value batch. Never ask whether to continue, what to work on next, or for
 approval of an ordinary in-repository implementation decision.
 
+## Run Depth and Throughput
+
+Treat one invocation of this prompt as a multi-batch maintenance run, not as one
+task followed by a handoff. The default target is **at least four verified,
+meaningful batches per run**, and preferably five to eight when the repository
+offers enough safe work. A batch counts only when it delivers a real correction,
+tested behavior, useful simplification, measured optimization, or coherent
+vertical slice; splitting one change into tiny checkpoints does not satisfy the
+target.
+
+Do not produce a final response after only one or two batches merely because the
+workspace is green or the initial objective is complete. Fewer than four batches
+is acceptable only when an actual stop condition in this prompt has been reached.
+If a chosen batch becomes unexpectedly large, it may count alone only when it is
+a substantial, risky correction with broad regression coverage; otherwise keep
+working through the ranked backlog.
+
+At the first reassessment, build a ranked backlog of roughly 5-10 concrete
+candidates. Keep that backlog live across checkpoints: remove disproven items,
+promote newly discovered correctness work, and retain several small independent
+tasks that can be completed safely when a larger candidate is blocked or the
+remaining execution window is uncertain. Do not spend the run repeatedly
+rediscovering the same repository shape.
+
+Use verification effort proportionally so more of the run reaches implementation:
+
+- run focused formatting, tests, and checks after each logical slice;
+- run crate- or prototype-level gates after each coherent batch;
+- group expensive full-workspace test and clippy gates after two or three
+  compatible batches, after any risky cross-cutting change, and at final handoff;
+- do not rerun an unchanged expensive gate merely to fill time or after a
+  documentation-only adjustment when cheaper checks establish safety;
+- keep commentary and command output concise so execution budget goes to code,
+  tests, review, and the next batch.
+
+Near the end of an execution window, prefer a small complete correction with a
+regression test over starting a broad refactor. Always leave the repository green
+at a checkpoint, but do not confuse checkpoint safety with permission to stop.
+
 ## Authority and Required Context
 
 Obey system, user, repository, and directory-scoped instructions in their normal
@@ -228,7 +267,8 @@ stage, or commit unrelated user changes. Never push unless explicitly
 authorized.
 
 After checkpointing a verified batch, return immediately to **Reassess** and
-select the next batch.
+select the next batch. Maintain an explicit completed-batch count and name the
+next candidate before considering a handoff.
 
 ## Specialized Discipline
 
@@ -310,6 +350,23 @@ Stop only when one of these is true:
 3. every meaningful safe repository task is blocked by external authority,
    unavailable secrets/services/hardware, or an irreversible product decision
    that cannot be inferred responsibly.
+
+Do not infer a stop condition from elapsed wall time, long command output, a
+large diff, context compaction, or the completion of the current plan. An actual
+tool, system, or user constraint must force the stop; otherwise checkpoint,
+reassess, and continue. If context is compacted, resume from `WORKLOG.md`, the
+current diff, and the live backlog rather than treating compaction as a handoff.
+
+Before sending a final response, perform a continuation audit:
+
+1. Count the meaningful verified batches completed in this run.
+2. Reassess the repository after the most recent batch, not before it.
+3. Inspect at least the top three remaining backlog candidates for safe next
+   actions.
+4. Confirm that the default multi-batch target was met or identify the exact
+   qualifying stop condition that prevented it.
+5. If any safe, bounded, higher-value task remains and no actual stop condition
+   applies, do that task instead of writing the final response.
 
 Before a forced stop, leave the repository coherent. Do not leave a knowingly
 broken half-change merely to increase throughput. Record:

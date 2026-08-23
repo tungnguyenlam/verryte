@@ -206,6 +206,9 @@ In practice:
 - recorded or planned runs can be replayed with `ActionTrace`, preserving each
   action's source while still using the same router queue;
 - games drain actions and apply normal systems;
+- headless `run_pending_reports()` resolves an `EndTurn` through the same
+  bounded schedule used by the TTY, including enemy AI and the return to the
+  next player turn;
 - snapshots and per-step reports expose observable state, action source, action
   result, and game events for tests, scripts, and future tooling.
 - action histories can attach string metadata such as serialized outcomes, and
@@ -229,14 +232,18 @@ Agent commands use `ActionSource::Agent` in their step reports, keeping agent
 control distinguishable from scripts without changing the shared action path.
 Snapshots expose active modifier names alongside their remaining turns and
 weather danger-zone coordinates so a headless controller can plan from state
-rather than scrape the rendered frame. Event-spawned mini-bosses keep that
-contract after arrival: they arm class-specific `TileShape` attacks for one
+rather than scrape the rendered frame. The shared `safety` action plans against
+the union of boss, incursion, and committed lightning warnings, while weather
+effects themselves advance once per game turn. Event-spawned mini-bosses keep
+that contract after arrival: they arm class-specific `TileShape` attacks for one
 player turn, and `incursion_attacks` reports the attacker, pattern, origin,
 tiles, damage, resolve turn, and whether the arrival was intercepted. Intercept
 now disrupts only the first committed attack: Void Terror's cross is shortened,
 while Frozen Sentinel's ring opens an escape gap. The same warnings are rendered
 in the TTY, included in enemy intents, serialized in saves, and resolved by
 enemy AI.
+Lightning hits emit structured `WeatherHazardResolved` events with target,
+team, tile, and damage attribution.
 
 **Interactive TTY** (real terminal):
 ```sh

@@ -1,5 +1,107 @@
 # Verryte Worklog
 
+## 2026-08-23 - turn-committed floor modifiers
+
+**Goal.** Stop scheduled floor modifiers from consuming duration and applying
+periodic damage at render-frame frequency.
+
+**Accomplishments.** `ActiveFloorModifiers` now records the last processed game
+turn with backward-compatible serialization. The modifier schedule only runs in
+the player phase and only once per turn, so Elemental Storm consumes one RNG
+roll/damage pulse and every active modifier loses one duration point per turn
+instead of per frame. Modifier selection and console injection reset the marker
+for their new set, malformed duration vectors are normalized defensively, and
+save/load preserves the committed turn so loading cannot repeat an already
+applied storm pulse.
+
+**Verification.** Focused regressions cover repeated schedule calls in one turn,
+the next-turn pulse/countdown, older serialized resources, and save/load
+idempotence. `cargo fmt --all --check`, `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`, and `git diff --check`
+pass.
+
+**Next Steps.** Make Frenzy's temporary stat adjustment explicitly reversible
+on expiry or reroll without losing base DEF for zero-defense entities.
+
+## 2026-08-23 - recording and replay history integrity
+
+**Goal.** Preserve replayable action boundaries and outcome metadata across
+recording controls, nested replay steps, headless turns, and state replacement.
+
+**Accomplishments.** Action-history records are now appended after their action
+completes, so `Load` can replace the world without losing its own structured
+record and nested replay actions keep their outcomes instead of having them
+overwritten by the `StepReplay` wrapper. Recording start/stop controls no longer
+enter the persisted gameplay history, and stopping uses the authoritative
+structured action history instead of first writing the router's incompatible
+queued-action representation. A replayed headless `EndTurn` whose recorded
+outcome is `TurnAdvanced` now runs the same bounded schedule-settling path before
+verification while temporarily suppressing recursive replay auto-step. Replay
+loading also filters recording controls from legacy traces created before this
+fix.
+
+**Verification.** Focused regressions reproduced both failures before the fix.
+The complete 83-test integration suite passes, including save/load history,
+recording boundaries, replay wrapper metadata, and headless end-turn parity. The
+same full workspace formatting, test, warning-denied clippy, and diff checks
+recorded above pass. Script and Agent smoke runs reach turn 2/player phase with
+`TurnAdvanced`; Agent frames contain exactly 24 and 40 lines at 80x24 and
+120x40.
+
+**Next Steps.** Consider surfacing nested replayed game events on the outer
+`StepReplay` report without applying their battle-stat and threat side effects a
+second time.
+
+## 2026-08-23 - headless end-turn schedule parity
+
+**Goal.** Repair the script/agent path where `end` queued a transition but
+never ran turn management or enemy AI.
+
+**Accomplishments.** `run_pending_reports()` now advances `Action::EndTurn`
+through the same schedule used by the TTY, with a defensive tick bound, until
+control returns on the next player turn or the game ends. The returned
+`StepReport` includes the final snapshot, `TurnAdvanced` outcome, both phase
+changes, enemy events, schedule diagnostics, and corrected history metadata.
+Scheduled event side effects such as threat and battle-stat updates are applied
+once during real-time updates and tracked until the event queue is drained;
+already-processed phase/combat events no longer contaminate the next action's
+outcome or report. A parity regression compares a Script-sourced `end` with the
+normal interactive action plus schedule ticks.
+
+**Verification.** `cargo fmt --all --check`, `cargo test --workspace`, and
+`cargo clippy --workspace --all-targets -- -D warnings` pass. The JSON script
+runner reaches turn 2/player phase with `TurnAdvanced`; the Agent runner reports
+the same Agent-sourced outcome with exact 80x24 and 120x40 frame heights.
+
+**Next Steps.** Consider exposing schedule-settling policy as a small reusable
+input-runner primitive only if another prototype needs discrete headless turns;
+otherwise keep this game-specific pacing policy in Wuthering Terminal.
+
+## 2026-08-23 - turn-committed weather safety
+
+**Goal.** Extend the shared safety planner to weather without preserving the
+weather system's frame-driven side effects.
+
+**Accomplishments.** Weather effects now prepare at most once per game turn, so
+cycle-boundary weather, snow status extension, terrain changes, RNG use, and
+lightning warnings no longer repeat at render frequency. Lightning coordinates
+are de-duplicated, remain committed until phase resolution, and damage only the
+team whose phase is ending instead of every entity at both boundaries. Ambient
+loops emit only when weather changes and restart after loading rather than on
+every frame. `Action::StepToSafety` now combines committed lightning tiles with
+boss and incursion telegraphs and retains its normal structured move/event/
+history observability. Save/load preserves the committed turn and danger tiles,
+while older serialized `Weather` resources receive compatible defaults. Each
+resolved lightning hit now emits `GameEvent::WeatherHazardResolved` with typed
+target/team/position/damage attribution and updates player damage-taken stats.
+
+**Verification.** Focused weather, shared-action, structured-event, and
+save/load regressions pass as part of the full formatting, workspace-test, and
+warning-denied clippy gate recorded above.
+
+**Next Steps.** Consider extracting the prototype's repeated danger-union
+construction only when a second gameplay consumer needs the exact same set.
+
 ## 2026-08-23 - shared safety response for armed incursions
 
 **Goal.** Let players, scripts, and agents react to already-armed incursion

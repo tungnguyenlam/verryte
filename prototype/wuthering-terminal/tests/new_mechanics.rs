@@ -380,6 +380,7 @@ fn test_reversal_modifier() {
     game.world.insert_resource(ActiveFloorModifiers {
         modifiers: vec![FloorModifier::Reversal],
         turns_remaining: vec![99],
+        last_processed_turn: None,
     });
 
     // 3. Heal 10 HP under Reversal: should DEAL 10 damage! (HP 90 -> 80)

@@ -1066,6 +1066,9 @@ impl Game {
             };
             events.send(verryte_core::AudioEvent::loop_music(ambient_name).with_volume(volume));
         }
+        if let Some(current) = self.world.resource_mut::<crate::components::Weather>() {
+            current.ambient_started_for = Some(weather);
+        }
 
         // VFX effects
         match weather {

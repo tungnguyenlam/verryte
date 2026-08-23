@@ -118,6 +118,7 @@ impl Game {
                 .with_dead_zone(4.0, 2.0),
             camera_locked: true,
             last_outcome: crate::snapshot::ActionOutcome::NoOp,
+            processed_game_events: 0,
             boss_transitioned: false,
             _audio_stream: audio_stream,
         };
@@ -492,6 +493,10 @@ impl Game {
             .resource_mut::<crate::components::IncursionAttackTelegraphs>()
         {
             attacks.attacks.clear();
+        }
+        if let Some(weather) = self.world.resource_mut::<crate::components::Weather>() {
+            weather.danger_zones.clear();
+            weather.last_effect_turn = None;
         }
 
         // 7. Grant bonus items on deeper floors

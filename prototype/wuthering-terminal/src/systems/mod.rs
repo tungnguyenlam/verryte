@@ -62,7 +62,7 @@ pub fn turn_management_system(world: &mut World) {
                 events.send(GameEvent::TurnEnded);
             }
 
-            apply_weather_hazard_damage(world);
+            apply_weather_hazard_damage(world, Team::Player);
             process_team_status_effects(world, Team::Enemy);
             apply_equipment_hp_regen(world, Team::Enemy);
 
@@ -167,7 +167,7 @@ pub fn turn_management_system(world: &mut World) {
 
             process_team_status_effects(world, Team::Player);
 
-            apply_weather_hazard_damage(world);
+            apply_weather_hazard_damage(world, Team::Enemy);
             apply_equipment_hp_regen(world, Team::Player);
 
             // Replenish Player AP

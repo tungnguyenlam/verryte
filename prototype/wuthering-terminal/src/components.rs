@@ -341,6 +341,13 @@ pub enum GameEvent {
         hit_count: usize,
         total_damage: i32,
     },
+    WeatherHazardResolved {
+        weather: WeatherType,
+        target: verryte_core::Entity,
+        team: Team,
+        position: Position,
+        damage: i32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -487,6 +494,15 @@ pub enum WeatherType {
 pub struct Weather {
     pub current: WeatherType,
     pub danger_zones: Vec<Position>,
+    /// Turn whose weather effects have already been prepared.
+    ///
+    /// The render/update schedule runs continuously, so this marker keeps
+    /// turn-based terrain and telegraphs from being applied once per frame.
+    #[serde(default)]
+    pub last_effect_turn: Option<u32>,
+    /// Ambient playback is runtime-only and must restart after loading a save.
+    #[serde(skip)]
+    pub ambient_started_for: Option<WeatherType>,
 }
 
 impl Default for Weather {
@@ -494,6 +510,8 @@ impl Default for Weather {
         Self {
             current: WeatherType::Sunny,
             danger_zones: Vec::new(),
+            last_effect_turn: None,
+            ambient_started_for: None,
         }
     }
 }
@@ -955,6 +973,9 @@ impl FloorModifier {
 pub struct ActiveFloorModifiers {
     pub modifiers: Vec<FloorModifier>,
     pub turns_remaining: Vec<u32>,
+    /// Turn whose periodic effects and duration countdown were processed.
+    #[serde(default)]
+    pub last_processed_turn: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

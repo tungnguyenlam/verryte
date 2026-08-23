@@ -13,6 +13,30 @@ use verryte_input::ActionSource;
 use verryte_map::Direction;
 use verryte_terminal::Color;
 
+fn replay_data_from_history(
+    history: &verryte_input::ActionHistory<Action>,
+) -> (verryte_input::ActionTrace<Action>, Vec<ActionOutcome>) {
+    let replayable_records: Vec<_> = history
+        .iter()
+        .filter(|record| record.action != Action::ToggleRecording)
+        .cloned()
+        .collect();
+    let expected_outcomes = replayable_records
+        .iter()
+        .map(|record| {
+            record
+                .metadata
+                .get("outcome")
+                .and_then(|value| serde_json::from_str(value).ok())
+                .unwrap_or(ActionOutcome::NoOp)
+        })
+        .collect();
+    (
+        verryte_input::ActionTrace::from_records(&replayable_records),
+        expected_outcomes,
+    )
+}
+
 impl Game {
     pub fn record_enemy_encounter(&mut self, class: CharacterClass) {
         let name = Self::get_class_name(class);
@@ -3492,16 +3516,6 @@ impl Game {
                 clock.elapsed_real_time().as_secs_f32(),
             )
         };
-        if let Some(history) = self
-            .world
-            .resource_mut::<verryte_input::ActionHistory<Action>>()
-        {
-            let mut record = verryte_input::ActionRecord::new(action, source, time);
-            record = record.with_metadata("turn", &turn.to_string());
-            record = record.with_metadata("phase", &format!("{:?}", phase));
-            history.push(record);
-        }
-
         // Reset outcome for this action.
         self.last_outcome = ActionOutcome::NoOp;
         self.boss_transitioned = false;
@@ -3513,14 +3527,83 @@ impl Game {
         let after = self.snapshot();
         let outcome = self.compute_outcome(action, &before, &after, phase, before_log_len);
 
-        // Update BattleStats based on events
         let events_vec: Vec<GameEvent> = self
             .world
             .resource::<Events<GameEvent>>()
             .map(|e| e.iter().cloned().collect())
             .unwrap_or_default();
+        let first_unprocessed = self.processed_game_events.min(events_vec.len());
+        self.apply_event_side_effects(&events_vec[first_unprocessed..], &outcome, true);
 
-        for event in &events_vec {
+        // Reset combo count if action failed or if the action was Wait
+        let is_failed = matches!(outcome, ActionOutcome::Failed { .. });
+        let is_wait = action == Action::Wait;
+        if is_failed || is_wait {
+            if let Some(state) = self.world.resource_mut::<GameState>() {
+                if state.combo_count > 0 {
+                    state.combo_count = 0;
+                    if is_failed {
+                        self.log("Combo broken by failed action.");
+                    } else {
+                        self.log("Combo broken by waiting.");
+                    }
+                }
+            }
+        }
+
+        self.last_outcome = outcome.clone();
+
+        if action != Action::ToggleRecording {
+            if let Some(history) = self
+                .world
+                .resource_mut::<verryte_input::ActionHistory<Action>>()
+            {
+                let mut record = verryte_input::ActionRecord::new(action, source, time)
+                    .with_metadata("turn", &turn.to_string())
+                    .with_metadata("phase", &format!("{:?}", phase));
+                if let Ok(outcome_str) = serde_json::to_string(&outcome) {
+                    record.metadata.insert("outcome".to_string(), outcome_str);
+                }
+                history.push(record);
+            }
+        }
+
+        let mut diagnostics = std::collections::HashMap::new();
+        if let Some(diags) = self.world.resource::<verryte_core::Diagnostics>() {
+            for (name, metrics) in &diags.systems {
+                diagnostics.insert(name.clone(), metrics.last_duration.as_secs_f64() * 1000.0);
+            }
+        }
+
+        let queued_event_count = self
+            .world
+            .resource::<Events<GameEvent>>()
+            .map(|events| events.iter().count())
+            .unwrap_or(0);
+        let first_unprocessed = self.processed_game_events.min(queued_event_count);
+        let report_events = self
+            .take_events()
+            .into_iter()
+            .skip(first_unprocessed)
+            .collect();
+        crate::snapshot::StepReport {
+            action,
+            source,
+            before,
+            after,
+            events: report_events,
+            diagnostics,
+            outcome,
+        }
+    }
+
+    pub(super) fn apply_event_side_effects(
+        &mut self,
+        events: &[GameEvent],
+        outcome: &ActionOutcome,
+        count_turn_outcome: bool,
+    ) {
+        for event in events {
             match event {
                 GameEvent::Attacked {
                     attacker, damage, ..
@@ -3547,45 +3630,42 @@ impl Game {
             }
         }
 
-        let mut entity_teams = std::collections::HashMap::new();
-        for (entity, team) in self.world.query::<Team>() {
-            entity_teams.insert(entity, *team);
-        }
-
+        let entity_teams: std::collections::HashMap<_, _> = self
+            .world
+            .query::<Team>()
+            .into_iter()
+            .map(|(entity, team)| (entity, *team))
+            .collect();
         let combo_count = self
             .world
             .resource::<GameState>()
-            .map(|s| s.combo_count)
+            .map(|state| state.combo_count)
             .unwrap_or(0);
 
         if let Some(bstats) = self.world.resource_mut::<BattleStats>() {
-            for event in &events_vec {
+            for event in events {
                 match event {
                     GameEvent::Attacked {
                         attacker,
                         target,
                         damage,
                     } => {
-                        let attacker_is_player = entity_teams.get(attacker) == Some(&Team::Player);
-                        let target_is_player = entity_teams.get(target) == Some(&Team::Player);
-                        if attacker_is_player {
+                        if entity_teams.get(attacker) == Some(&Team::Player) {
                             bstats.total_damage_dealt += *damage;
                         }
-                        if target_is_player {
+                        if entity_teams.get(target) == Some(&Team::Player) {
                             bstats.total_damage_taken += *damage;
                         }
                     }
-                    GameEvent::Healed { healer, amount, .. } => {
-                        let healer_is_player = entity_teams.get(healer) == Some(&Team::Player);
-                        if healer_is_player {
-                            bstats.total_healing_done += *amount;
-                        }
+                    GameEvent::Healed { healer, amount, .. }
+                        if entity_teams.get(healer) == Some(&Team::Player) =>
+                    {
+                        bstats.total_healing_done += *amount;
                     }
-                    GameEvent::Defeated { entity } => {
-                        let entity_is_enemy = entity_teams.get(entity) == Some(&Team::Enemy);
-                        if entity_is_enemy {
-                            bstats.total_kills += 1;
-                        }
+                    GameEvent::Defeated { entity }
+                        if entity_teams.get(entity) == Some(&Team::Enemy) =>
+                    {
+                        bstats.total_kills += 1;
                     }
                     GameEvent::ReactionTriggered {
                         entity,
@@ -3593,71 +3673,30 @@ impl Game {
                         healing,
                         ..
                     } => {
-                        let entity_is_player = entity_teams.get(entity) == Some(&Team::Player);
-                        if entity_is_player {
+                        if entity_teams.get(entity) == Some(&Team::Player) {
                             bstats.total_damage_taken += *damage;
                             bstats.total_healing_done += *healing;
                         } else {
                             bstats.total_damage_dealt += *damage;
                         }
                     }
+                    GameEvent::WeatherHazardResolved {
+                        team: Team::Player,
+                        damage,
+                        ..
+                    } => {
+                        bstats.total_damage_taken += *damage;
+                    }
                     _ => {}
                 }
             }
 
-            if matches!(outcome, ActionOutcome::TurnAdvanced) {
+            if count_turn_outcome && matches!(outcome, ActionOutcome::TurnAdvanced) {
                 bstats.total_turns += 1;
             }
-
             if combo_count > bstats.max_combo_reached {
                 bstats.max_combo_reached = combo_count;
             }
-        }
-
-        // Reset combo count if action failed or if the action was Wait
-        let is_failed = matches!(outcome, ActionOutcome::Failed { .. });
-        let is_wait = action == Action::Wait;
-        if is_failed || is_wait {
-            if let Some(state) = self.world.resource_mut::<GameState>() {
-                if state.combo_count > 0 {
-                    state.combo_count = 0;
-                    if is_failed {
-                        self.log("Combo broken by failed action.");
-                    } else {
-                        self.log("Combo broken by waiting.");
-                    }
-                }
-            }
-        }
-
-        self.last_outcome = outcome.clone();
-
-        if let Some(history) = self
-            .world
-            .resource_mut::<verryte_input::ActionHistory<Action>>()
-        {
-            if let Some(record) = history.records.last_mut() {
-                if let Ok(outcome_str) = serde_json::to_string(&outcome) {
-                    record.metadata.insert("outcome".to_string(), outcome_str);
-                }
-            }
-        }
-
-        let mut diagnostics = std::collections::HashMap::new();
-        if let Some(diags) = self.world.resource::<verryte_core::Diagnostics>() {
-            for (name, metrics) in &diags.systems {
-                diagnostics.insert(name.clone(), metrics.last_duration.as_secs_f64() * 1000.0);
-            }
-        }
-
-        crate::snapshot::StepReport {
-            action,
-            source,
-            before,
-            after,
-            events: self.take_events(),
-            diagnostics,
-            outcome,
         }
     }
 
@@ -3717,10 +3756,13 @@ impl Game {
             .world
             .resource::<Events<GameEvent>>()
             .and_then(|events| {
-                events.iter().find_map(|event| match event {
-                    GameEvent::FloorEventTriggered(record) => Some(("triggered", record)),
-                    _ => None,
-                })
+                events
+                    .iter()
+                    .skip(self.processed_game_events)
+                    .find_map(|event| match event {
+                        GameEvent::FloorEventTriggered(record) => Some(("triggered", record)),
+                        _ => None,
+                    })
             })
         {
             return ActionOutcome::FloorEventTriggered {
@@ -3732,10 +3774,13 @@ impl Game {
             .world
             .resource::<Events<GameEvent>>()
             .and_then(|events| {
-                events.iter().find_map(|event| match event {
-                    GameEvent::FloorEventTelegraphed(record) => Some(record),
-                    _ => None,
-                })
+                events
+                    .iter()
+                    .skip(self.processed_game_events)
+                    .find_map(|event| match event {
+                        GameEvent::FloorEventTelegraphed(record) => Some(record),
+                        _ => None,
+                    })
             })
         {
             let resolves_on_turn = self
@@ -3845,7 +3890,7 @@ impl Game {
         }
 
         if let Some(log) = self.world.resource::<Events<GameEvent>>() {
-            for event in log.iter() {
+            for event in log.iter().skip(self.processed_game_events) {
                 if let GameEvent::Attacked { damage, target, .. } = event {
                     let _ = target;
                     if *damage > 0 {
@@ -5769,7 +5814,7 @@ impl Game {
                         .resource::<verryte_input::ActionHistory<Action>>()
                         .map(|history| history.len())
                         .unwrap_or(0);
-                    self.router.stop_recording();
+                    self.router.take_recording();
                     self.world.resource_mut::<GameState>().unwrap().is_recording = false;
                     self.log("Action recording STOPPED.");
                     let base_path = super::saves_dir();
@@ -5832,21 +5877,10 @@ impl Game {
                         if let Ok(history) =
                             verryte_input::ActionHistory::<Action>::load_from_file(&path)
                         {
-                            let mut expected = Vec::new();
-                            for record in history.iter() {
-                                let outcome = if let Some(outcome_str) =
-                                    record.metadata.get("outcome")
-                                {
-                                    serde_json::from_str(outcome_str).unwrap_or(ActionOutcome::NoOp)
-                                } else {
-                                    ActionOutcome::NoOp
-                                };
-                                expected.push(outcome);
-                            }
-                            replay.expected_outcomes = expected;
+                            let (trace, expected_outcomes) = replay_data_from_history(&history);
+                            replay.expected_outcomes = expected_outcomes;
                             replay.verification_errors.clear();
-                            replay.trace =
-                                verryte_input::ActionTrace::from_records(&history.records);
+                            replay.trace = trace;
                             replay.active = true;
                             replay.next_index = 0;
                             replay.auto = false;
@@ -5913,8 +5947,6 @@ impl Game {
                 match next_step {
                     Some((index, action, source)) => {
                         self.log(format!("Replaying action {}: {:?}", index, action));
-                        let report = self.apply_action(action, source);
-                        let mut verified = true;
                         let expected = {
                             let replay = self
                                 .world
@@ -5922,6 +5954,32 @@ impl Game {
                                 .unwrap();
                             replay.expected_outcomes.get(index).cloned()
                         };
+                        let mut report = self.apply_action(action, source);
+                        if action == Action::EndTurn
+                            && expected == Some(ActionOutcome::TurnAdvanced)
+                            && report.before.phase == TurnPhase::Player
+                            && report.before.outcome == Outcome::Playing
+                        {
+                            let replay_was_auto = self
+                                .world
+                                .resource::<crate::components::ReplayState>()
+                                .is_some_and(|replay| replay.auto);
+                            if replay_was_auto {
+                                self.world
+                                    .resource_mut::<crate::components::ReplayState>()
+                                    .unwrap()
+                                    .auto = false;
+                            }
+                            self.finish_headless_turn(&mut report);
+                            if replay_was_auto {
+                                self.world
+                                    .resource_mut::<crate::components::ReplayState>()
+                                    .unwrap()
+                                    .auto = true;
+                            }
+                        }
+
+                        let mut verified = true;
                         if let Some(expected) = expected {
                             if expected != report.outcome {
                                 verified = false;
@@ -6033,6 +6091,9 @@ impl Game {
             Action::ChangeWeather(weather_type) => {
                 if let Some(w) = self.world.resource_mut::<crate::components::Weather>() {
                     w.current = weather_type;
+                    w.danger_zones.clear();
+                    w.last_effect_turn = None;
+                    w.ambient_started_for = None;
                 }
                 self.update_weather_ambient(weather_type);
                 self.log(format!("Weather changed to {:?}.", weather_type));
@@ -6511,6 +6572,23 @@ impl Game {
 
         // Run systems
         self.schedule.run(&mut self.world);
+        let unprocessed_events: Vec<GameEvent> = self
+            .world
+            .resource::<Events<GameEvent>>()
+            .map(|events| {
+                events
+                    .iter()
+                    .skip(self.processed_game_events)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.apply_event_side_effects(&unprocessed_events, &ActionOutcome::NoOp, false);
+        self.processed_game_events = self
+            .world
+            .resource::<Events<GameEvent>>()
+            .map(|events| events.iter().count())
+            .unwrap_or(0);
         verryte_audio::audio_system(&mut self.world);
     }
 
@@ -6635,6 +6713,13 @@ impl Game {
                     .iter()
                     .flat_map(|attack| attack.tiles.iter().copied()),
             );
+        }
+        if let Some(weather) = self
+            .world
+            .resource::<crate::components::Weather>()
+            .filter(|weather| weather.current == crate::components::WeatherType::LightningStorm)
+        {
+            danger_tiles.extend(weather.danger_zones.iter().copied());
         }
         if danger_tiles.is_empty() {
             let reason = "No danger zones telegraphed.".to_string();
@@ -6919,6 +7004,7 @@ impl Game {
                     {
                         mods.modifiers.push(m);
                         mods.turns_remaining.push(99);
+                        mods.last_processed_turn = None;
                     }
                     self.log(format!("Added floor modifier: {}", mod_name));
                 } else {
@@ -6943,6 +7029,8 @@ impl Game {
                     if let Some(weather) = self.world.resource_mut::<crate::components::Weather>() {
                         weather.current = wt;
                         weather.danger_zones.clear();
+                        weather.last_effect_turn = None;
+                        weather.ambient_started_for = None;
                     }
                     self.update_weather_ambient(wt);
                     self.log(format!("Weather manually set to {:?}.", wt));
@@ -7041,5 +7129,40 @@ impl Game {
         let (cx, cy) = self.get_tile_center_pixels(target_pos);
         self.camera.target_x = cx;
         self.camera.target_y = cy;
+    }
+}
+
+#[cfg(test)]
+mod replay_history_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_recording_controls_are_not_replayed() {
+        let mut history = verryte_input::ActionHistory::new();
+        history.push(
+            verryte_input::ActionRecord::new(
+                Action::Inspect(Position::new(4, 4)),
+                ActionSource::Terminal,
+                0.0,
+            )
+            .with_metadata(
+                "outcome",
+                &serde_json::to_string(&ActionOutcome::StateUpdated).unwrap(),
+            ),
+        );
+        history.push(verryte_input::ActionRecord::new(
+            Action::ToggleRecording,
+            ActionSource::Terminal,
+            1.0,
+        ));
+
+        let (trace, expected) = replay_data_from_history(&history);
+
+        assert_eq!(trace.steps().len(), 1);
+        assert_eq!(
+            trace.steps()[0].action,
+            Action::Inspect(Position::new(4, 4))
+        );
+        assert_eq!(expected, vec![ActionOutcome::StateUpdated]);
     }
 }

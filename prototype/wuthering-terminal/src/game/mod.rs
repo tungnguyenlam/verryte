@@ -1,5 +1,7 @@
 use crate::action::Action;
-use crate::components::{CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team};
+use crate::components::{
+    CharacterClass, GameEvent, GameState, Outcome, Position, Stats, Team, TurnPhase,
+};
 use crate::map::TacticalMap;
 use crate::snapshot::ActionOutcome;
 use verryte_core::{Events, MessageLog, Schedule, World};
@@ -42,6 +44,9 @@ pub struct Game {
     pub camera: Camera,
     pub camera_locked: bool,
     pub last_outcome: ActionOutcome,
+    /// Number of queued gameplay events whose stat/threat side effects have
+    /// already been applied by the real-time schedule.
+    pub(super) processed_game_events: usize,
     /// Set to true by `check_boss_phase_transition` when the boss crossed into
     /// phase 2 during this step. Reset by `apply_action` at the start of each step.
     pub boss_transitioned: bool,
@@ -169,6 +174,7 @@ impl Game {
     }
 
     pub fn take_events(&mut self) -> Vec<GameEvent> {
+        self.processed_game_events = 0;
         self.world
             .resource_mut::<Events<GameEvent>>()
             .unwrap()
@@ -335,6 +341,11 @@ impl Game {
 
         let registry = crate::snapshot::create_registry();
         registry.apply(&mut self.world, state.world)?;
+        self.processed_game_events = self
+            .world
+            .resource::<Events<GameEvent>>()
+            .map(|events| events.iter().count())
+            .unwrap_or(0);
 
         // Re-insert non-snapshotted resources
         let mut asset_registry = verryte_terminal::assets::VisualRegistry::new();
@@ -500,9 +511,72 @@ impl Game {
 
     pub fn run_pending_reports(&mut self) -> Vec<crate::snapshot::StepReport> {
         let mut reports = Vec::new();
-        while let Some(action) = self.router.pop_action() {
-            reports.push(self.apply_action(action.action, action.source));
+        while let Some(queued) = self.router.pop_action() {
+            let mut report = self.apply_action(queued.action, queued.source);
+            if queued.action == Action::EndTurn
+                && report.before.phase == TurnPhase::Player
+                && report.before.outcome == Outcome::Playing
+            {
+                self.finish_headless_turn(&mut report);
+            }
+            reports.push(report);
         }
         reports
+    }
+
+    /// Advance the same real-time schedule used by the TTY until a requested
+    /// end turn returns control to the player. Enemy AI consumes its AP in one
+    /// update, then requests a phase transition on the next, so this bounded
+    /// loop normally needs three ticks.
+    fn finish_headless_turn(&mut self, report: &mut crate::snapshot::StepReport) {
+        const MAX_SCHEDULE_TICKS: usize = 8;
+
+        for _ in 0..MAX_SCHEDULE_TICKS {
+            self.update(0.0);
+            let settled = self.world.resource::<GameState>().is_some_and(|state| {
+                state.outcome != Outcome::Playing
+                    || (state.phase == TurnPhase::Player && state.turn > report.before.turn)
+            });
+            if settled {
+                break;
+            }
+        }
+
+        let scheduled_events = self.take_events();
+        let state = self.world.resource::<GameState>().unwrap();
+        let outcome = if state.outcome != Outcome::Playing {
+            ActionOutcome::GameOver {
+                outcome: state.outcome,
+            }
+        } else if state.turn > report.before.turn {
+            ActionOutcome::TurnAdvanced
+        } else if state.phase != report.before.phase {
+            ActionOutcome::PhaseChanged
+        } else {
+            report.outcome.clone()
+        };
+
+        report.events.extend(scheduled_events);
+        report.after = self.snapshot();
+        report.outcome = outcome.clone();
+        self.last_outcome = outcome.clone();
+
+        if let Some(history) = self
+            .world
+            .resource_mut::<verryte_input::ActionHistory<Action>>()
+        {
+            if let Some(record) = history.records.last_mut() {
+                if let Ok(serialized) = serde_json::to_string(&outcome) {
+                    record.metadata.insert("outcome".to_string(), serialized);
+                }
+            }
+        }
+        if let Some(diagnostics) = self.world.resource::<verryte_core::Diagnostics>() {
+            report.diagnostics = diagnostics
+                .systems
+                .iter()
+                .map(|(name, metrics)| (name.clone(), metrics.last_duration.as_secs_f64() * 1000.0))
+                .collect();
+        }
     }
 }

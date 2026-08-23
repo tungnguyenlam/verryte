@@ -1,8 +1,8 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    CharacterClass, DynamicFloorEvents, EquippedItems, FloorEventKind, FloorModifier, GameState,
-    IncursionAttackTelegraphs, IncursionFirstAttackDisrupted, IncursionMiniBoss, Inventory,
-    Outcome, Stats, Team, TurnPhase,
+    ActiveFloorModifiers, CharacterClass, DynamicFloorEvents, EquippedItems, FloorEventKind,
+    FloorModifier, GameState, IncursionAttackTelegraphs, IncursionFirstAttackDisrupted,
+    IncursionMiniBoss, Inventory, Outcome, Stats, Team, TurnPhase, Weather, WeatherType,
 };
 use wuthering_terminal::snapshot::{ActionOutcome, FullSaveState, CURRENT_SAVE_VERSION};
 use wuthering_terminal::{Action, Game, Position};
@@ -199,6 +199,112 @@ fn save_load_restores_game_state() {
     assert_eq!(snap_before.enemy_team, snap_after.enemy_team);
     assert_eq!(snap_before.floor, snap_after.floor);
     assert_eq!(snap_before.battle_stats, snap_after.battle_stats);
+}
+
+#[test]
+fn save_load_preserves_committed_weather_without_runtime_audio_state() {
+    let mut game = Game::new();
+    let zones = vec![Position::new(4, 4), Position::new(5, 4)];
+    {
+        let weather = game.world.resource_mut::<Weather>().unwrap();
+        weather.current = WeatherType::LightningStorm;
+        weather.danger_zones = zones.clone();
+        weather.last_effect_turn = Some(7);
+        weather.ambient_started_for = Some(WeatherType::LightningStorm);
+    }
+
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+
+    let weather = restored.world.resource::<Weather>().unwrap();
+    assert_eq!(weather.current, WeatherType::LightningStorm);
+    assert_eq!(weather.danger_zones, zones);
+    assert_eq!(weather.last_effect_turn, Some(7));
+    assert_eq!(weather.ambient_started_for, None);
+}
+
+#[test]
+fn load_does_not_reapply_or_report_already_processed_schedule_events() {
+    let mut game = Game::new();
+    game.apply_action(Action::EndTurn, ActionSource::Terminal);
+    game.update(0.0);
+    game.update(0.0);
+    game.update(0.0);
+    let battle_stats = game.snapshot().battle_stats;
+
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+    let report =
+        restored.apply_action(Action::Inspect(Position::new(1, 1)), ActionSource::Terminal);
+
+    assert_eq!(report.outcome, ActionOutcome::StateUpdated);
+    assert!(report.events.iter().all(|event| !matches!(
+        event,
+        wuthering_terminal::components::GameEvent::PhaseChanged(_)
+    )));
+    assert_eq!(report.after.battle_stats, battle_stats);
+}
+
+#[test]
+fn older_weather_resource_defaults_turn_markers() {
+    let weather: Weather =
+        serde_json::from_str(r#"{"current":"Sunny","danger_zones":[]}"#).unwrap();
+
+    assert_eq!(weather.last_effect_turn, None);
+    assert_eq!(weather.ambient_started_for, None);
+}
+
+#[test]
+fn older_floor_modifier_resource_defaults_turn_marker() {
+    let modifiers: wuthering_terminal::components::ActiveFloorModifiers =
+        serde_json::from_str(r#"{"modifiers":[],"turns_remaining":[]}"#).unwrap();
+
+    assert_eq!(modifiers.last_processed_turn, None);
+}
+
+#[test]
+fn save_load_preserves_processed_floor_modifier_turn() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    {
+        let modifiers = game.world.resource_mut::<ActiveFloorModifiers>().unwrap();
+        modifiers.modifiers = vec![FloorModifier::ElementalStorm];
+        modifiers.turns_remaining = vec![5];
+    }
+    wuthering_terminal::systems::floor_modifier_system(&mut game.world);
+    let hp_after_first_tick = game.world.get::<Stats>(warrior).unwrap().hp;
+
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+    wuthering_terminal::systems::floor_modifier_system(&mut restored.world);
+
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().hp,
+        hp_after_first_tick
+    );
+    assert_eq!(
+        restored
+            .world
+            .resource::<ActiveFloorModifiers>()
+            .unwrap()
+            .turns_remaining,
+        vec![4]
+    );
+
+    restored.world.resource_mut::<GameState>().unwrap().turn += 1;
+    wuthering_terminal::systems::floor_modifier_system(&mut restored.world);
+    assert!(restored.world.get::<Stats>(warrior).unwrap().hp < hp_after_first_tick);
+    assert_eq!(
+        restored
+            .world
+            .resource::<ActiveFloorModifiers>()
+            .unwrap()
+            .turns_remaining,
+        vec![3]
+    );
 }
 
 #[test]

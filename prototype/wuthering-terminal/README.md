@@ -43,6 +43,7 @@ Characters can have unique traits that modify gameplay:
 - **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life, Cleanse Remedy + Energy Elixir -> Ward Charm) using `Action::CraftItem`. Successful crafts report `ActionOutcome::Crafted`; invalid recipes and slots report structured failures. Ward Charm uses `ItemEffect::EventWard` to Brace a telegraphed floor event without spending AP.
 - **Floor progression**: stairs spawn upon defeating enemies, triggering descent to deeper floors (using `Action::NextFloor` or keyboard key `>`). Floor 2+ features a procedural BSP dungeon layout, scaled enemy stats (+15% per floor), bonus loot, and an elite Glacial Golem encounter on Floor 3+. Boss shields scale with floor depth.
 - **Dynamic floor events**: beginning on Floor 2, seed-driven modifier surges or mini-boss incursions are telegraphed one turn before they resolve. Danger tiles, resolve turn, and any player response are exposed in snapshots. Players can `brace`, `intercept`, or `embrace` through the shared action path; a crafted `Ward Charm` (Cleanse Remedy + Energy Elixir) auto-braces without spending AP. Existing inventory items also answer events: Cleanse Remedy purifies a surge, Aegis Elixir bolsters an incursion, Energy Elixir intercepts from anywhere, and a Healing Potion channels a Healing Surge into extra party healing. Mini-boss telegraphs use class-specific patterns (`cross` for Void Terror, `ring` for Frozen Sentinel) from `verryte-map::TileShape`. Intercepting an incursion also disrupts its first post-spawn attack. Triggers still emit structured game events and action outcomes.
+- **Turn-committed floor modifiers**: durations and periodic effects advance once per game turn, independent of render/update frequency. Elemental Storm therefore deals one deterministic 5-10 damage pulse per turn, and save/load preserves whether the current turn was already processed.
 - **Incursion attack warnings**: once an event mini-boss has spawned, it keeps
   using its class shape for committed attacks. Void Terror charges a cross-shaped
   Void Rend; Frozen Sentinel charges a ring-shaped Glacial Lock. These attacks
@@ -51,10 +52,14 @@ Characters can have unique traits that modify gameplay:
   warning immediately. An Intercept response shortens Void Terror's first cross
   to radius one or removes the escape-side tile from Frozen Sentinel's first
   ring; later attacks return to their normal patterns.
-  The existing `safety` action also treats every armed incursion tile as
-  dangerous, moves the selected hero to the nearest reachable safe tile, and
-  reports the move through the same structured action/event/history path as
-  ordinary movement.
+  The existing `safety` action treats boss telegraphs, armed incursion tiles,
+  and committed lightning-strike tiles as one danger set, moves the selected
+  hero to the nearest reachable safe tile, and reports the move through the
+  same structured action/event/history path as ordinary movement. Weather
+  effects and ambient-loop changes are prepared once per game turn rather than
+  once per rendered frame; lightning resolves against each team at its phase
+  boundary, leaving the player warning actionable. Each hit emits a structured
+  `WeatherHazardResolved` event with weather, target, team, tile, and damage.
 - **Elemental shields**: absorb damage before HP
 - **Level-up system**: defeating enemies awards XP (scaled by floor depth). Level-ups grant +10 HP, +2 ATK, +1 DEF, and a skill point. Prestige classes (BladeMaster, Archmage, DivineHealer) unlock at milestones with VFX feedback.
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
@@ -118,17 +123,25 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "confirm skil
 
 The script runner accepts action tokens separated by spaces. It prints
 rendered frames, state summaries, and event outcomes after each action.
+An `end` token advances the normal turn-management and enemy-AI schedule until
+the next player turn, so its `StepReport` contains the resulting state and
+events rather than a pending transition request.
 Item use, crafting, equipment upgrades, set rewards, echo absorption, boss phase
 transitions, save/load, action recording, replay mode changes, replay steps,
 UI/tool toggles, prestige status views, rest recovery, floor modifier rerolls,
 and invalid inventory, floor-transition, or replay attempts are reported through
 structured `ActionOutcome` values so scripts and replays do not need to scrape
 log text.
+Recording start/stop controls are excluded from the saved gameplay trace, and
+nested replay steps retain separate outcome metadata for the replayed action and
+the replay-control wrapper. Replaying a headless-recorded `end` settles the same
+turn schedule before validating its recorded `TurnAdvanced` outcome.
 
 The agent runner uses the same command parser and `Game::apply_action` path but
 labels queued actions as `Agent`. Its JSON snapshots also include
 `active_modifier_durations` and `weather_danger_zones`, allowing an external
-controller to reason about timed floor effects and imminent lightning strikes.
+controller to reason about timed floor effects and committed lightning strikes
+that can be answered with `safety`.
 `next_floor_event_turn` and `recent_floor_events` expose dynamic event timing
 and history without requiring frame or log scraping. When an event is
 telegraphed, `pending_floor_event`, `pending_floor_event_resolves_on`,
@@ -142,6 +155,8 @@ fields plus an `intercepted` flag. Modified patterns are named `short-cross` or
 `broken-ring`, and their exact safe tiles remain authoritative. The same attacks
 appear in `enemy_intents` and as structured `IncursionAttackTelegraphed` /
 `IncursionAttackResolved` game events.
+Committed lightning strikes likewise appear in headless end-turn reports as
+`WeatherHazardResolved` events and contribute to battle damage-taken totals.
 
 ### Script tokens
 

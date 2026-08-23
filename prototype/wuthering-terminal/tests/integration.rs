@@ -4,6 +4,7 @@ use wuthering_terminal::components::{
     Fatigue, FloorEventKind, FloorEventResponse, FloorModifier, GameEvent, GameState,
     IncursionAttackTelegraphs, IncursionFirstAttackDisrupted, IncursionMiniBoss, Inventory,
     ItemEffect, Morale, Outcome, ReplayState, Stats, Team, TurnPhase, TurnTransition, UIState,
+    Weather, WeatherType,
 };
 use wuthering_terminal::equipment;
 use wuthering_terminal::snapshot::{ActionOutcome, FailureCategory};
@@ -1175,6 +1176,37 @@ fn step_to_safety_escapes_armed_incursion_through_shared_action_path() {
 }
 
 #[test]
+fn step_to_safety_avoids_weather_and_boss_warnings_together() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let start = *game.world.get::<Position>(warrior).unwrap();
+    let boss_warning = Position::new(start.x, start.y - 1);
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+    {
+        let weather = game.world.resource_mut::<Weather>().unwrap();
+        weather.current = WeatherType::LightningStorm;
+        weather.danger_zones = vec![start];
+    }
+    game.world
+        .resource_mut::<wuthering_terminal::components::TelegraphZone>()
+        .unwrap()
+        .tiles = vec![boss_warning];
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.selected_entity = Some(warrior);
+        state.cursor = start;
+    }
+
+    let report = game.apply_action(Action::StepToSafety, ActionSource::Agent);
+
+    let destination = *game.world.get::<Position>(warrior).unwrap();
+    assert_ne!(destination, start);
+    assert_ne!(destination, boss_warning);
+    assert!(matches!(report.outcome, ActionOutcome::Moved { to, .. } if to == destination));
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
 fn step_to_safety_reports_invalid_context_instead_of_silent_noop() {
     let mut game = Game::new();
     select_character(&mut game, Position::new(4, 4));
@@ -1653,6 +1685,28 @@ fn recording_reports_structured_outcomes() {
         other => panic!("expected recording stopped outcome, got {other:?}"),
     }
     assert!(!game.world.resource::<GameState>().unwrap().is_recording);
+
+    let history = game
+        .world
+        .resource::<verryte_input::ActionHistory<Action>>()
+        .unwrap();
+    assert_eq!(
+        history.records.len(),
+        1,
+        "recording controls must not become replayable gameplay actions"
+    );
+    assert_eq!(
+        history.records[0].action,
+        Action::Inspect(Position::new(4, 4))
+    );
+    assert_eq!(
+        history.records[0]
+            .metadata
+            .get("outcome")
+            .and_then(|value| serde_json::from_str::<ActionOutcome>(value).ok()),
+        Some(ActionOutcome::StateUpdated),
+        "stopping recording must not overwrite the preceding action's outcome"
+    );
 }
 
 #[test]
@@ -1738,6 +1792,51 @@ fn replay_end_reports_disabled_outcome() {
             errors: 0,
         }
     );
+}
+
+#[test]
+fn replay_step_settles_headless_end_turn_before_verification() {
+    let mut game = Game::new();
+    let replay = game.world.resource_mut::<ReplayState>().unwrap();
+    replay.active = true;
+    replay.trace.push(Action::EndTurn, ActionSource::Script);
+    replay.expected_outcomes = vec![ActionOutcome::TurnAdvanced];
+
+    let report = game.apply_action(Action::StepReplay, ActionSource::Agent);
+
+    assert!(matches!(
+        report.outcome,
+        ActionOutcome::ReplayStepped {
+            index: 0,
+            verified: true,
+            ..
+        }
+    ));
+    let state = game.world.resource::<GameState>().unwrap();
+    assert_eq!(state.turn, 2);
+    assert_eq!(state.phase, TurnPhase::Player);
+    assert!(game
+        .world
+        .resource::<ReplayState>()
+        .unwrap()
+        .verification_errors
+        .is_empty());
+
+    let history = game
+        .world
+        .resource::<verryte_input::ActionHistory<Action>>()
+        .unwrap();
+    assert_eq!(history.records.len(), 2);
+    assert_eq!(history.records[0].action, Action::EndTurn);
+    assert_eq!(history.records[1].action, Action::StepReplay);
+    let replayed_outcome: ActionOutcome = serde_json::from_str(
+        history.records[0]
+            .metadata
+            .get("outcome")
+            .expect("replayed action outcome metadata"),
+    )
+    .unwrap();
+    assert_eq!(replayed_outcome, ActionOutcome::TurnAdvanced);
 }
 
 #[test]
@@ -2103,11 +2202,20 @@ fn next_floor_transitions_when_on_stairs() {
 
     let floor_before = game.world.resource::<GameState>().unwrap().floor;
     assert_eq!(floor_before, 1);
+    {
+        let weather = game.world.resource_mut::<Weather>().unwrap();
+        weather.current = WeatherType::LightningStorm;
+        weather.danger_zones = vec![Position::new(4, 4)];
+        weather.last_effect_turn = Some(1);
+    }
 
     game.apply_action(Action::NextFloor, ActionSource::Terminal);
 
     let floor_after = game.world.resource::<GameState>().unwrap().floor;
     assert_eq!(floor_after, 2, "Floor should increment to 2");
+    let weather = game.world.resource::<Weather>().unwrap();
+    assert!(weather.danger_zones.is_empty());
+    assert_eq!(weather.last_effect_turn, None);
 }
 
 #[test]
@@ -2425,6 +2533,90 @@ fn script_runner_reports_contain_outcomes() {
     ));
     assert!(matches!(reports[2].outcome, ActionOutcome::StateUpdated));
     assert!(matches!(reports[3].outcome, ActionOutcome::Moved { .. }));
+}
+
+#[test]
+fn script_end_turn_runs_the_shared_schedule_to_the_next_player_turn() {
+    let mut scripted = Game::new();
+    scripted
+        .router
+        .inject_script_with(
+            &wuthering_terminal::default_commands(),
+            "end",
+            ActionSource::Script,
+            wuthering_terminal::resolve_command_token,
+        )
+        .unwrap();
+
+    let reports = scripted.run_pending_reports();
+
+    assert_eq!(reports.len(), 1);
+    let report = &reports[0];
+    assert_eq!(report.source, ActionSource::Script);
+    assert_eq!(report.before.turn, 1);
+    assert_eq!(report.before.phase, TurnPhase::Player);
+    assert_eq!(report.after.turn, 2);
+    assert_eq!(report.after.phase, TurnPhase::Player);
+    assert_eq!(report.outcome, ActionOutcome::TurnAdvanced);
+    assert!(report
+        .events
+        .contains(&GameEvent::PhaseChanged(TurnPhase::Enemy)));
+    assert!(report
+        .events
+        .contains(&GameEvent::PhaseChanged(TurnPhase::Player)));
+    assert_eq!(last_recorded_outcome(&scripted), report.outcome);
+
+    let mut interactive = Game::new();
+    interactive.apply_action(Action::EndTurn, ActionSource::Terminal);
+    interactive.update(0.0);
+    interactive.update(0.0);
+    interactive.update(0.0);
+
+    assert_eq!(scripted.snapshot(), interactive.snapshot());
+
+    let inspect =
+        interactive.apply_action(Action::Inspect(Position::new(1, 1)), ActionSource::Terminal);
+    assert_eq!(inspect.outcome, ActionOutcome::StateUpdated);
+    assert!(inspect
+        .events
+        .iter()
+        .all(|event| !matches!(event, GameEvent::PhaseChanged(_))));
+}
+
+#[test]
+fn headless_end_turn_reports_committed_weather_damage() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let position = *game.world.get::<Position>(warrior).unwrap();
+    let damage_taken_before = game.snapshot().battle_stats.total_damage_taken;
+    {
+        let weather = game.world.resource_mut::<Weather>().unwrap();
+        weather.current = WeatherType::LightningStorm;
+        weather.danger_zones = vec![position];
+        weather.last_effect_turn = Some(1);
+    }
+    game.router
+        .inject_script_with(
+            &wuthering_terminal::default_commands(),
+            "end",
+            ActionSource::Script,
+            wuthering_terminal::resolve_command_token,
+        )
+        .unwrap();
+
+    let report = game.run_pending_reports().pop().unwrap();
+
+    assert!(report.events.iter().any(|event| matches!(
+        event,
+        GameEvent::WeatherHazardResolved {
+            weather: WeatherType::LightningStorm,
+            target,
+            team: Team::Player,
+            position: hit_position,
+            damage: 15,
+        } if *target == warrior && *hit_position == position
+    )));
+    assert!(report.after.battle_stats.total_damage_taken >= damage_taken_before + 15);
 }
 
 // ─── 12. StepReport ──────────────────────────────────────────────────────────

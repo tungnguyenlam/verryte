@@ -3081,6 +3081,7 @@ mod tests {
             .unwrap()
             .current = crate::components::WeatherType::Rainy;
         crate::systems::weather_ambient_system(&mut game.world);
+        crate::systems::weather_ambient_system(&mut game.world);
         let events = game
             .world
             .resource::<verryte_core::Events<verryte_core::AudioEvent>>()
@@ -3092,6 +3093,14 @@ mod tests {
         assert!(
             has_rain,
             "weather_ambient_system should emit ambient_rain for Rainy"
+        );
+        assert_eq!(
+            collected
+                .iter()
+                .filter(|event| event.name == "ambient_rain" && event.looped)
+                .count(),
+            1,
+            "the real-time schedule must not restart ambient audio every frame"
         );
     }
 
@@ -3586,6 +3595,16 @@ mod tests {
             "Turn 4 should cycle to Rainy"
         );
 
+        crate::systems::weather_cycle_system(&mut game.world);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::Weather>()
+                .unwrap()
+                .current,
+            WeatherType::Rainy,
+            "repeated real-time updates must not cycle weather twice in one turn"
+        );
+
         game.world.resource_mut::<GameState>().unwrap().turn = 7;
         crate::systems::weather_cycle_system(&mut game.world);
         assert_eq!(
@@ -4054,6 +4073,7 @@ mod tests {
         );
 
         crate::systems::weather_cycle_system(&mut game.world);
+        crate::systems::weather_cycle_system(&mut game.world);
 
         let status = game
             .world
@@ -4067,6 +4087,47 @@ mod tests {
             "Snowing should extend Ice duration by 1 (expected 3, got {:?})",
             status
         );
+    }
+
+    #[test]
+    fn test_weather_hazard_damage_only_hits_the_outgoing_team() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::Warrior)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let boss = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::Boss)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let danger = *game.world.get::<Position>(warrior).unwrap();
+        *game.world.get_mut::<Position>(boss).unwrap() = danger;
+        let player_hp = game.world.get::<Stats>(warrior).unwrap().hp;
+        let enemy_hp = game.world.get::<Stats>(boss).unwrap().hp;
+        {
+            let weather = game
+                .world
+                .resource_mut::<crate::components::Weather>()
+                .unwrap();
+            weather.current = crate::components::WeatherType::LightningStorm;
+            weather.danger_zones = vec![danger];
+        }
+
+        crate::systems::apply_weather_hazard_damage(&mut game.world, Team::Player);
+
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, player_hp - 15);
+        assert_eq!(game.world.get::<Stats>(boss).unwrap().hp, enemy_hp);
+
+        crate::systems::apply_weather_hazard_damage(&mut game.world, Team::Enemy);
+
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, player_hp - 15);
+        assert_eq!(game.world.get::<Stats>(boss).unwrap().hp, enemy_hp - 15);
     }
 
     #[test]
@@ -6658,12 +6719,41 @@ mod tests {
 
         crate::systems::floor_modifier_system(&mut game.world);
 
-        let final_hp = game.world.get::<Stats>(warrior).unwrap().hp;
+        let first_hp = game.world.get::<Stats>(warrior).unwrap().hp;
         assert!(
-            final_hp < initial_hp,
+            first_hp < initial_hp,
             "ElementalStorm should deal damage. Initial: {}, Final: {}",
             initial_hp,
-            final_hp
+            first_hp
+        );
+        assert_eq!(
+            game.world
+                .resource::<crate::components::ActiveFloorModifiers>()
+                .unwrap()
+                .turns_remaining,
+            vec![4]
+        );
+
+        crate::systems::floor_modifier_system(&mut game.world);
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, first_hp);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::ActiveFloorModifiers>()
+                .unwrap()
+                .turns_remaining,
+            vec![4],
+            "real-time updates must not consume modifier duration repeatedly"
+        );
+
+        game.world.resource_mut::<GameState>().unwrap().turn += 1;
+        crate::systems::floor_modifier_system(&mut game.world);
+        assert!(game.world.get::<Stats>(warrior).unwrap().hp < first_hp);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::ActiveFloorModifiers>()
+                .unwrap()
+                .turns_remaining,
+            vec![3]
         );
     }
 

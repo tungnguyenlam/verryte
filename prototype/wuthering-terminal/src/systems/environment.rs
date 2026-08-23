@@ -15,10 +15,13 @@ use super::combat::{apply_heal, handle_defeat, log};
 use super::movement::get_tile_center_pixels;
 
 pub fn weather_ambient_system(world: &mut World) {
-    let current = world
+    let (current, already_started) = world
         .resource::<Weather>()
-        .map(|w| w.current)
-        .unwrap_or(WeatherType::Sunny);
+        .map(|weather| (weather.current, weather.ambient_started_for))
+        .unwrap_or((WeatherType::Sunny, None));
+    if already_started == Some(current) {
+        return;
+    }
 
     let ambient_name = match current {
         WeatherType::Rainy => "ambient_rain",
@@ -35,32 +38,46 @@ pub fn weather_ambient_system(world: &mut World) {
 
     if let Some(events) = world.resource_mut::<Events<verryte_core::AudioEvent>>() {
         events.send(verryte_core::AudioEvent::loop_music(ambient_name).with_volume(volume));
+        if let Some(weather) = world.resource_mut::<Weather>() {
+            weather.ambient_started_for = Some(current);
+        }
     }
 }
 
 pub const WEATHER_CYCLE_TURNS: u32 = 3;
 
 pub fn weather_cycle_system(world: &mut World) {
-    let current = world
-        .resource::<Weather>()
-        .map(|w| w.current)
-        .unwrap_or(WeatherType::Sunny);
-
-    apply_per_turn_weather_effects(world, current);
-
     let turn = world.resource::<GameState>().map(|s| s.turn).unwrap_or(1);
-    if turn == 1 || turn % WEATHER_CYCLE_TURNS != 1 {
+    let (current, last_effect_turn) = world
+        .resource::<Weather>()
+        .map(|weather| (weather.current, weather.last_effect_turn))
+        .unwrap_or((WeatherType::Sunny, None));
+    if last_effect_turn == Some(turn) {
         return;
     }
-    let next = match current {
-        WeatherType::Sunny => WeatherType::Rainy,
-        WeatherType::Rainy => WeatherType::LightningStorm,
-        WeatherType::LightningStorm => WeatherType::Snowing,
-        WeatherType::Snowing => WeatherType::Sunny,
+
+    let next = if turn != 1 && turn % WEATHER_CYCLE_TURNS == 1 {
+        match current {
+            WeatherType::Sunny => WeatherType::Rainy,
+            WeatherType::Rainy => WeatherType::LightningStorm,
+            WeatherType::LightningStorm => WeatherType::Snowing,
+            WeatherType::Snowing => WeatherType::Sunny,
+        }
+    } else {
+        current
     };
     if let Some(weather) = world.resource_mut::<Weather>() {
         weather.current = next;
-        weather.danger_zones.clear();
+        weather.last_effect_turn = Some(turn);
+        if next != current {
+            weather.danger_zones.clear();
+            weather.ambient_started_for = None;
+        }
+    }
+    apply_per_turn_weather_effects(world, next);
+
+    if next == current {
+        return;
     }
     log(
         world,
@@ -150,49 +167,13 @@ fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
                     .resource::<TacticalMap>()
                     .map(|m| m.is_walkable(pos))
                     .unwrap_or(false);
-                if walkable {
+                if walkable && !zones.contains(&pos) {
                     zones.push(pos);
                 }
             }
 
             if let Some(w) = world.resource_mut::<Weather>() {
                 w.danger_zones = zones.clone();
-            }
-
-            for zone in &zones {
-                let mut victims = Vec::new();
-                for (e, p, team) in world.query2::<Position, Team>() {
-                    if *p == *zone {
-                        victims.push((e, *team));
-                    }
-                }
-                for (victim, _team) in victims {
-                    let victim_class = world
-                        .get::<CharacterClass>(victim)
-                        .copied()
-                        .unwrap_or(CharacterClass::Warrior);
-                    let victim_name = Game::get_class_name(victim_class);
-                    let mut final_hp = 0;
-                    let mut defeated = false;
-                    if let Some(stats) = world.get_mut::<Stats>(victim) {
-                        stats.hp -= 15;
-                        final_hp = stats.hp;
-                        if stats.hp <= 0 {
-                            defeated = true;
-                        }
-                    }
-                    log(
-                        world,
-                        format!(
-                            "[fg:FFFF64]Lightning struck {} at ({}, {}) for 15 damage! (HP: {})[/fg]",
-                            victim_name, zone.x, zone.y, final_hp
-                        ),
-                    );
-                    if defeated {
-                        let name_str = victim_name.to_string();
-                        handle_defeat(world, victim, &name_str, victim_class, *zone);
-                    }
-                }
             }
         }
         WeatherType::Rainy => {
@@ -322,7 +303,7 @@ fn apply_per_turn_weather_effects(world: &mut World, weather: WeatherType) {
     }
 }
 
-pub fn apply_weather_hazard_damage(world: &mut World) {
+pub fn apply_weather_hazard_damage(world: &mut World, affected_team: Team) {
     let (weather, zones) = {
         let w = world
             .resource::<Weather>()
@@ -336,8 +317,8 @@ pub fn apply_weather_hazard_damage(world: &mut World) {
 
     for zone in &zones {
         let mut victims = Vec::new();
-        for (e, p, _team) in world.query2::<Position, Team>() {
-            if *p == *zone {
+        for (e, p, team) in world.query2::<Position, Team>() {
+            if *team == affected_team && *p == *zone {
                 victims.push(e);
             }
         }
@@ -363,6 +344,15 @@ pub fn apply_weather_hazard_damage(world: &mut World) {
                     victim_name, zone.x, zone.y, final_hp
                 ),
             );
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::WeatherHazardResolved {
+                    weather,
+                    target: victim,
+                    team: affected_team,
+                    position: *zone,
+                    damage: 15,
+                });
+            }
             let (cx, cy) = get_tile_center_pixels(world, *zone);
             if let Some(vfx) = world.resource_mut::<VfxSystem>() {
                 vfx.particles
@@ -385,22 +375,30 @@ pub fn apply_weather_hazard_damage(world: &mut World) {
 }
 
 pub fn floor_modifier_system(world: &mut World) {
-    let modifiers = world
-        .resource::<ActiveFloorModifiers>()
-        .cloned()
-        .unwrap_or_default();
-    if modifiers.modifiers.is_empty() {
+    let (turn, phase) = world
+        .resource::<GameState>()
+        .map(|state| (state.turn, state.phase))
+        .unwrap_or((1, TurnPhase::Player));
+    if phase != TurnPhase::Player {
         return;
     }
 
-    let phase = world
-        .resource::<GameState>()
-        .map(|s| s.phase)
-        .unwrap_or(TurnPhase::Player);
+    let modifiers = {
+        let Some(active) = world.resource_mut::<ActiveFloorModifiers>() else {
+            return;
+        };
+        if active.modifiers.is_empty() || active.last_processed_turn == Some(turn) {
+            return;
+        }
+        active.turns_remaining.resize(active.modifiers.len(), 1);
+        active.turns_remaining.truncate(active.modifiers.len());
+        active.last_processed_turn = Some(turn);
+        active.clone()
+    };
 
     for modifier in modifiers.modifiers.iter() {
         match modifier {
-            FloorModifier::ElementalStorm if phase == TurnPhase::Player => {
+            FloorModifier::ElementalStorm => {
                 let damage = {
                     let rng = world.resource_mut::<Rng>().expect("Rng registered");
                     5 + rng.next_u32(6) as i32
@@ -522,6 +520,7 @@ pub fn select_floor_modifiers(world: &mut World) {
     if let Some(modifiers) = world.resource_mut::<ActiveFloorModifiers>() {
         modifiers.modifiers = chosen;
         modifiers.turns_remaining = chosen_durations;
+        modifiers.last_processed_turn = None;
     }
 
     log(
@@ -613,6 +612,7 @@ pub fn select_floor_modifiers_with_override(
     if let Some(modifiers) = world.resource_mut::<ActiveFloorModifiers>() {
         modifiers.modifiers = chosen;
         modifiers.turns_remaining = chosen_durations;
+        modifiers.last_processed_turn = None;
     }
 
     log(
