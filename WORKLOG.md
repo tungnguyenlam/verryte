@@ -1,5 +1,48 @@
 # Verryte Worklog
 
+## 2026-08-23 - shared safety response for armed incursions
+
+**Goal.** Let players, scripts, and agents react to already-armed incursion
+attacks through an existing shared action with authoritative outcomes.
+
+**Accomplishments.** `Action::StepToSafety` now treats the union of boss and
+incursion attack telegraphs as danger, chooses a reachable tile outside every
+armed pattern, and emits the normal structured `GameEvent::Moved` /
+`ActionOutcome::Moved` surfaces. The action records the same outcome in action
+history and reports missing selection, missing warnings, already-safe actors,
+insufficient AP, and blocked escape routes as categorized failures instead of
+silent `NoOp` results. Stale selected entities no longer panic this path.
+
+**Verification.** Targeted shared-action regressions pass. `cargo fmt --all
+--check`, `cargo test --workspace`, and `cargo clippy --workspace --all-targets
+-- -D warnings` pass. The agent runner reported the expected Agent-sourced
+failure at both 80x24 and 120x40.
+
+**Next Steps.** Consider extending the safety planner to other committed damage
+surfaces such as weather danger zones while retaining one authoritative union
+of unsafe tiles and normal movement observability.
+
+## 2026-08-23 - unified autonomous improvement prompt
+
+**Goal.** Replace the fragmented continuation prompt kit with one durable prompt
+for continuous autonomous development, optimization, review, and bug fixing
+without routine human intervention.
+
+**Accomplishments.** Consolidated the project context, architecture, vertical
+slice, shared-control, modularity, testing, hardening, documentation, bootstrap,
+autonomous-run, and tactical-RPG guidance into `prompt/improve.md`. The new
+prompt uses a repeating evidence-driven work loop, makes each completed batch a
+checkpoint rather than a stop condition, defines autonomous decision and
+blocker-pivot rules, and distinguishes long-running maintenance from unbounded
+or destructive commands. Removed the superseded prompt files and updated the
+agent guides to reference the single source.
+
+**Verification.** Documentation links, prompt inventory, stale prompt-name
+references, and whitespace were checked after consolidation.
+
+**Next Steps.** Use `prompt/improve.md` as the only continuation prompt and
+revise it in place when the autonomous operating policy changes.
+
 ## 2026-08-23 - intercepted incursion openings
 
 **Goal.** Make the existing `Intercept` response change the spawned

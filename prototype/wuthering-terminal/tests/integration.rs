@@ -1129,6 +1129,104 @@ fn triggered_incursion_is_marked_and_arms_attack_through_enemy_ai() {
 }
 
 #[test]
+fn step_to_safety_escapes_armed_incursion_through_shared_action_path() {
+    let mut game = Game::new();
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(6, 4),
+        },
+    );
+    game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    game.take_events();
+
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let start = *game.world.get::<Position>(warrior).unwrap();
+    let danger_tiles = game.snapshot().incursion_attacks[0].tiles.clone();
+    assert!(danger_tiles.contains(&start));
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.phase = TurnPhase::Player;
+        state.selected_entity = Some(warrior);
+        state.cursor = start;
+    }
+
+    let report = game.apply_action(Action::StepToSafety, ActionSource::Agent);
+
+    let destination = *game.world.get::<Position>(warrior).unwrap();
+    assert_ne!(destination, start);
+    assert!(!danger_tiles.contains(&destination));
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Moved {
+            entity: "Kael".to_string(),
+            to: destination,
+        }
+    );
+    assert!(report.events.iter().any(|event| matches!(
+        event,
+        GameEvent::Moved { entity, from, to }
+            if *entity == warrior && *from == start && *to == destination
+    )));
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
+fn step_to_safety_reports_invalid_context_instead_of_silent_noop() {
+    let mut game = Game::new();
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(Action::StepToSafety, ActionSource::Script);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "No danger zones telegraphed.".to_string(),
+        }
+    );
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::WrongContext)
+    );
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
+fn step_to_safety_reports_out_of_ap_before_pathfinding() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let start = *game.world.get::<Position>(warrior).unwrap();
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 0;
+    game.world
+        .resource_mut::<wuthering_terminal::components::TelegraphZone>()
+        .unwrap()
+        .tiles = vec![start];
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.selected_entity = Some(warrior);
+        state.cursor = start;
+    }
+
+    let report = game.apply_action(Action::StepToSafety, ActionSource::Terminal);
+
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Failed {
+            reason: "Not enough AP to step to safety!".to_string(),
+        }
+    );
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::OutOfAP)
+    );
+    assert_eq!(*game.world.get::<Position>(warrior).unwrap(), start);
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
 fn frozen_incursion_attack_reuses_ring_shape_without_center() {
     let mut game = Game::new();
     game.world.resource_mut::<GameState>().unwrap().floor = 4;

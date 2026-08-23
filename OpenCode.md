@@ -114,8 +114,8 @@ Keep these docs aligned when their subject changes:
 - [prototype/wuthering-terminal/README.md](prototype/wuthering-terminal/README.md) for the
   tactical RPG prototype and its current scope.
 - [GOAL.md](GOAL.md) only when the project direction itself changes.
-- Prompt files under [prompt/](prompt/) only when reusable agent instructions
-  need to change.
+- [prompt/improve.md](prompt/improve.md) only when the long-running autonomous
+  development instructions need to change.
 
 ## Committing
 

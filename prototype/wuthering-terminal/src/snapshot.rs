@@ -259,7 +259,9 @@ impl ActionOutcome {
                     Some(FailureCategory::OutOfAP)
                 } else if reason.starts_with("Target is out of") {
                     Some(FailureCategory::OutOfRange)
-                } else if reason.starts_with("Cannot move") {
+                } else if reason.starts_with("Cannot move")
+                    || reason.starts_with("No reachable safe")
+                {
                     Some(FailureCategory::TileBlocked)
                 } else if reason.starts_with("Select a character") {
                     Some(FailureCategory::NoSelection)
@@ -277,6 +279,8 @@ impl ActionOutcome {
                     || reason.starts_with("No pending floor event")
                     || reason.starts_with("Already responded")
                     || reason.starts_with("Intercept requires standing")
+                    || reason.starts_with("No danger zones")
+                    || reason.starts_with("Character is already")
                     || reason.contains("only purifies")
                     || reason.contains("only bolsters")
                     || reason.contains("only channels")

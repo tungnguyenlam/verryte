@@ -6605,26 +6605,58 @@ impl Game {
     fn execute_step_to_safety(&mut self) {
         let (sel_entity, pos) = {
             let state = self.world.resource::<GameState>().unwrap();
-            let sel = state.selected_entity;
-            if sel.is_none() {
-                self.log("Select a character first!");
+            let Some(sel) = state.selected_entity else {
+                let reason = "Select a character first!".to_string();
+                self.log(reason.clone());
+                self.last_outcome = ActionOutcome::Failed { reason };
                 return;
-            }
-            let pos = self.world.get::<Position>(sel.unwrap()).copied().unwrap();
-            (sel.unwrap(), pos)
+            };
+            let Some(pos) = self.world.get::<Position>(sel).copied() else {
+                let reason = "Select a valid character first!".to_string();
+                self.log(reason.clone());
+                self.last_outcome = ActionOutcome::Failed { reason };
+                return;
+            };
+            (sel, pos)
         };
 
-        let telegraph_zone = self
+        let mut danger_tiles: HashSet<Position> = self
             .world
             .resource::<crate::components::TelegraphZone>()
-            .unwrap();
-        if telegraph_zone.tiles.is_empty() {
-            self.log("No danger zones telegraphed.");
+            .map(|zone| zone.tiles.iter().copied().collect())
+            .unwrap_or_default();
+        if let Some(incursions) = self
+            .world
+            .resource::<crate::components::IncursionAttackTelegraphs>()
+        {
+            danger_tiles.extend(
+                incursions
+                    .attacks
+                    .iter()
+                    .flat_map(|attack| attack.tiles.iter().copied()),
+            );
+        }
+        if danger_tiles.is_empty() {
+            let reason = "No danger zones telegraphed.".to_string();
+            self.log(reason.clone());
+            self.last_outcome = ActionOutcome::Failed { reason };
             return;
         }
 
-        if !telegraph_zone.tiles.contains(&pos) {
-            self.log("Character is already in a safe position.");
+        if !danger_tiles.contains(&pos) {
+            let reason = "Character is already in a safe position.".to_string();
+            self.log(reason.clone());
+            self.last_outcome = ActionOutcome::Failed { reason };
+            return;
+        }
+        if self
+            .world
+            .get::<Stats>(sel_entity)
+            .is_none_or(|stats| stats.ap < 1)
+        {
+            let reason = "Not enough AP to step to safety!".to_string();
+            self.log(reason.clone());
+            self.last_outcome = ActionOutcome::Failed { reason };
             return;
         }
 
@@ -6634,7 +6666,7 @@ impl Game {
         let mut min_dist = i32::MAX;
 
         for r_pos in reachable {
-            if !telegraph_zone.tiles.contains(&r_pos) {
+            if !danger_tiles.contains(&r_pos) {
                 let dist = (r_pos.x - pos.x).abs() as i32 + (r_pos.y - pos.y).abs() as i32;
                 if dist < min_dist {
                     min_dist = dist;
@@ -6660,6 +6692,13 @@ impl Game {
                 if let Some(p) = self.world.get_mut::<Position>(sel_entity) {
                     *p = safe_pos;
                 }
+                if let Some(events) = self.world.resource_mut::<Events<GameEvent>>() {
+                    events.send(GameEvent::Moved {
+                        entity: sel_entity,
+                        from: pos,
+                        to: safe_pos,
+                    });
+                }
                 let state = self.world.resource_mut::<GameState>().unwrap();
                 state.cursor = safe_pos;
                 let (cx, cy) = self.get_tile_center_pixels(safe_pos);
@@ -6667,10 +6706,14 @@ impl Game {
                     self.camera.look_at(cx, cy);
                 }
             } else {
-                self.log("Not enough AP to step to safety!");
+                let reason = "Not enough AP to step to safety!".to_string();
+                self.log(reason.clone());
+                self.last_outcome = ActionOutcome::Failed { reason };
             }
         } else {
-            self.log("No reachable safe tiles found!");
+            let reason = "No reachable safe tiles found!".to_string();
+            self.log(reason.clone());
+            self.last_outcome = ActionOutcome::Failed { reason };
         }
     }
 

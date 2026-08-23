@@ -12,8 +12,14 @@ Before doing substantial work, read:
 - [WORKLOG.md](WORKLOG.md) for recent decisions and handoff notes.
 - The relevant crate or prototype README/source for the slice you are touching.
 
-The [prompt/](prompt/) directory contains reusable continuation prompts. It is
-project context, not runtime code.
+The single [prompt/improve.md](prompt/improve.md) file is the reusable prompt
+for long-running autonomous development. It is project context, not runtime
+code.
+
+## Branch Policy
+
+Work only on the `main` branch. Do not create or switch to feature branches;
+make all repository changes directly on `main`.
 
 ## Workspace Map
 

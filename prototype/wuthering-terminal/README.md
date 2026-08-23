@@ -51,6 +51,10 @@ Characters can have unique traits that modify gameplay:
   warning immediately. An Intercept response shortens Void Terror's first cross
   to radius one or removes the escape-side tile from Frozen Sentinel's first
   ring; later attacks return to their normal patterns.
+  The existing `safety` action also treats every armed incursion tile as
+  dangerous, moves the selected hero to the nearest reachable safe tile, and
+  reports the move through the same structured action/event/history path as
+  ordinary movement.
 - **Elemental shields**: absorb damage before HP
 - **Level-up system**: defeating enemies awards XP (scaled by floor depth). Level-ups grant +10 HP, +2 ATK, +1 DEF, and a skill point. Prestige classes (BladeMaster, Archmage, DivineHealer) unlock at milestones with VFX feedback.
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
