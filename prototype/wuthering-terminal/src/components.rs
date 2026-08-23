@@ -211,6 +211,50 @@ pub struct TelegraphZone {
     pub damage: i32,
 }
 
+/// Marks a mini-boss spawned by a dynamic floor incursion. Keeping this as a
+/// component lets saves and tools distinguish event enemies from ordinary
+/// members of the same character class.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IncursionMiniBoss;
+
+/// Marks an incursion mini-boss whose first committed attack was disrupted by
+/// the player's Intercept response to its arrival warning. The marker is
+/// consumed when that first attack is armed, so later attacks use the normal
+/// class pattern.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IncursionFirstAttackDisrupted;
+
+/// A class-specific attack that an incursion mini-boss has visibly committed
+/// to and will resolve during a later enemy phase.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IncursionAttackTelegraph {
+    pub source: verryte_core::Entity,
+    pub class: CharacterClass,
+    pub origin: Position,
+    pub tiles: Vec<Position>,
+    pub damage: i32,
+    pub resolves_on_turn: u32,
+    /// Whether an earlier Intercept response weakened this committed pattern.
+    #[serde(default)]
+    pub intercepted: bool,
+}
+
+impl IncursionAttackTelegraph {
+    pub fn pattern_name(&self) -> &'static str {
+        match (self.class, self.intercepted) {
+            (CharacterClass::FrozenSentinel, true) => "broken-ring",
+            (_, true) => "short-cross",
+            (CharacterClass::FrozenSentinel, false) => "ring",
+            (_, false) => "cross",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IncursionAttackTelegraphs {
+    pub attacks: Vec<IncursionAttackTelegraph>,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ElementalStatus {
     None,
@@ -285,6 +329,18 @@ pub enum GameEvent {
         healing: i32,
     },
     FloorEventTriggered(FloorEventRecord),
+    FloorEventTelegraphed(FloorEventRecord),
+    FloorEventResponded {
+        response: FloorEventResponse,
+        description: String,
+    },
+    IncursionAttackTelegraphed(IncursionAttackTelegraph),
+    IncursionAttackResolved {
+        source: verryte_core::Entity,
+        attack_name: String,
+        hit_count: usize,
+        total_damage: i32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -296,6 +352,8 @@ pub enum ItemEffect {
     Combined(i32, i32),  // heal, ap
     CleanseAndHeal(i32), // cleanse, heal amount
     UpgradeKit,
+    /// Spend to Brace a telegraphed floor event without paying AP.
+    EventWard,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -911,6 +969,100 @@ pub enum FloorEventKind {
     },
 }
 
+impl FloorEventKind {
+    pub fn telegraph_pattern_name(&self) -> Option<&'static str> {
+        match self {
+            FloorEventKind::MiniBossIncursion {
+                class: CharacterClass::FrozenSentinel,
+                ..
+            } => Some("ring"),
+            FloorEventKind::MiniBossIncursion { .. } => Some("cross"),
+            FloorEventKind::ModifierSurge { .. } => None,
+        }
+    }
+
+    pub fn item_offers(&self) -> Vec<String> {
+        let mut offers = match self {
+            FloorEventKind::ModifierSurge {
+                modifier: FloorModifier::HealingSurge,
+                ..
+            } => vec![
+                "Cleanse Remedy".to_string(),
+                "Energy Elixir".to_string(),
+                "Healing Potion".to_string(),
+            ],
+            FloorEventKind::ModifierSurge { .. } => {
+                vec!["Cleanse Remedy".to_string(), "Energy Elixir".to_string()]
+            }
+            FloorEventKind::MiniBossIncursion { .. } => {
+                vec!["Aegis Elixir".to_string(), "Energy Elixir".to_string()]
+            }
+        };
+        offers.push("Ward Charm".to_string());
+        offers
+    }
+}
+
+/// Shared class-to-shape mapping for both incursion arrival warnings and the
+/// mini-boss attacks that follow after spawn.
+pub fn incursion_shape(class: CharacterClass) -> verryte_map::TileShape {
+    match class {
+        CharacterClass::FrozenSentinel => verryte_map::TileShape::ManhattanRing { radius: 2 },
+        _ => verryte_map::TileShape::Cross { radius: 2 },
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum FloorEventResponse {
+    /// Spend AP to reduce the incoming event's severity.
+    Brace,
+    /// Spend AP on a telegraphed tile (or anywhere for a surge) to delay and weaken it.
+    Intercept,
+    /// Accept the event immediately and gain Concert Energy.
+    Embrace,
+    /// Consume a Cleanse Remedy to cancel a pending modifier surge.
+    Purify,
+    /// Consume an Aegis Elixir to further weaken a pending mini-boss incursion.
+    Bolster,
+    /// Consume a Healing Potion to convert a Healing Surge into extra party healing.
+    Channel,
+}
+
+impl FloorEventResponse {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            FloorEventResponse::Brace => "Brace",
+            FloorEventResponse::Intercept => "Intercept",
+            FloorEventResponse::Embrace => "Embrace",
+            FloorEventResponse::Purify => "Purify",
+            FloorEventResponse::Bolster => "Bolster",
+            FloorEventResponse::Channel => "Channel",
+        }
+    }
+
+    pub fn ap_cost(self) -> i32 {
+        match self {
+            FloorEventResponse::Brace => 1,
+            FloorEventResponse::Intercept => 2,
+            FloorEventResponse::Embrace
+            | FloorEventResponse::Purify
+            | FloorEventResponse::Bolster
+            | FloorEventResponse::Channel => 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingFloorEvent {
+    pub kind: FloorEventKind,
+    pub telegraphed_on_turn: u32,
+    pub resolves_on_turn: u32,
+    #[serde(default)]
+    pub tiles: Vec<Position>,
+    #[serde(default)]
+    pub response: Option<FloorEventResponse>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FloorEventRecord {
     pub turn: u32,
@@ -924,6 +1076,8 @@ pub struct DynamicFloorEvents {
     pub next_event_turn: u32,
     pub interval: u32,
     pub history: Vec<FloorEventRecord>,
+    #[serde(default)]
+    pub pending: Option<PendingFloorEvent>,
 }
 
 impl Default for DynamicFloorEvents {
@@ -932,6 +1086,7 @@ impl Default for DynamicFloorEvents {
             next_event_turn: 3,
             interval: 3,
             history: Vec::new(),
+            pending: None,
         }
     }
 }

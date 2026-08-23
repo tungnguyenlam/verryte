@@ -1,5 +1,124 @@
 # Verryte Worklog
 
+## 2026-08-23 - intercepted incursion openings
+
+**Goal.** Make the existing `Intercept` response change the spawned
+mini-boss's first attack without introducing a separate combat or agent path.
+
+**Accomplishments.**
+- Successful incursion Intercepts now leave a saveable,
+  `IncursionFirstAttackDisrupted` marker on the spawned mini-boss. Arming the
+  first attack consumes the marker, so subsequent attacks remain class-normal.
+- Void Terror's intercepted Void Rend uses a radius-one `short-cross`; Frozen
+  Sentinel's intercepted Glacial Lock removes the escape-side tile from its
+  ring and reports a `broken-ring`.
+- `IncursionAttackTelegraph` and agent snapshot previews expose an
+  `intercepted` flag alongside the authoritative modified tiles. Battle-preview
+  intents name the same modified patterns, and existing rendering consumes the
+  modified tile list directly.
+- The Intercept action outcome now records that the first attack was disrupted,
+  keeping action-history and replay metadata informative. The pending marker
+  and armed telegraph both survive save/load.
+- Added end-to-end coverage through `Game::apply_action()` for both class
+  patterns, one-shot consumption, action metadata, intents, and save/load.
+
+**Verification.** Targeted intercepted-incursion and save/load tests pass.
+`cargo fmt --all --check` and `cargo test --workspace` pass. The agent runner
+produces exact 80x24 and 120x40 frames with the `incursion_attacks` JSON field
+present at both sizes.
+
+**Next Steps.** Consider a shared action for reacting to already-armed attacks
+(guard or reposition assists) while keeping the committed telegraph tiles as
+the authoritative resolution surface.
+
+## 2026-08-23 - persistent incursion attack telegraphs
+
+**Goal.** Continue the dynamic-floor-event slice after spawn so mini-boss
+attacks remain avoidable, visible, and agent-readable instead of falling back
+to ordinary immediate attacks.
+
+**Accomplishments.**
+- Event-spawned mini-bosses now carry a saveable `IncursionMiniBoss` marker and
+  arm one-turn `IncursionAttackTelegraph` records during the normal enemy AI
+  phase. Void Terror uses cross-shaped Void Rend; Frozen Sentinel uses
+  ring-shaped Glacial Lock.
+- Arrival and attack geometry share the same `incursion_shape()` mapping backed
+  by `verryte-map::TileShape`. Armed attacks render as colored warning tiles,
+  resolve once on the following enemy phase, emit structured telegraph/resolve
+  events, and disappear immediately if their owner is defeated.
+- Snapshots and the agent JSON expose `incursion_attacks` with source, attacker,
+  pattern, origin, tiles, predicted damage, and resolve turn. Battle-preview
+  enemy intents describe the same committed attacks.
+- Registered the marker and attack queue for save/load, cleared the queue on
+  floor transition, and added a fallback for older saves that lack the resource.
+- Added focused integration coverage for spawn marking, both class shapes,
+  arming/intent observability, single resolution, owner cleanup, save/load, and
+  older-save compatibility.
+
+**Verification.** Targeted incursion tests passed. Full workspace verification
+is recorded in the final handoff for this run.
+
+**Next Steps.** Let `Intercept` choice at the arrival warning influence the
+first attack (for example shortening cross arms or opening a safe gap in the
+ring), with the modified tiles kept in the same snapshot and replay surfaces.
+
+## 2026-08-22 - event items, incursion patterns, and map shapes
+
+**Goal.** Keep deeper-floor events on the shared action path while giving
+agents distinct telegraph patterns and inventory answers that do not need
+new recipes.
+
+**Accomplishments.**
+- Extracted origin-centered `TileShape` primitives into `verryte-map`
+  (`Disk`, `Square`, `Cross`, `Line`, `Cone`, `ManhattanRing`, `Diamond`)
+  with `TileGrid::clip_points` / `points_in_shape`. Battle preview AoE now
+  uses those engine helpers instead of prototype-local tile math.
+- Mini-boss telegraphs reuse that surface: Void Terror paints a `cross`,
+  Frozen Sentinel paints a `ring` plus spawn origin. Snapshots expose
+  `pending_floor_event_pattern` and `pending_floor_event_item_offers`.
+- Existing inventory items answer pending events through `UseItem` and
+  `Action::RespondToFloorEvent`: Cleanse Remedy purifies a surge, Aegis
+  Elixir bolsters an incursion, Energy Elixir intercepts without standing
+  on danger tiles, and a Healing Potion channels a Healing Surge into
+  extra party healing. Script tokens `purify` / `bolster` / `channel`
+  consume the matching item on the same path.
+
+**Verification.** Targeted `verryte-map` and `wuthering-terminal` tests,
+then workspace verification.
+
+**Next Steps.** Add event-specific mini-boss attack telegraphs that reuse
+`TileShape` after spawn, or let intercepting from a ring vs cross arm
+change the incursion AI.
+
+## 2026-08-22 - floor event telegraphs and player responses
+
+## 2026-08-22 - floor event telegraphs and player responses
+
+**Goal.** Give deeper-floor events a one-turn telegraph and player choices
+without splitting the shared action path.
+
+**Accomplishments.**
+- Floor 2+ events now warn one player turn before they resolve. Mini-boss
+  incursions paint orange danger tiles; snapshots expose `pending_floor_event`,
+  resolve turn, tiles, and any committed response for agents and scripts.
+- Added `Action::RespondToFloorEvent` (`brace` / `intercept` / `embrace`) on
+  the same `apply_action()` path as terminal, script, and agent control.
+  Brace weakens the event, Intercept delays it from a telegraphed tile, and
+  Embrace resolves it immediately for Concert Energy.
+- Added a `Ward Charm` recipe (Cleanse Remedy + Energy Elixir) whose
+  `EventWard` effect auto-braces a pending event without spending AP.
+- Structured `GameEvent` / `ActionOutcome` variants cover telegraph, response,
+  and trigger; pending state is saveable with a missing-field default.
+
+**Verification.** `cargo test -p wuthering-terminal` and `cargo test --workspace`
+plus `cargo fmt --check`. Agent runner checked at `--size 80x24` and
+`--size 120x40` with `brace` / `snapshot` tokens.
+
+**Next Steps.** Add event-specific player choices that consume items already
+in inventory (without a new recipe), or unique mini-boss patterns that reuse
+the pending-tile telegraph surface.
+
+
 ## 2026-08-12 - dynamic floor events
 
 **Goal.** Add observable mid-floor events to the tactical RPG without creating

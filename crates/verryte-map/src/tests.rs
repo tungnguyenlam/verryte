@@ -2711,3 +2711,30 @@ fn test_raycast_and_line_of_sight() {
     assert!(crate::has_line_of_sight(start, clear_end, obstacle_check));
     assert_eq!(crate::raycast(start, clear_end, obstacle_check), None);
 }
+
+#[test]
+fn clip_points_drops_out_of_bounds_and_keeps_order() {
+    let grid = TileGrid::new(3, 3, '.');
+    let clipped = grid.clip_points([
+        Point::new(-1, 0),
+        Point::new(0, 0),
+        Point::new(2, 2),
+        Point::new(3, 1),
+        Point::new(1, 1),
+    ]);
+    assert_eq!(
+        clipped,
+        vec![Point::new(0, 0), Point::new(2, 2), Point::new(1, 1)]
+    );
+}
+
+#[test]
+fn points_in_shape_clips_cross_to_grid() {
+    let grid = TileGrid::new(4, 4, '.');
+    let tiles = grid.points_in_shape(Point::new(0, 0), TileShape::Cross { radius: 2 });
+    assert!(tiles.contains(&Point::new(0, 0)));
+    assert!(tiles.contains(&Point::new(2, 0)));
+    assert!(tiles.contains(&Point::new(0, 2)));
+    assert!(!tiles.contains(&Point::new(-1, 0)));
+    assert!(!tiles.contains(&Point::new(0, -1)));
+}

@@ -1,7 +1,8 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
     CharacterClass, DynamicFloorEvents, EquippedItems, FloorEventKind, FloorModifier, GameState,
-    Inventory, Outcome, Stats, Team, TurnPhase,
+    IncursionAttackTelegraphs, IncursionFirstAttackDisrupted, IncursionMiniBoss, Inventory,
+    Outcome, Stats, Team, TurnPhase,
 };
 use wuthering_terminal::snapshot::{ActionOutcome, FullSaveState, CURRENT_SAVE_VERSION};
 use wuthering_terminal::{Action, Game, Position};
@@ -973,6 +974,18 @@ fn action_outcome_variants_roundtrip() {
         ActionOutcome::FloorEventTriggered {
             description: "Void Terror invaded at (20, 8)".to_string(),
         },
+        ActionOutcome::FloorEventTelegraphed {
+            description: "Darkness surge incoming (4 turns)".to_string(),
+            resolves_on_turn: 4,
+        },
+        ActionOutcome::FloorEventResponded {
+            response: "Brace".to_string(),
+            description: "Braced against Darkness surge incoming (4 turns)".to_string(),
+        },
+        ActionOutcome::FloorEventResponded {
+            response: "Purify".to_string(),
+            description: "Purified Darkness surge incoming (4 turns) — event cancelled".to_string(),
+        },
         ActionOutcome::GameSaved {
             path: "saves/quicksave.json".to_string(),
         },
@@ -1034,4 +1047,145 @@ fn save_load_preserves_dynamic_floor_event_schedule_and_history() {
     assert_eq!(events.next_event_turn, 7);
     assert_eq!(events.history.len(), 1);
     assert!(events.history[0].description.contains("Gravity Well"));
+}
+
+#[test]
+fn save_load_preserves_pending_floor_event_telegraph() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(18, 4),
+        },
+    );
+
+    let saved = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&saved).unwrap();
+
+    let events = restored.world.resource::<DynamicFloorEvents>().unwrap();
+    let pending = events.pending.as_ref().expect("pending telegraph restored");
+    assert!(matches!(
+        pending.kind,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            ..
+        }
+    ));
+    assert!(!pending.tiles.is_empty());
+    let snapshot = restored.snapshot();
+    assert!(snapshot
+        .pending_floor_event
+        .unwrap()
+        .contains("Void Terror"));
+    assert_eq!(
+        snapshot.pending_floor_event_tiles.len(),
+        pending.tiles.len()
+    );
+    assert_eq!(
+        snapshot.pending_floor_event_pattern.as_deref(),
+        Some("cross")
+    );
+    assert!(snapshot
+        .pending_floor_event_item_offers
+        .contains(&"Aegis Elixir".to_string()));
+}
+
+#[test]
+fn save_load_preserves_spawned_incursion_and_armed_attack() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(6, 4),
+        },
+    );
+    game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    let before = game.snapshot().incursion_attacks;
+    assert_eq!(before.len(), 1);
+
+    let saved = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&saved).unwrap();
+
+    assert_eq!(restored.world.query::<IncursionMiniBoss>().len(), 1);
+    assert_eq!(
+        restored
+            .world
+            .resource::<IncursionAttackTelegraphs>()
+            .unwrap()
+            .attacks
+            .len(),
+        1
+    );
+    assert_eq!(restored.snapshot().incursion_attacks, before);
+}
+
+#[test]
+fn save_load_preserves_intercepted_incursion_before_first_attack() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(6, 4),
+        },
+    );
+    let incursion = game
+        .world
+        .query::<IncursionMiniBoss>()
+        .into_iter()
+        .next()
+        .map(|(entity, _)| entity)
+        .unwrap();
+    game.world.insert(incursion, IncursionFirstAttackDisrupted);
+
+    let saved = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&saved).unwrap();
+    let restored_incursion = restored
+        .world
+        .query::<IncursionMiniBoss>()
+        .into_iter()
+        .next()
+        .map(|(entity, _)| entity)
+        .unwrap();
+    assert!(restored
+        .world
+        .get::<IncursionFirstAttackDisrupted>(restored_incursion)
+        .is_some());
+
+    restored.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    wuthering_terminal::systems::incursion_attack_system(&mut restored.world);
+    let attack = restored.snapshot().incursion_attacks.pop().unwrap();
+    assert!(attack.intercepted);
+    assert_eq!(attack.pattern, "short-cross");
+}
+
+#[test]
+fn older_save_without_incursion_attack_resource_gets_default() {
+    let game = Game::new();
+    let saved = game.save_state().unwrap();
+    let mut state: FullSaveState = serde_json::from_str(&saved).unwrap();
+    state.world.resources.remove("IncursionAttackTelegraphs");
+    state.version = 2;
+    state.checksum.clear();
+
+    let mut restored = Game::new();
+    restored
+        .load_state(&serde_json::to_string(&state).unwrap())
+        .unwrap();
+
+    assert!(restored
+        .world
+        .resource::<IncursionAttackTelegraphs>()
+        .unwrap()
+        .attacks
+        .is_empty());
 }

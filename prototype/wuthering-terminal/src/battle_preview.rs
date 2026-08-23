@@ -2,6 +2,7 @@ use crate::components::*;
 use crate::game::Game;
 use crate::map::TacticalMap;
 use verryte_core::{Entity, World};
+use verryte_map::TileShape;
 
 pub struct BattlePreview;
 
@@ -42,17 +43,13 @@ impl BattlePreview {
         attacker_team: Team,
     ) -> AoEPreview {
         let tiles = match shape {
-            AoEShape::Circle => Self::circle_tiles(center, radius),
-            AoEShape::Square => Self::square_tiles(center, radius),
-            AoEShape::Cross => Self::cross_tiles(center, radius),
-            AoEShape::Line => Self::line_tiles(center, radius),
-            AoEShape::Cone => Self::cone_tiles(center, radius),
+            AoEShape::Circle => TileShape::Disk { radius },
+            AoEShape::Square => TileShape::Square { radius },
+            AoEShape::Cross => TileShape::Cross { radius },
+            AoEShape::Line => TileShape::Line { length: radius },
+            AoEShape::Cone => TileShape::Cone { radius },
         };
-
-        let valid_tiles: Vec<Position> = tiles
-            .into_iter()
-            .filter(|t| t.x >= 0 && t.x < map.width as i16 && t.y >= 0 && t.y < map.height as i16)
-            .collect();
+        let valid_tiles = map.tiles.points_in_shape(center, tiles);
 
         let mut affected_enemies = Vec::new();
         let mut affected_allies = Vec::new();
@@ -306,6 +303,30 @@ impl BattlePreview {
             });
         }
 
+        if let Some(telegraphs) = world.resource::<crate::components::IncursionAttackTelegraphs>() {
+            for attack in &telegraphs.attacks {
+                intents.push(EnemyIntent {
+                    entity: attack.source,
+                    intent_type: IntentType::AoEAttack,
+                    target: Some(attack.origin),
+                    predicted_damage: attack.damage,
+                    description: format!(
+                        "{}: {} {}-tile {} attack ({} dmg, resolves turn {})",
+                        Game::get_class_name(attack.class),
+                        attack.tiles.len(),
+                        attack.pattern_name(),
+                        if attack.class == CharacterClass::FrozenSentinel {
+                            "Glacial Lock"
+                        } else {
+                            "Void Rend"
+                        },
+                        attack.damage,
+                        attack.resolves_on_turn
+                    ),
+                });
+            }
+        }
+
         EnemyIntentions { intents }
     }
 
@@ -360,59 +381,6 @@ impl BattlePreview {
             .iter()
             .map(|i| i.description.clone())
             .collect()
-    }
-
-    fn circle_tiles(center: Position, radius: i16) -> Vec<Position> {
-        let mut tiles = Vec::new();
-        let r2 = radius * radius;
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy <= r2 {
-                    tiles.push(Position::new(center.x + dx, center.y + dy));
-                }
-            }
-        }
-        tiles
-    }
-
-    fn square_tiles(center: Position, radius: i16) -> Vec<Position> {
-        let mut tiles = Vec::new();
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                tiles.push(Position::new(center.x + dx, center.y + dy));
-            }
-        }
-        tiles
-    }
-
-    fn cross_tiles(center: Position, radius: i16) -> Vec<Position> {
-        let mut tiles = Vec::new();
-        tiles.push(center);
-        for d in 1..=radius {
-            tiles.push(Position::new(center.x + d, center.y));
-            tiles.push(Position::new(center.x - d, center.y));
-            tiles.push(Position::new(center.x, center.y + d));
-            tiles.push(Position::new(center.x, center.y - d));
-        }
-        tiles
-    }
-
-    fn line_tiles(center: Position, length: i16) -> Vec<Position> {
-        let mut tiles = Vec::new();
-        for d in 0..length {
-            tiles.push(Position::new(center.x + d, center.y));
-        }
-        tiles
-    }
-
-    fn cone_tiles(center: Position, radius: i16) -> Vec<Position> {
-        let mut tiles = Vec::new();
-        for d in 0i16..=radius {
-            for dx in -d..=d {
-                tiles.push(Position::new(center.x + dx, center.y - d));
-            }
-        }
-        tiles
     }
 
     fn mini_hp_bar(ratio: f32) -> String {

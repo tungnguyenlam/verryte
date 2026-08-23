@@ -15,6 +15,7 @@ mod line;
 mod point;
 mod reachability;
 mod rect;
+mod shape;
 mod size;
 mod spatial_hash;
 mod visibility;
@@ -32,6 +33,7 @@ pub use line::{
 pub use point::{Point, Point3};
 pub use reachability::ReachabilityMap;
 pub use rect::Rect;
+pub use shape::TileShape;
 pub use size::Size;
 pub use spatial_hash::SpatialHash;
 pub use visibility::{Visibility, VisibilityMap};

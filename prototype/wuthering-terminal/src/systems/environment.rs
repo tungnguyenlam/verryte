@@ -1,15 +1,17 @@
 use crate::components::{
-    ActiveFloorModifiers, CharacterClass, DynamicFloorEvents, FloorEventKind, FloorEventRecord,
-    FloorModifier, GameEvent, GameState, Position, Stats, Team, TurnPhase, Weather, WeatherType,
+    incursion_shape, ActiveFloorModifiers, CharacterClass, DynamicFloorEvents, FloorEventKind,
+    FloorEventRecord, FloorEventResponse, FloorModifier, GameEvent, GameState,
+    IncursionFirstAttackDisrupted, IncursionMiniBoss, Inventory, Item, ItemEffect,
+    PendingFloorEvent, Position, Stats, Team, TurnPhase, Weather, WeatherType,
 };
 use crate::game::Game;
 use crate::map::{TacticalMap, Tile};
 use crate::spawn::Spawner;
 
-use verryte_core::{Events, Rng, World};
+use verryte_core::{Entity, Events, Rng, World};
 use verryte_terminal::{vfx::VfxSystem, Color};
 
-use super::combat::{handle_defeat, log};
+use super::combat::{apply_heal, handle_defeat, log};
 use super::movement::get_tile_center_pixels;
 
 pub fn weather_ambient_system(world: &mut World) {
@@ -658,28 +660,58 @@ pub fn floor_modifier_healing_multiplier(world: &World) -> f32 {
     }
 }
 
-/// Triggers deterministic, seed-driven events on deeper floors. The resource
-/// guards against duplicate triggers when the schedule runs more than once in
-/// the same turn.
+/// Triggers deterministic, seed-driven events on deeper floors. Events are
+/// telegraphed for one player turn before they resolve so scripts, agents, and
+/// interactive play can Brace, Intercept, or Embrace them on the shared path.
 pub fn dynamic_floor_event_system(world: &mut World) {
     let (turn, floor, phase) = world
         .resource::<GameState>()
         .map(|state| (state.turn, state.floor, state.phase))
         .unwrap_or((1, 1, TurnPhase::Player));
-    let due = world
+    if floor < 2 || phase != TurnPhase::Player {
+        return;
+    }
+
+    let pending_ready = world
         .resource::<DynamicFloorEvents>()
         .is_some_and(|events| {
-            floor >= 2 && phase == TurnPhase::Player && turn >= events.next_event_turn
+            events
+                .pending
+                .as_ref()
+                .is_some_and(|pending| turn >= pending.resolves_on_turn)
         });
+    if pending_ready {
+        resolve_pending_floor_event(world);
+        return;
+    }
+
+    let already_pending = world
+        .resource::<DynamicFloorEvents>()
+        .is_some_and(|events| events.pending.is_some());
+    if already_pending {
+        return;
+    }
+
+    let due = world
+        .resource::<DynamicFloorEvents>()
+        .is_some_and(|events| turn >= events.next_event_turn);
     if !due {
         return;
     }
 
+    let Some(kind) = choose_floor_event_kind(world, floor) else {
+        advance_floor_event_schedule(world, turn);
+        return;
+    };
+    telegraph_floor_event(world, kind);
+}
+
+fn choose_floor_event_kind(world: &mut World, floor: u32) -> Option<FloorEventKind> {
     let choose_modifier = world
         .resource_mut::<Rng>()
         .map(|rng| rng.next_u32(2) == 0)
         .unwrap_or(true);
-    let kind = if choose_modifier {
+    if choose_modifier {
         let candidates = [
             FloorModifier::Darkness,
             FloorModifier::GravityWell,
@@ -697,30 +729,25 @@ pub fn dynamic_floor_event_system(world: &mut World) {
                 )
             })
             .unwrap_or((0, 3));
-        FloorEventKind::ModifierSurge {
+        Some(FloorEventKind::ModifierSurge {
             modifier: candidates[index].clone(),
             duration,
-        }
+        })
     } else {
         let class = if floor >= 4 {
             CharacterClass::FrozenSentinel
         } else {
             CharacterClass::VoidTerror
         };
-        let Some(position) = floor_event_spawn_position(world) else {
-            advance_floor_event_schedule(world, turn);
-            return;
-        };
-        FloorEventKind::MiniBossIncursion { class, position }
-    };
-
-    trigger_floor_event(world, kind);
-    advance_floor_event_schedule(world, turn);
+        let position = floor_event_spawn_position(world)?;
+        Some(FloorEventKind::MiniBossIncursion { class, position })
+    }
 }
 
 fn advance_floor_event_schedule(world: &mut World, turn: u32) {
     if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
         events.next_event_turn = turn.saturating_add(events.interval.max(1));
+        events.pending = None;
     }
 }
 
@@ -747,6 +774,240 @@ fn floor_event_spawn_position(world: &World) -> Option<Position> {
     candidates.first().map(|candidate| candidate.3)
 }
 
+fn floor_event_warning(kind: &FloorEventKind) -> String {
+    match kind {
+        FloorEventKind::ModifierSurge { modifier, duration } => {
+            format!(
+                "{} surge incoming ({} turns)",
+                modifier.display_name(),
+                duration
+            )
+        }
+        FloorEventKind::MiniBossIncursion { class, position } => {
+            format!(
+                "{} incursion incoming at ({}, {})",
+                Game::get_class_name(*class),
+                position.x,
+                position.y
+            )
+        }
+    }
+}
+
+fn telegraph_tiles_for(world: &World, kind: &FloorEventKind) -> Vec<Position> {
+    match kind {
+        FloorEventKind::ModifierSurge { .. } => Vec::new(),
+        FloorEventKind::MiniBossIncursion { class, position } => {
+            let shape = incursion_shape(*class);
+            let mut tiles = shape.points_including_origin(*position);
+            if let Some(map) = world.resource::<TacticalMap>() {
+                tiles = map
+                    .tiles
+                    .clip_points(tiles)
+                    .into_iter()
+                    .filter(|tile| map.is_walkable(*tile))
+                    .collect();
+            }
+            tiles
+        }
+    }
+}
+
+fn emit_floor_event_vfx(
+    world: &mut World,
+    kind: &FloorEventKind,
+    tiles: &[Position],
+    resolve: bool,
+) {
+    let color = match kind {
+        FloorEventKind::ModifierSurge { .. } => Color(160, 80, 255),
+        FloorEventKind::MiniBossIncursion { .. } => {
+            if resolve {
+                Color(255, 80, 20)
+            } else {
+                Color(255, 160, 40)
+            }
+        }
+    };
+    let glyphs: &[char] = if resolve {
+        &['*', '✦', '!']
+    } else {
+        &['!', '.', '+']
+    };
+    let centers: Vec<(f32, f32)> = if tiles.is_empty() {
+        vec![(40.0, 12.0)]
+    } else {
+        tiles
+            .iter()
+            .map(|tile| get_tile_center_pixels(world, *tile))
+            .collect()
+    };
+    if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+        for (cx, cy) in centers {
+            vfx.particles
+                .extend(verryte_terminal::vfx::emit_shockwave(cx, cy, 12, color));
+            vfx.particles
+                .extend(verryte_terminal::vfx::emit_burst(cx, cy, 10, color, glyphs));
+        }
+        if resolve {
+            vfx.flashes
+                .push(verryte_terminal::vfx::Flash::full_screen(color, 0.18));
+            vfx.shakes
+                .push(verryte_terminal::vfx::ScreenShake::new(2.0, 0.25));
+        } else {
+            vfx.flashes.push(verryte_terminal::vfx::Flash::full_screen(
+                Color(255, 180, 60),
+                0.1,
+            ));
+        }
+    }
+}
+
+/// Warns one turn before a deeper-floor event resolves and paints incursion tiles.
+pub fn telegraph_floor_event(world: &mut World, kind: FloorEventKind) -> PendingFloorEvent {
+    let turn = world
+        .resource::<GameState>()
+        .map(|state| state.turn)
+        .unwrap_or(1);
+    let tiles = telegraph_tiles_for(world, &kind);
+    let description = floor_event_warning(&kind);
+    let pending = PendingFloorEvent {
+        kind: kind.clone(),
+        telegraphed_on_turn: turn,
+        resolves_on_turn: turn.saturating_add(1),
+        tiles: tiles.clone(),
+        response: None,
+    };
+    log(
+        world,
+        format!(
+            "[fg:FF8C00][b]Floor Event Warning:[/] {} — Brace (f), Intercept (n), Embrace ([), or spend a matching item[/fg]",
+            description
+        ),
+    );
+    emit_floor_event_vfx(world, &kind, &tiles, false);
+    let record = FloorEventRecord {
+        turn,
+        floor: world
+            .resource::<GameState>()
+            .map(|state| state.floor)
+            .unwrap_or(1),
+        kind,
+        description: description.clone(),
+    };
+    if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
+        events.pending = Some(pending.clone());
+        events.next_event_turn = pending.resolves_on_turn;
+    }
+    if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+        events.send(GameEvent::FloorEventTelegraphed(record));
+    }
+    pending
+}
+
+fn apply_response_to_kind(
+    kind: FloorEventKind,
+    response: Option<FloorEventResponse>,
+) -> FloorEventKind {
+    match (kind, response) {
+        (FloorEventKind::ModifierSurge { modifier, duration }, Some(FloorEventResponse::Brace)) => {
+            FloorEventKind::ModifierSurge {
+                modifier,
+                duration: duration.saturating_sub(2).max(1),
+            }
+        }
+        (
+            FloorEventKind::ModifierSurge { modifier, duration },
+            Some(FloorEventResponse::Intercept),
+        ) => FloorEventKind::ModifierSurge {
+            modifier,
+            duration: duration.saturating_sub(3).max(1),
+        },
+        (kind, _) => kind,
+    }
+}
+
+fn apply_incursion_hp_modifier(
+    world: &mut World,
+    kind: &FloorEventKind,
+    response: Option<FloorEventResponse>,
+) {
+    let FloorEventKind::MiniBossIncursion { position, .. } = kind else {
+        return;
+    };
+    let multiplier = match response {
+        Some(FloorEventResponse::Bolster) => 0.4,
+        Some(FloorEventResponse::Brace) => 0.7,
+        Some(FloorEventResponse::Intercept) => 0.5,
+        _ => return,
+    };
+    let target = world
+        .query2::<Position, Team>()
+        .into_iter()
+        .find(|(_, pos, team)| **pos == *position && **team == Team::Enemy)
+        .map(|(entity, _, _)| entity);
+    if let Some(entity) = target {
+        if let Some(stats) = world.get_mut::<Stats>(entity) {
+            let hp = ((stats.hp as f32) * multiplier).round() as i32;
+            stats.hp = hp.max(1);
+            stats.max_hp = stats.max_hp.max(stats.hp);
+        }
+    }
+}
+
+fn apply_channel_heal(world: &mut World) {
+    let players: Vec<Entity> = world
+        .query2::<Team, Stats>()
+        .into_iter()
+        .filter(|(_, team, stats)| **team == Team::Player && stats.hp > 0)
+        .map(|(entity, _, _)| entity)
+        .collect();
+    for entity in players {
+        apply_heal(world, entity, 20);
+    }
+    log(
+        world,
+        "[fg:98FB98]Channeled Healing Surge restored 20 HP to the party[/fg]".to_string(),
+    );
+}
+
+fn resolve_pending_floor_event(world: &mut World) {
+    let pending = world
+        .resource_mut::<DynamicFloorEvents>()
+        .and_then(|events| events.pending.take());
+    let Some(pending) = pending else {
+        return;
+    };
+    let kind = apply_response_to_kind(pending.kind.clone(), pending.response);
+    trigger_floor_event(world, kind.clone());
+    if pending.response == Some(FloorEventResponse::Intercept) {
+        mark_incursion_first_attack_disrupted(world, &kind);
+    }
+    apply_incursion_hp_modifier(world, &kind, pending.response);
+    if pending.response == Some(FloorEventResponse::Channel) {
+        apply_channel_heal(world);
+    }
+    let turn = world
+        .resource::<GameState>()
+        .map(|state| state.turn)
+        .unwrap_or(1);
+    advance_floor_event_schedule(world, turn);
+}
+
+fn mark_incursion_first_attack_disrupted(world: &mut World, kind: &FloorEventKind) {
+    let FloorEventKind::MiniBossIncursion { position, .. } = kind else {
+        return;
+    };
+    let source = world
+        .query2::<Position, IncursionMiniBoss>()
+        .into_iter()
+        .find(|(_, candidate, _)| **candidate == *position)
+        .map(|(entity, _, _)| entity);
+    if let Some(source) = source {
+        world.insert(source, IncursionFirstAttackDisrupted);
+    }
+}
+
 /// Applies one event through existing modifier and spawn primitives and emits
 /// a structured game event for reports, replays, and agents.
 pub fn trigger_floor_event(world: &mut World, kind: FloorEventKind) -> FloorEventRecord {
@@ -754,6 +1015,7 @@ pub fn trigger_floor_event(world: &mut World, kind: FloorEventKind) -> FloorEven
         .resource::<GameState>()
         .map(|state| (state.turn, state.floor))
         .unwrap_or((1, 1));
+    let tiles = telegraph_tiles_for(world, &kind);
 
     let description = match &kind {
         FloorEventKind::ModifierSurge { modifier, duration } => {
@@ -777,7 +1039,8 @@ pub fn trigger_floor_event(world: &mut World, kind: FloorEventKind) -> FloorEven
             )
         }
         FloorEventKind::MiniBossIncursion { class, position } => {
-            world.spawn_character_scaled(*position, Team::Enemy, *class, floor);
+            let entity = world.spawn_character_scaled(*position, Team::Enemy, *class, floor);
+            world.insert(entity, IncursionMiniBoss);
             format!(
                 "{} invaded at ({}, {})",
                 Game::get_class_name(*class),
@@ -790,7 +1053,7 @@ pub fn trigger_floor_event(world: &mut World, kind: FloorEventKind) -> FloorEven
     let record = FloorEventRecord {
         turn,
         floor,
-        kind,
+        kind: kind.clone(),
         description,
     };
     log(
@@ -800,14 +1063,309 @@ pub fn trigger_floor_event(world: &mut World, kind: FloorEventKind) -> FloorEven
             record.description
         ),
     );
+    emit_floor_event_vfx(world, &kind, &tiles, true);
     if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
         events.history.push(record.clone());
         if events.history.len() > 8 {
             events.history.remove(0);
         }
+        events.pending = None;
     }
     if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
         events.send(GameEvent::FloorEventTriggered(record.clone()));
     }
     record
+}
+
+/// Answers a telegraphed floor event. `spend_ap` is false for item wards.
+/// `require_tiles` is false for Energy Elixir remote intercepts.
+pub fn apply_floor_event_response(
+    world: &mut World,
+    response: FloorEventResponse,
+    actor: Option<Entity>,
+    spend_ap: bool,
+) -> Result<String, String> {
+    apply_floor_event_response_ex(world, response, actor, spend_ap, true)
+}
+
+pub fn apply_floor_event_response_ex(
+    world: &mut World,
+    response: FloorEventResponse,
+    actor: Option<Entity>,
+    spend_ap: bool,
+    require_tiles: bool,
+) -> Result<String, String> {
+    let pending_exists = world
+        .resource::<DynamicFloorEvents>()
+        .is_some_and(|events| events.pending.is_some());
+    if !pending_exists {
+        return Err("No pending floor event".to_string());
+    }
+    let already_answered = world
+        .resource::<DynamicFloorEvents>()
+        .and_then(|events| events.pending.as_ref())
+        .is_some_and(|pending| pending.response.is_some());
+    if already_answered {
+        return Err("Already responded to this floor event".to_string());
+    }
+
+    let kind = world
+        .resource::<DynamicFloorEvents>()
+        .and_then(|events| events.pending.as_ref().map(|pending| pending.kind.clone()))
+        .expect("pending floor event");
+    validate_response_for_kind(response, &kind)?;
+
+    if response == FloorEventResponse::Intercept && require_tiles {
+        let tiles = world
+            .resource::<DynamicFloorEvents>()
+            .and_then(|events| events.pending.as_ref())
+            .map(|pending| pending.tiles.clone())
+            .unwrap_or_default();
+        if !tiles.is_empty() {
+            let standing = actor
+                .and_then(|entity| world.get::<Position>(entity).copied())
+                .is_some_and(|pos| tiles.contains(&pos));
+            if !standing {
+                return Err("Intercept requires standing on a telegraphed tile".to_string());
+            }
+        }
+    }
+
+    if spend_ap {
+        let Some(entity) = actor else {
+            return Err("Select a character first".to_string());
+        };
+        let cost = response.ap_cost();
+        let ap = world
+            .get::<Stats>(entity)
+            .map(|stats| stats.ap)
+            .unwrap_or(0);
+        if ap < cost {
+            return Err(format!(
+                "Not enough AP to {} (costs {} AP)",
+                response.display_name().to_lowercase(),
+                cost
+            ));
+        }
+        consume_response_item(world, entity, response)?;
+        if let Some(stats) = world.get_mut::<Stats>(entity) {
+            stats.ap -= cost;
+        }
+    }
+
+    let description = world
+        .resource::<DynamicFloorEvents>()
+        .and_then(|events| events.pending.as_ref())
+        .map(|pending| floor_event_warning(&pending.kind))
+        .unwrap_or_default();
+
+    match response {
+        FloorEventResponse::Brace => {
+            commit_pending_response(world, FloorEventResponse::Brace);
+            let msg = format!("Braced against {}", description);
+            log(world, format!("[fg:87CEEB]{}[/fg]", msg));
+            emit_response_event(world, response, msg.clone());
+            Ok(msg)
+        }
+        FloorEventResponse::Intercept => {
+            if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
+                if let Some(pending) = events.pending.as_mut() {
+                    pending.response = Some(FloorEventResponse::Intercept);
+                    pending.resolves_on_turn = pending.resolves_on_turn.saturating_add(1);
+                    events.next_event_turn = pending.resolves_on_turn;
+                }
+            }
+            let effect = if matches!(kind, FloorEventKind::MiniBossIncursion { .. }) {
+                " and disrupted its first attack"
+            } else {
+                ""
+            };
+            let msg = format!("Intercepted {} — delayed one turn{}", description, effect);
+            log(world, format!("[fg:FFD700]{}[/fg]", msg));
+            emit_response_event(world, response, msg.clone());
+            Ok(msg)
+        }
+        FloorEventResponse::Embrace => {
+            if let Some(state) = world.resource_mut::<GameState>() {
+                state.concert_energy = (state.concert_energy + 15).min(100);
+            }
+            commit_pending_response(world, FloorEventResponse::Embrace);
+            let msg = format!("Embraced {} — +15 Concert Energy", description);
+            log(world, format!("[fg:DA70D6]{}[/fg]", msg));
+            emit_response_event(world, response, msg.clone());
+            resolve_pending_floor_event(world);
+            Ok(msg)
+        }
+        FloorEventResponse::Purify => {
+            if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
+                events.pending = None;
+            }
+            let turn = world
+                .resource::<GameState>()
+                .map(|state| state.turn)
+                .unwrap_or(1);
+            advance_floor_event_schedule(world, turn);
+            let msg = format!("Purified {} — event cancelled", description);
+            log(world, format!("[fg:98FB98]{}[/fg]", msg));
+            emit_response_event(world, response, msg.clone());
+            Ok(msg)
+        }
+        FloorEventResponse::Bolster => {
+            commit_pending_response(world, FloorEventResponse::Bolster);
+            let msg = format!(
+                "Bolstered against {} — incursion will spawn weakened",
+                description
+            );
+            log(world, format!("[fg:87CEEB]{}[/fg]", msg));
+            emit_response_event(world, response, msg.clone());
+            Ok(msg)
+        }
+        FloorEventResponse::Channel => {
+            commit_pending_response(world, FloorEventResponse::Channel);
+            let msg = format!(
+                "Channeled {} — party will heal when it resolves",
+                description
+            );
+            log(world, format!("[fg:98FB98]{}[/fg]", msg));
+            emit_response_event(world, response, msg.clone());
+            Ok(msg)
+        }
+    }
+}
+
+fn commit_pending_response(world: &mut World, response: FloorEventResponse) {
+    if let Some(events) = world.resource_mut::<DynamicFloorEvents>() {
+        if let Some(pending) = events.pending.as_mut() {
+            pending.response = Some(response);
+        }
+    }
+}
+
+fn validate_response_for_kind(
+    response: FloorEventResponse,
+    kind: &FloorEventKind,
+) -> Result<(), String> {
+    match (response, kind) {
+        (FloorEventResponse::Purify, FloorEventKind::ModifierSurge { .. }) => Ok(()),
+        (FloorEventResponse::Bolster, FloorEventKind::MiniBossIncursion { .. }) => Ok(()),
+        (
+            FloorEventResponse::Channel,
+            FloorEventKind::ModifierSurge {
+                modifier: FloorModifier::HealingSurge,
+                ..
+            },
+        ) => Ok(()),
+        (
+            FloorEventResponse::Brace | FloorEventResponse::Intercept | FloorEventResponse::Embrace,
+            _,
+        ) => Ok(()),
+        (FloorEventResponse::Purify, _) => {
+            Err("Cleanse Remedy only purifies modifier surges".to_string())
+        }
+        (FloorEventResponse::Bolster, _) => {
+            Err("Aegis Elixir only bolsters mini-boss incursions".to_string())
+        }
+        (FloorEventResponse::Channel, _) => {
+            Err("Healing Potion only channels a Healing Surge".to_string())
+        }
+    }
+}
+
+fn consume_response_item(
+    world: &mut World,
+    actor: Entity,
+    response: FloorEventResponse,
+) -> Result<(), String> {
+    let (matches, label): (fn(&ItemEffect) -> bool, &str) = match response {
+        FloorEventResponse::Purify => (
+            |effect| matches!(effect, ItemEffect::Cleanse | ItemEffect::CleanseAndHeal(_)),
+            "a Cleanse Remedy",
+        ),
+        FloorEventResponse::Bolster => (
+            |effect| matches!(effect, ItemEffect::RestoreShield(_, _)),
+            "an Aegis Elixir",
+        ),
+        FloorEventResponse::Channel => (
+            |effect| matches!(effect, ItemEffect::Heal(_)),
+            "a Healing Potion",
+        ),
+        _ => return Ok(()),
+    };
+
+    let items = world
+        .get::<Inventory>(actor)
+        .map(|inventory| inventory.items.clone())
+        .unwrap_or_default();
+    let found = items.into_iter().find(|&item_ent| {
+        world
+            .get::<Item>(item_ent)
+            .is_some_and(|item| matches(&item.effect))
+    });
+    let Some(item_ent) = found else {
+        return Err(format!("Requires {}", label));
+    };
+    if let Some(inventory) = world.get_mut::<Inventory>(actor) {
+        inventory.items.retain(|item| *item != item_ent);
+    }
+    world.despawn(item_ent);
+    Ok(())
+}
+
+pub struct AppliedFloorEventItem {
+    pub response_name: String,
+    pub description: String,
+    pub apply_normal_effect: bool,
+}
+
+/// Uses an existing inventory item as an event-specific answer. Returns `None`
+/// when the item should follow its normal effect instead.
+pub fn try_use_item_on_floor_event(
+    world: &mut World,
+    effect: &ItemEffect,
+    actor: Entity,
+) -> Option<Result<AppliedFloorEventItem, String>> {
+    let pending = world
+        .resource::<DynamicFloorEvents>()
+        .and_then(|events| events.pending.as_ref())?;
+    if pending.response.is_some() {
+        return None;
+    }
+    let kind = pending.kind.clone();
+    let (response, require_tiles, apply_normal_effect) = match (effect, &kind) {
+        (
+            ItemEffect::Cleanse | ItemEffect::CleanseAndHeal(_),
+            FloorEventKind::ModifierSurge { .. },
+        ) => (FloorEventResponse::Purify, true, false),
+        (ItemEffect::RestoreShield(_, _), FloorEventKind::MiniBossIncursion { .. }) => {
+            (FloorEventResponse::Bolster, true, true)
+        }
+        (ItemEffect::ReplenishAp(_), _) => (FloorEventResponse::Intercept, false, false),
+        (
+            ItemEffect::Heal(_),
+            FloorEventKind::ModifierSurge {
+                modifier: FloorModifier::HealingSurge,
+                ..
+            },
+        ) => (FloorEventResponse::Channel, true, true),
+        _ => return None,
+    };
+
+    Some(
+        apply_floor_event_response_ex(world, response, Some(actor), false, require_tiles).map(
+            |description| AppliedFloorEventItem {
+                response_name: response.display_name().to_string(),
+                description,
+                apply_normal_effect,
+            },
+        ),
+    )
+}
+
+fn emit_response_event(world: &mut World, response: FloorEventResponse, description: String) {
+    if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+        events.send(GameEvent::FloorEventResponded {
+            response,
+            description,
+        });
+    }
 }

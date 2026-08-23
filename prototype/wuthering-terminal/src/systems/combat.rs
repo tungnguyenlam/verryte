@@ -465,6 +465,9 @@ pub fn handle_defeat(
     class: CharacterClass,
     pos: Position,
 ) {
+    if let Some(telegraphs) = world.resource_mut::<crate::components::IncursionAttackTelegraphs>() {
+        telegraphs.attacks.retain(|attack| attack.source != entity);
+    }
     if class == CharacterClass::Boss {
         let phase = world
             .resource::<GameState>()
@@ -890,8 +893,13 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
                         Color(255, 128, 0),
                         true,
                     ));
-                vfx.particles
-                    .extend(verryte_terminal::vfx::emit_burst(tx, ty, 15, Color(255, 200, 100), &['~', '°', '·']));
+                vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                    tx,
+                    ty,
+                    15,
+                    Color(255, 200, 100),
+                    &['~', '°', '·'],
+                ));
             }
             if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
                 events.send(GameEvent::ReactionTriggered {
@@ -912,7 +920,13 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
                 }
             }
             if melted_tile {
-                log(world, format!("The ice patch at ({}, {}) has melted into water!", target_pos.x, target_pos.y));
+                log(
+                    world,
+                    format!(
+                        "The ice patch at ({}, {}) has melted into water!",
+                        target_pos.x, target_pos.y
+                    ),
+                );
             }
 
             if defeated {
@@ -947,8 +961,13 @@ pub fn apply_spread_status(world: &mut World, target: Entity, new_status: Elemen
                         Color(255, 50, 0),
                         true,
                     ));
-                vfx.particles
-                    .extend(verryte_terminal::vfx::emit_burst(tx, ty, 20, Color(255, 0, 0), &['*', '!', '^']));
+                vfx.particles.extend(verryte_terminal::vfx::emit_burst(
+                    tx,
+                    ty,
+                    20,
+                    Color(255, 0, 0),
+                    &['*', '!', '^'],
+                ));
             }
             if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
                 events.send(GameEvent::ReactionTriggered {

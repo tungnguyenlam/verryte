@@ -112,6 +112,10 @@ those pieces.
   `TileGrid::from_ascii` for constructing grids from multi-line string
   literals, `TileGrid::map_tiles` for transforming tile types, and
   `TileGrid::crop` for extracting rectangular sub-regions as new grids.
+  Origin-centered `TileShape` primitives (`Disk`, `Square`, `Cross`, `Line`,
+  `Cone`, `ManhattanRing`, `Diamond`) plus `TileGrid::clip_points` and
+  `TileGrid::points_in_shape` for AoE previews, telegraphs, and other spatial
+  queries.
 - `crates/verryte-terminal` - terminal-cell data structures: colors, cells,
   grids, clipping, borders, line drawing, blitting, viewports, frame diffs,
   plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string` with
@@ -225,14 +229,21 @@ Agent commands use `ActionSource::Agent` in their step reports, keeping agent
 control distinguishable from scripts without changing the shared action path.
 Snapshots expose active modifier names alongside their remaining turns and
 weather danger-zone coordinates so a headless controller can plan from state
-rather than scrape the rendered frame.
+rather than scrape the rendered frame. Event-spawned mini-bosses keep that
+contract after arrival: they arm class-specific `TileShape` attacks for one
+player turn, and `incursion_attacks` reports the attacker, pattern, origin,
+tiles, damage, resolve turn, and whether the arrival was intercepted. Intercept
+now disrupts only the first committed attack: Void Terror's cross is shortened,
+while Frozen Sentinel's ring opens an escape gap. The same warnings are rendered
+in the TTY, included in enemy intents, serialized in saves, and resolved by
+enemy AI.
 
 **Interactive TTY** (real terminal):
 ```sh
 cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
-`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, save/load, recording, replay controls, UI/tool toggles, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, echo absorption, boss phase transition, save/load, recording/replay state changes, replay steps, rest recovery, floor modifier rerolls, scheduled deeper-floor events, status views, and precise failure reports for invalid inventory/crafting/floor/replay actions.
+`verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, save/load, recording, replay controls, UI/tool toggles, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, echo absorption, boss phase transition, save/load, recording/replay state changes, replay steps, rest recovery, floor modifier rerolls, scheduled deeper-floor events and player responses (brace/intercept/embrace plus item answers: purify/bolster/channel, and Energy Elixir remote intercept), status views, and precise failure reports for invalid inventory/crafting/floor/replay actions.
 The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
 
 ## Verification

@@ -56,6 +56,7 @@ pub enum Action {
     ToggleSaveLoadMenu,
     ToggleInspectCharacter,
     ToggleThreatMap,
+    RespondToFloorEvent(crate::components::FloorEventResponse),
 }
 
 impl Action {
@@ -202,6 +203,24 @@ pub fn default_bindings() -> Bindings<Action> {
     b.bind(Key::Char('k'), Action::ToggleThreatMap);
     b.bind(Key::Char('K'), Action::ToggleThreatMap);
 
+    // Floor-event responses
+    b.bind(
+        Key::Char('f'),
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Brace),
+    );
+    b.bind(
+        Key::Char('n'),
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Intercept),
+    );
+    b.bind(
+        Key::Char('N'),
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Intercept),
+    );
+    b.bind(
+        Key::Char('['),
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Embrace),
+    );
+
     b
 }
 
@@ -250,6 +269,42 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_name("save_load_menu", Action::ToggleSaveLoadMenu);
     c.bind_name("inspect", Action::ToggleInspectCharacter);
     c.bind_name("threat_map", Action::ToggleThreatMap);
+    c.bind_name(
+        "brace",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Brace),
+    );
+    c.bind_name(
+        "fortify",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Brace),
+    );
+    c.bind_name(
+        "intercept",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Intercept),
+    );
+    c.bind_name(
+        "disrupt",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Intercept),
+    );
+    c.bind_name(
+        "embrace",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Embrace),
+    );
+    c.bind_name(
+        "accept_event",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Embrace),
+    );
+    c.bind_name(
+        "purify",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Purify),
+    );
+    c.bind_name(
+        "bolster",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Bolster),
+    );
+    c.bind_name(
+        "channel",
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Channel),
+    );
 
     c.bind_glyph('n', Action::MoveNorth);
     c.bind_glyph('s', Action::MoveSouth);
@@ -280,6 +335,10 @@ pub fn default_commands() -> CommandBindings<Action> {
     c.bind_glyph('g', Action::ToggleCombatLog);
     c.bind_glyph('l', Action::ToggleSaveLoadMenu);
     c.bind_glyph('k', Action::ToggleThreatMap);
+    c.bind_glyph(
+        'f',
+        Action::RespondToFloorEvent(crate::components::FloorEventResponse::Brace),
+    );
 
     c
 }
@@ -436,6 +495,37 @@ pub fn resolve_command_token(token: &str) -> Option<Action> {
         if let Some(slot) = slot {
             return Some(Action::UpgradeEquipment(slot));
         }
+    }
+
+    if token == "brace" || token == "fortify" {
+        return Some(Action::RespondToFloorEvent(
+            crate::components::FloorEventResponse::Brace,
+        ));
+    }
+    if token == "intercept" || token == "disrupt" {
+        return Some(Action::RespondToFloorEvent(
+            crate::components::FloorEventResponse::Intercept,
+        ));
+    }
+    if token == "embrace" || token == "accept_event" {
+        return Some(Action::RespondToFloorEvent(
+            crate::components::FloorEventResponse::Embrace,
+        ));
+    }
+    if token == "purify" || token == "cleanse_event" {
+        return Some(Action::RespondToFloorEvent(
+            crate::components::FloorEventResponse::Purify,
+        ));
+    }
+    if token == "bolster" {
+        return Some(Action::RespondToFloorEvent(
+            crate::components::FloorEventResponse::Bolster,
+        ));
+    }
+    if token == "channel" || token == "channel_surge" {
+        return Some(Action::RespondToFloorEvent(
+            crate::components::FloorEventResponse::Channel,
+        ));
     }
 
     if token == "camera_lock" || token == "lock" {

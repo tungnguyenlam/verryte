@@ -40,9 +40,17 @@ Characters can have unique traits that modify gameplay:
 - **Boss phases**: multi-phase fight with stat boosts and new attack patterns
 - **Inventory**: healing potions, energy elixirs, cleanse remedies, aegis elixirs
 - **Equipment**: class starter gear, enemy-awarded set gear, upgrade kits, stat bonuses, lifesteal, and per-turn HP regeneration. Equipment upgrades and set rewards are exposed as structured `ActionOutcome` values for scripts and replays. Upgrade Kits are used through `equip_upgrade:<slot>` and are not consumed by direct inventory use.
-- **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life) using `Action::CraftItem`. Successful crafts report `ActionOutcome::Crafted`; invalid recipes and slots report structured failures.
+- **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life, Cleanse Remedy + Energy Elixir -> Ward Charm) using `Action::CraftItem`. Successful crafts report `ActionOutcome::Crafted`; invalid recipes and slots report structured failures. Ward Charm uses `ItemEffect::EventWard` to Brace a telegraphed floor event without spending AP.
 - **Floor progression**: stairs spawn upon defeating enemies, triggering descent to deeper floors (using `Action::NextFloor` or keyboard key `>`). Floor 2+ features a procedural BSP dungeon layout, scaled enemy stats (+15% per floor), bonus loot, and an elite Glacial Golem encounter on Floor 3+. Boss shields scale with floor depth.
-- **Dynamic floor events**: beginning on Floor 2, seed-driven modifier surges or mini-boss incursions occur every three turns. The next scheduled turn and bounded event history are exposed in snapshots, while triggers are emitted as structured game events and action outcomes.
+- **Dynamic floor events**: beginning on Floor 2, seed-driven modifier surges or mini-boss incursions are telegraphed one turn before they resolve. Danger tiles, resolve turn, and any player response are exposed in snapshots. Players can `brace`, `intercept`, or `embrace` through the shared action path; a crafted `Ward Charm` (Cleanse Remedy + Energy Elixir) auto-braces without spending AP. Existing inventory items also answer events: Cleanse Remedy purifies a surge, Aegis Elixir bolsters an incursion, Energy Elixir intercepts from anywhere, and a Healing Potion channels a Healing Surge into extra party healing. Mini-boss telegraphs use class-specific patterns (`cross` for Void Terror, `ring` for Frozen Sentinel) from `verryte-map::TileShape`. Intercepting an incursion also disrupts its first post-spawn attack. Triggers still emit structured game events and action outcomes.
+- **Incursion attack warnings**: once an event mini-boss has spawned, it keeps
+  using its class shape for committed attacks. Void Terror charges a cross-shaped
+  Void Rend; Frozen Sentinel charges a ring-shaped Glacial Lock. These attacks
+  spend the mini-boss phase to arm, remain avoidable for the next player turn,
+  then resolve once through normal enemy AI. Defeating the owner removes its
+  warning immediately. An Intercept response shortens Void Terror's first cross
+  to radius one or removes the escape-side tile from Frozen Sentinel's first
+  ring; later attacks return to their normal patterns.
 - **Elemental shields**: absorb damage before HP
 - **Level-up system**: defeating enemies awards XP (scaled by floor depth). Level-ups grant +10 HP, +2 ATK, +1 DEF, and a skill point. Prestige classes (BladeMaster, Archmage, DivineHealer) unlock at milestones with VFX feedback.
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
@@ -75,6 +83,8 @@ Characters can have unique traits that modify gameplay:
 
 | Key | Action |
 |-----|--------|
+| F | Brace a telegraphed floor event |
+| N / [ | Intercept / Embrace a floor event |
 | B | Toggle auto-battle |
 | R | Step to safety |
 | F3 | Toggle performance overlay |
@@ -116,7 +126,18 @@ labels queued actions as `Agent`. Its JSON snapshots also include
 `active_modifier_durations` and `weather_danger_zones`, allowing an external
 controller to reason about timed floor effects and imminent lightning strikes.
 `next_floor_event_turn` and `recent_floor_events` expose dynamic event timing
-and history without requiring frame or log scraping.
+and history without requiring frame or log scraping. When an event is
+telegraphed, `pending_floor_event`, `pending_floor_event_resolves_on`,
+`pending_floor_event_tiles`, `pending_floor_event_response`,
+`pending_floor_event_pattern`, and `pending_floor_event_item_offers` describe the
+warning, its danger tiles and telegraph pattern, any Brace/Intercept/Embrace/item
+answer already committed, and which existing inventory items can still answer it.
+After an incursion spawns, `incursion_attacks` continues that observability with
+structured attacker, pattern, origin, tile, predicted-damage, and resolve-turn
+fields plus an `intercepted` flag. Modified patterns are named `short-cross` or
+`broken-ring`, and their exact safe tiles remain authoritative. The same attacks
+appear in `enemy_intents` and as structured `IncursionAttackTelegraphed` /
+`IncursionAttackResolved` game events.
 
 ### Script tokens
 
@@ -126,7 +147,7 @@ Combat: `skill1`, `skill2`, `skill3`, `confirm`, `cancel`, `end`, `wait`, `craft
 
 Swap: `swap1`, `swap2`, `swap3` (or `4`, `5`, `6`)
 
-Other: `autobattle`, `inventory`, `bestiary`/`lore`, `prestige`, `reroll`, `rest`, `safety`, `save`/`quicksave`, `load`/`quickload`, `record`/`recording`, `replay`, `replay_auto`/`auto_replay`, `step_replay`/`replay_step`, `stairs`/`next_floor`/`>`, `quit`
+Other: `autobattle`, `inventory`, `bestiary`/`lore`, `prestige`, `reroll`, `rest`, `safety`, `save`/`quicksave`, `load`/`quickload`, `record`/`recording`, `replay`, `replay_auto`/`auto_replay`, `step_replay`/`replay_step`, `stairs`/`next_floor`/`>`, `brace`/`fortify`, `intercept`/`disrupt`, `embrace`/`accept_event`, `purify`/`cleanse_event`, `bolster`, `channel`/`channel_surge`, `quit`
 
 ## Adaptive Sprites
 

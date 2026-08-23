@@ -1,8 +1,9 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
     CharacterClass, DynamicFloorEvents, EchoItem, EquipmentSlot, EquippedEchoes, EquippedItems,
-    Fatigue, FloorEventKind, FloorModifier, GameEvent, GameState, Inventory, ItemEffect, Morale,
-    Outcome, ReplayState, Stats, TurnPhase, TurnTransition, UIState,
+    Fatigue, FloorEventKind, FloorEventResponse, FloorModifier, GameEvent, GameState,
+    IncursionAttackTelegraphs, IncursionFirstAttackDisrupted, IncursionMiniBoss, Inventory,
+    ItemEffect, Morale, Outcome, ReplayState, Stats, Team, TurnPhase, TurnTransition, UIState,
 };
 use wuthering_terminal::equipment;
 use wuthering_terminal::snapshot::{ActionOutcome, FailureCategory};
@@ -615,7 +616,48 @@ fn dynamic_floor_event_is_observable_through_snapshot_and_step_report() {
 }
 
 #[test]
-fn dynamic_floor_event_schedule_triggers_once_per_due_turn() {
+fn dynamic_floor_event_is_telegraphed_before_it_resolves() {
+    let mut game = Game::new();
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.floor = 2;
+        state.turn = 3;
+        state.phase = TurnPhase::Player;
+    }
+    {
+        let events = game.world.resource_mut::<DynamicFloorEvents>().unwrap();
+        events.next_event_turn = 3;
+        events.interval = 2;
+    }
+
+    let report = game.apply_action(Action::Inspect(Position::new(5, 5)), ActionSource::Agent);
+    match &report.outcome {
+        ActionOutcome::FloorEventTelegraphed {
+            description,
+            resolves_on_turn,
+        } => {
+            assert!(
+                description.contains("incoming"),
+                "telegraph should warn, got {description}"
+            );
+            assert_eq!(*resolves_on_turn, 4);
+        }
+        other => panic!("expected floor event telegraph, got {other:?}"),
+    }
+    assert!(report
+        .events
+        .iter()
+        .any(|event| matches!(event, GameEvent::FloorEventTelegraphed(_))));
+
+    let snapshot = game.snapshot();
+    assert!(snapshot.pending_floor_event.is_some());
+    assert_eq!(snapshot.pending_floor_event_resolves_on, 4);
+    assert_eq!(snapshot.next_floor_event_turn, 4);
+    assert!(snapshot.recent_floor_events.is_empty());
+}
+
+#[test]
+fn dynamic_floor_event_schedule_telegraphs_once_then_resolves() {
     let mut game = Game::new();
     {
         let state = game.world.resource_mut::<GameState>().unwrap();
@@ -632,10 +674,842 @@ fn dynamic_floor_event_schedule_triggers_once_per_due_turn() {
     wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
     wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
 
+    {
+        let events = game.world.resource::<DynamicFloorEvents>().unwrap();
+        assert!(events.pending.is_some());
+        assert!(events.history.is_empty());
+        assert_eq!(events.next_event_turn, 4);
+    }
+
+    game.world.resource_mut::<GameState>().unwrap().turn = 4;
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+
     let events = game.world.resource::<DynamicFloorEvents>().unwrap();
+    assert!(events.pending.is_none());
     assert_eq!(events.history.len(), 1);
-    assert_eq!(events.next_event_turn, 5);
-    assert_eq!(game.snapshot().next_floor_event_turn, 5);
+    assert_eq!(events.next_event_turn, 6);
+    assert_eq!(game.snapshot().next_floor_event_turn, 6);
+}
+
+#[test]
+fn brace_reduces_pending_modifier_surge_duration() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::Darkness,
+            duration: 5,
+        },
+    );
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+
+    let report = game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Brace),
+        ActionSource::Script,
+    );
+    match &report.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Brace");
+        }
+        other => panic!("expected brace response, got {other:?}"),
+    }
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+    assert_eq!(
+        game.snapshot().pending_floor_event_response.as_deref(),
+        Some("Brace")
+    );
+
+    game.world.resource_mut::<GameState>().unwrap().turn = game
+        .world
+        .resource::<DynamicFloorEvents>()
+        .unwrap()
+        .pending
+        .as_ref()
+        .unwrap()
+        .resolves_on_turn;
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+
+    let active = game
+        .world
+        .resource::<wuthering_terminal::components::ActiveFloorModifiers>()
+        .unwrap();
+    let index = active
+        .modifiers
+        .iter()
+        .position(|modifier| *modifier == FloorModifier::Darkness)
+        .expect("darkness should be applied");
+    assert_eq!(active.turns_remaining[index], 3);
+}
+
+#[test]
+fn intercept_requires_standing_on_incursion_tiles() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    let pending = wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(18, 4),
+        },
+    );
+    assert!(!pending.tiles.is_empty());
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+
+    let report = game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Intercept),
+        ActionSource::Script,
+    );
+    match &report.outcome {
+        ActionOutcome::Failed { reason } => {
+            assert!(reason.contains("telegraphed tile"), "got {reason}");
+        }
+        other => panic!("expected intercept failure, got {other:?}"),
+    }
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::WrongContext)
+    );
+
+    *game.world.get_mut::<Position>(warrior).unwrap() = pending.tiles[0];
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+    let ok = game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Intercept),
+        ActionSource::Script,
+    );
+    match &ok.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Intercept");
+        }
+        other => panic!("expected intercept success, got {other:?}"),
+    }
+    let events = game.world.resource::<DynamicFloorEvents>().unwrap();
+    assert_eq!(
+        events.pending.as_ref().unwrap().resolves_on_turn,
+        pending.resolves_on_turn + 1
+    );
+}
+
+#[test]
+fn intercepted_void_incursion_shortens_only_its_first_attack() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    let spawn = Position::new(18, 4);
+    let pending = wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: spawn,
+        },
+    );
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let intercept_tile = pending
+        .tiles
+        .iter()
+        .copied()
+        .find(|tile| *tile != spawn)
+        .expect("incursion warning should have an intercept tile away from spawn");
+    *game.world.get_mut::<Position>(warrior).unwrap() = intercept_tile;
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+
+    let report = game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Intercept),
+        ActionSource::Agent,
+    );
+    assert!(matches!(
+        report.outcome,
+        ActionOutcome::FloorEventResponded { ref description, .. }
+            if description.contains("disrupted its first attack")
+    ));
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+
+    let resolve_turn = game
+        .world
+        .resource::<DynamicFloorEvents>()
+        .unwrap()
+        .pending
+        .as_ref()
+        .unwrap()
+        .resolves_on_turn;
+    game.world.resource_mut::<GameState>().unwrap().turn = resolve_turn;
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+    let incursion = game
+        .world
+        .query::<IncursionMiniBoss>()
+        .into_iter()
+        .next()
+        .map(|(entity, _)| entity)
+        .unwrap();
+    assert!(game
+        .world
+        .get::<IncursionFirstAttackDisrupted>(incursion)
+        .is_some());
+
+    game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    let first = game.snapshot().incursion_attacks.pop().unwrap();
+    assert!(first.intercepted);
+    assert_eq!(first.pattern, "short-cross");
+    assert_eq!(first.tiles.len(), 5);
+    assert!(game
+        .world
+        .get::<IncursionFirstAttackDisrupted>(incursion)
+        .is_none());
+    assert!(game
+        .snapshot()
+        .enemy_intents
+        .iter()
+        .any(|intent| intent.contains("short-cross")));
+
+    game.world.resource_mut::<GameState>().unwrap().turn += 1;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    game.world.get_mut::<Stats>(incursion).unwrap().ap = 1;
+    game.world.resource_mut::<GameState>().unwrap().turn += 1;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    let second = game.snapshot().incursion_attacks.pop().unwrap();
+    assert!(!second.intercepted);
+    assert_eq!(second.pattern, "cross");
+    assert!(second.tiles.len() > first.tiles.len());
+}
+
+#[test]
+fn intercepted_frozen_incursion_opens_an_escape_gap_in_first_ring() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 4;
+    let spawn = Position::new(18, 4);
+    let pending = wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::FrozenSentinel,
+            position: spawn,
+        },
+    );
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let intercept_tile = pending
+        .tiles
+        .iter()
+        .copied()
+        .find(|tile| *tile != spawn)
+        .unwrap();
+    *game.world.get_mut::<Position>(warrior).unwrap() = intercept_tile;
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+    game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Intercept),
+        ActionSource::Script,
+    );
+
+    let resolve_turn = game
+        .world
+        .resource::<DynamicFloorEvents>()
+        .unwrap()
+        .pending
+        .as_ref()
+        .unwrap()
+        .resolves_on_turn;
+    game.world.resource_mut::<GameState>().unwrap().turn = resolve_turn;
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+    game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+
+    let attack = game.snapshot().incursion_attacks.pop().unwrap();
+    assert!(attack.intercepted);
+    assert_eq!(attack.pattern, "broken-ring");
+    assert_eq!(attack.tiles.len(), 7);
+    let dx = attack.origin.x - spawn.x;
+    let dy = attack.origin.y - spawn.y;
+    let gap = if dx.abs() >= dy.abs() && dx != 0 {
+        attack.origin.offset(dx.signum() * 2, 0)
+    } else if dy != 0 {
+        attack.origin.offset(0, dy.signum() * 2)
+    } else {
+        attack.origin.offset(0, -2)
+    };
+    assert!(!attack.tiles.contains(&gap));
+}
+
+#[test]
+fn embrace_resolves_pending_event_immediately_and_grants_concert_energy() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::HealingSurge,
+            duration: 3,
+        },
+    );
+    select_character(&mut game, Position::new(4, 4));
+
+    let report = game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Embrace),
+        ActionSource::Agent,
+    );
+    match &report.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Embrace");
+        }
+        other => panic!("expected embrace response, got {other:?}"),
+    }
+    assert!(report
+        .events
+        .iter()
+        .any(|event| matches!(event, GameEvent::FloorEventTriggered(_))));
+    assert_eq!(
+        game.world.resource::<GameState>().unwrap().concert_energy,
+        15
+    );
+    assert!(game.snapshot().pending_floor_event.is_none());
+    assert!(game
+        .snapshot()
+        .active_modifiers
+        .contains(&"Healing Surge".to_string()));
+}
+
+#[test]
+fn ward_charm_recipe_braces_pending_floor_event() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::GravityWell,
+            duration: 4,
+        },
+    );
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let cleanse = game.world.spawn_item("Cleanse Remedy", ItemEffect::Cleanse);
+    let elixir = game
+        .world
+        .spawn_item("Energy Elixir", ItemEffect::ReplenishAp(2));
+    {
+        let inv = game.world.get_mut::<Inventory>(warrior).unwrap();
+        inv.items.clear();
+        inv.items.push(cleanse);
+        inv.items.push(elixir);
+    }
+
+    let crafted = game.apply_action(Action::CraftItem(0, 1), ActionSource::Script);
+    assert_eq!(
+        crafted.outcome,
+        ActionOutcome::Crafted {
+            item_name: "Ward Charm".to_string(),
+        }
+    );
+
+    game.world.resource_mut::<GameState>().unwrap().ui_state = UIState::Inventory;
+    let used = game.apply_action(Action::UseItem(0), ActionSource::Script);
+    match &used.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Brace");
+        }
+        other => panic!("expected ward charm to brace, got {other:?}"),
+    }
+    assert_eq!(
+        game.snapshot().pending_floor_event_response.as_deref(),
+        Some("Brace")
+    );
+}
+
+#[test]
+fn mini_boss_telegraph_uses_class_specific_patterns() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+
+    let slash = wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(18, 4),
+        },
+    );
+    assert!(slash.tiles.contains(&Position::new(18, 4)));
+    assert!(slash.tiles.contains(&Position::new(16, 4)));
+    assert!(slash.tiles.contains(&Position::new(20, 4)));
+    let snapshot = game.snapshot();
+    assert_eq!(
+        snapshot.pending_floor_event_pattern.as_deref(),
+        Some("cross")
+    );
+    assert!(snapshot
+        .pending_floor_event_item_offers
+        .contains(&"Aegis Elixir".to_string()));
+    assert!(snapshot
+        .pending_floor_event_item_offers
+        .contains(&"Energy Elixir".to_string()));
+
+    game.world
+        .resource_mut::<DynamicFloorEvents>()
+        .unwrap()
+        .pending = None;
+
+    let ring = wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::FrozenSentinel,
+            position: Position::new(18, 4),
+        },
+    );
+    assert!(ring.tiles.contains(&Position::new(18, 4)));
+    assert!(ring.tiles.contains(&Position::new(16, 4)));
+    assert!(ring.tiles.contains(&Position::new(19, 5)));
+    assert!(!ring.tiles.contains(&Position::new(17, 4)));
+    assert_eq!(
+        game.snapshot().pending_floor_event_pattern.as_deref(),
+        Some("ring")
+    );
+}
+
+#[test]
+fn triggered_incursion_is_marked_and_arms_attack_through_enemy_ai() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(6, 4),
+        },
+    );
+    let incursion = game
+        .world
+        .query::<IncursionMiniBoss>()
+        .into_iter()
+        .next()
+        .map(|(entity, _)| entity)
+        .expect("incursion enemy should be marked");
+
+    let other_enemies: Vec<_> = game
+        .world
+        .query::<Team>()
+        .into_iter()
+        .filter(|(entity, team)| **team == Team::Enemy && *entity != incursion)
+        .map(|(entity, _)| entity)
+        .collect();
+    for entity in other_enemies {
+        game.world.get_mut::<Stats>(entity).unwrap().ap = 0;
+    }
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.turn = 5;
+        state.phase = TurnPhase::Enemy;
+    }
+    wuthering_terminal::systems::enemy_ai_system(&mut game.world);
+
+    let snapshot = game.snapshot();
+    assert_eq!(snapshot.incursion_attacks.len(), 1);
+    let attack = &snapshot.incursion_attacks[0];
+    assert_eq!(attack.source, incursion);
+    assert_eq!(attack.attacker, "Void Terror");
+    assert_eq!(attack.pattern, "cross");
+    assert_eq!(attack.origin, Position::new(4, 4));
+    assert!(attack.tiles.contains(&Position::new(4, 4)));
+    assert!(attack.tiles.contains(&Position::new(6, 4)));
+    assert_eq!(attack.resolves_on_turn, 6);
+    assert!(game
+        .snapshot()
+        .enemy_intents
+        .iter()
+        .any(|intent| intent.contains("Void Rend") && intent.contains("resolves turn 6")));
+    assert!(game
+        .world
+        .resource::<verryte_core::Events<GameEvent>>()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(event, GameEvent::IncursionAttackTelegraphed(_))));
+}
+
+#[test]
+fn frozen_incursion_attack_reuses_ring_shape_without_center() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 4;
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::FrozenSentinel,
+            position: Position::new(6, 4),
+        },
+    );
+    game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+
+    let attack = game.snapshot().incursion_attacks.pop().unwrap();
+    assert_eq!(attack.pattern, "ring");
+    assert!(!attack.tiles.contains(&attack.origin));
+    assert!(attack.tiles.contains(&attack.origin.offset(2, 0)));
+    assert!(attack.tiles.contains(&attack.origin.offset(1, 1)));
+}
+
+#[test]
+fn incursion_attack_resolves_once_on_later_enemy_phase() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(6, 4),
+        },
+    );
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.turn = 5;
+        state.phase = TurnPhase::Enemy;
+    }
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let hp_before = game.world.get::<Stats>(warrior).unwrap().hp;
+
+    game.world.resource_mut::<GameState>().unwrap().turn = 6;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+
+    assert!(game
+        .world
+        .resource::<IncursionAttackTelegraphs>()
+        .unwrap()
+        .attacks
+        .is_empty());
+    assert!(game.world.get::<Stats>(warrior).unwrap().hp < hp_before);
+    assert!(game
+        .world
+        .resource::<verryte_core::Events<GameEvent>>()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(
+            event,
+            GameEvent::IncursionAttackResolved { hit_count, .. } if *hit_count >= 1
+        )));
+
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    assert!(game
+        .world
+        .resource::<IncursionAttackTelegraphs>()
+        .unwrap()
+        .attacks
+        .is_empty());
+}
+
+#[test]
+fn defeating_incursion_owner_clears_its_attack_warning() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::trigger_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(6, 4),
+        },
+    );
+    game.world.resource_mut::<GameState>().unwrap().phase = TurnPhase::Enemy;
+    wuthering_terminal::systems::incursion_attack_system(&mut game.world);
+    let source = game.snapshot().incursion_attacks[0].source;
+    assert_eq!(game.snapshot().incursion_attacks.len(), 1);
+
+    wuthering_terminal::systems::handle_defeat(
+        &mut game.world,
+        source,
+        "Void Terror",
+        CharacterClass::VoidTerror,
+        Position::new(6, 4),
+    );
+
+    assert!(game.snapshot().incursion_attacks.is_empty());
+}
+
+#[test]
+fn cleanse_remedy_purifies_pending_modifier_surge() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::Darkness,
+            duration: 5,
+        },
+    );
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let cleanse = game.world.spawn_item("Cleanse Remedy", ItemEffect::Cleanse);
+    {
+        let inv = game.world.get_mut::<Inventory>(warrior).unwrap();
+        inv.items.clear();
+        inv.items.push(cleanse);
+    }
+
+    game.world.resource_mut::<GameState>().unwrap().ui_state = UIState::Inventory;
+    let report = game.apply_action(Action::UseItem(0), ActionSource::Script);
+    match &report.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Purify");
+        }
+        other => panic!("expected purify response, got {other:?}"),
+    }
+    assert!(game.snapshot().pending_floor_event.is_none());
+    assert!(game
+        .world
+        .resource::<wuthering_terminal::components::ActiveFloorModifiers>()
+        .unwrap()
+        .modifiers
+        .is_empty());
+}
+
+#[test]
+fn purify_action_consumes_cleanse_and_cancels_surge() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::FogOfWar,
+            duration: 4,
+        },
+    );
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let cleanse = game.world.spawn_item("Cleanse Remedy", ItemEffect::Cleanse);
+    {
+        let inv = game.world.get_mut::<Inventory>(warrior).unwrap();
+        inv.items.clear();
+        inv.items.push(cleanse);
+    }
+
+    let missing = game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Purify),
+        ActionSource::Agent,
+    );
+    // Item is still there; first call should succeed and consume it.
+    match &missing.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Purify");
+        }
+        other => panic!("expected purify, got {other:?}"),
+    }
+    assert!(game
+        .world
+        .get::<Inventory>(warrior)
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(game.snapshot().pending_floor_event.is_none());
+}
+
+#[test]
+fn purify_without_cleanse_reports_invalid_item() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::Darkness,
+            duration: 3,
+        },
+    );
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    game.world
+        .get_mut::<Inventory>(warrior)
+        .unwrap()
+        .items
+        .clear();
+
+    let report = game.apply_action(
+        Action::RespondToFloorEvent(FloorEventResponse::Purify),
+        ActionSource::Script,
+    );
+    match &report.outcome {
+        ActionOutcome::Failed { reason } => {
+            assert!(reason.contains("Cleanse"), "got {reason}");
+        }
+        other => panic!("expected missing-item failure, got {other:?}"),
+    }
+    assert_eq!(
+        report.outcome.failure_category(),
+        Some(FailureCategory::InvalidItem)
+    );
+    assert!(game.snapshot().pending_floor_event.is_some());
+}
+
+#[test]
+fn aegis_elixir_bolsters_pending_incursion() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(18, 4),
+        },
+    );
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let aegis = game.world.spawn_item(
+        "Aegis Elixir",
+        ItemEffect::RestoreShield(wuthering_terminal::components::ShieldType::Ice, 20),
+    );
+    {
+        let inv = game.world.get_mut::<Inventory>(warrior).unwrap();
+        inv.items.clear();
+        inv.items.push(aegis);
+    }
+
+    game.world.resource_mut::<GameState>().unwrap().ui_state = UIState::Inventory;
+    let report = game.apply_action(Action::UseItem(0), ActionSource::Script);
+    match &report.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Bolster");
+        }
+        other => panic!("expected bolster response, got {other:?}"),
+    }
+    assert_eq!(
+        game.snapshot().pending_floor_event_response.as_deref(),
+        Some("Bolster")
+    );
+    assert!(game
+        .world
+        .get::<wuthering_terminal::components::ElementalShield>(warrior)
+        .is_some());
+
+    game.world.resource_mut::<GameState>().unwrap().turn = game
+        .world
+        .resource::<DynamicFloorEvents>()
+        .unwrap()
+        .pending
+        .as_ref()
+        .unwrap()
+        .resolves_on_turn;
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+
+    let spawned = game
+        .world
+        .query2::<Position, CharacterClass>()
+        .into_iter()
+        .find(|(_, pos, class)| {
+            **pos == Position::new(18, 4) && **class == CharacterClass::VoidTerror
+        })
+        .map(|(entity, _, _)| entity)
+        .expect("incursion should spawn");
+    let stats = game.world.get::<Stats>(spawned).unwrap();
+    assert!(
+        stats.hp * 2 < stats.max_hp,
+        "bolstered HP {} should be well below max {}",
+        stats.hp,
+        stats.max_hp
+    );
+}
+
+#[test]
+fn energy_elixir_intercepts_incursion_without_standing_on_tiles() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    let pending = wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::MiniBossIncursion {
+            class: CharacterClass::VoidTerror,
+            position: Position::new(18, 4),
+        },
+    );
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    assert!(!pending
+        .tiles
+        .contains(game.world.get::<Position>(warrior).unwrap()));
+    let elixir = game
+        .world
+        .spawn_item("Energy Elixir", ItemEffect::ReplenishAp(2));
+    {
+        let inv = game.world.get_mut::<Inventory>(warrior).unwrap();
+        inv.items.clear();
+        inv.items.push(elixir);
+    }
+
+    game.world.resource_mut::<GameState>().unwrap().ui_state = UIState::Inventory;
+    let report = game.apply_action(Action::UseItem(0), ActionSource::Agent);
+    match &report.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Intercept");
+        }
+        other => panic!("expected remote intercept, got {other:?}"),
+    }
+    let events = game.world.resource::<DynamicFloorEvents>().unwrap();
+    assert_eq!(
+        events.pending.as_ref().unwrap().resolves_on_turn,
+        pending.resolves_on_turn + 1
+    );
+}
+
+#[test]
+fn healing_potion_channels_pending_healing_surge() {
+    let mut game = Game::new();
+    game.world.resource_mut::<GameState>().unwrap().floor = 2;
+    wuthering_terminal::systems::telegraph_floor_event(
+        &mut game.world,
+        FloorEventKind::ModifierSurge {
+            modifier: FloorModifier::HealingSurge,
+            duration: 3,
+        },
+    );
+
+    select_character(&mut game, Position::new(4, 4));
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    game.world.get_mut::<Stats>(warrior).unwrap().hp = 20;
+    let potion = game
+        .world
+        .spawn_item("Healing Potion", ItemEffect::Heal(30));
+    {
+        let inv = game.world.get_mut::<Inventory>(warrior).unwrap();
+        inv.items.clear();
+        inv.items.push(potion);
+    }
+
+    game.world.resource_mut::<GameState>().unwrap().ui_state = UIState::Inventory;
+    let report = game.apply_action(Action::UseItem(0), ActionSource::Script);
+    match &report.outcome {
+        ActionOutcome::FloorEventResponded { response, .. } => {
+            assert_eq!(response, "Channel");
+        }
+        other => panic!("expected channel response, got {other:?}"),
+    }
+    assert!(game.world.get::<Stats>(warrior).unwrap().hp > 20);
+    assert_eq!(
+        game.snapshot().pending_floor_event_response.as_deref(),
+        Some("Channel")
+    );
+
+    let hp_after_potion = game.world.get::<Stats>(warrior).unwrap().hp;
+    game.world.get_mut::<Stats>(warrior).unwrap().hp = hp_after_potion.min(30);
+    game.world.resource_mut::<GameState>().unwrap().turn = game
+        .world
+        .resource::<DynamicFloorEvents>()
+        .unwrap()
+        .pending
+        .as_ref()
+        .unwrap()
+        .resolves_on_turn;
+    wuthering_terminal::systems::dynamic_floor_event_system(&mut game.world);
+
+    assert!(game
+        .snapshot()
+        .active_modifiers
+        .contains(&"Healing Surge".to_string()));
+    assert!(
+        game.world.get::<Stats>(warrior).unwrap().hp >= hp_after_potion.min(30) + 20
+            || game.world.get::<Stats>(warrior).unwrap().hp
+                == game.world.get::<Stats>(warrior).unwrap().max_hp,
+        "channel should heal the party when the surge resolves"
+    );
 }
 
 #[test]

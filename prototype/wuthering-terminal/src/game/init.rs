@@ -59,6 +59,7 @@ impl Game {
         world.insert_resource(crate::components::AvailableCombos::default());
         world.insert_resource(crate::components::ActiveFloorModifiers::default());
         world.insert_resource(crate::components::DynamicFloorEvents::default());
+        world.insert_resource(crate::components::IncursionAttackTelegraphs::default());
         world.insert_resource(Self::create_initial_bestiary());
         world.insert_resource(Self::create_initial_lore_journal());
         world.insert_resource(verryte_input::TextInput::new());
@@ -484,6 +485,13 @@ impl Game {
             .resource_mut::<crate::components::DynamicFloorEvents>()
         {
             events.next_event_turn = 3;
+            events.pending = None;
+        }
+        if let Some(attacks) = self
+            .world
+            .resource_mut::<crate::components::IncursionAttackTelegraphs>()
+        {
+            attacks.attacks.clear();
         }
 
         // 7. Grant bonus items on deeper floors

@@ -169,7 +169,7 @@ impl Game {
                         CharacterClass::EnemyCleric => 2,
                         _ => 1,
                     };
-                    let total_range = move_range as i32 + atk_range;
+                    let total_range = move_range + atk_range;
 
                     for dy in -total_range..=total_range {
                         for dx in -total_range..=total_range {
@@ -385,7 +385,70 @@ impl Game {
             }
         }
 
-        // 3b. Weather Danger Zones
+        // 3a. Pending floor-event tiles
+        let pending_tiles = self
+            .world
+            .resource::<crate::components::DynamicFloorEvents>()
+            .and_then(|events| events.pending.as_ref().map(|pending| pending.tiles.clone()))
+            .unwrap_or_default();
+        for pos in &pending_tiles {
+            let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
+            for dy in 0..tile_h {
+                for dx in 0..tile_w {
+                    let tx = sx + dx as i32;
+                    let ty = sy + dy as i32;
+                    if viewport.rect.contains(tx as u16, ty as u16) {
+                        let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
+                        cell.bg =
+                            verryte_terminal::vfx::blend_color(cell.bg, Color(255, 140, 0), 0.45);
+                    }
+                }
+            }
+        }
+
+        // 3b. Incursion mini-boss attack telegraphs. These remain visible for
+        // the full player turn between arming and resolution.
+        let incursion_tiles: Vec<(Position, CharacterClass)> = self
+            .world
+            .resource::<crate::components::IncursionAttackTelegraphs>()
+            .map(|telegraphs| {
+                telegraphs
+                    .attacks
+                    .iter()
+                    .flat_map(|attack| {
+                        attack
+                            .tiles
+                            .iter()
+                            .copied()
+                            .map(move |tile| (tile, attack.class))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (pos, class) in incursion_tiles {
+            let (sx, sy) = viewport.world_to_screen(pos.x as f32, pos.y as f32);
+            let warning = if class == CharacterClass::FrozenSentinel {
+                Color(60, 170, 255)
+            } else {
+                Color(180, 40, 220)
+            };
+            for dy in 0..tile_h {
+                for dx in 0..tile_w {
+                    let tx = sx + dx as i32;
+                    let ty = sy + dy as i32;
+                    if viewport.rect.contains(tx as u16, ty as u16) {
+                        let cell = screen.get_mut(tx as u16, ty as u16).unwrap();
+                        cell.bg = verryte_terminal::vfx::blend_color(cell.bg, warning, 0.5);
+                        if dx == 0 && dy == 0 {
+                            cell.glyph = '!';
+                            cell.fg = Color::WHITE;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3c. Weather Danger Zones
         crate::ui::render_weather_danger_zones(
             &mut screen,
             &self.world,
@@ -870,6 +933,96 @@ impl Game {
                         .history
                         .iter()
                         .map(|event| event.description.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            pending_floor_event: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .and_then(|events| {
+                    events.pending.as_ref().map(|pending| match &pending.kind {
+                        crate::components::FloorEventKind::ModifierSurge { modifier, duration } => {
+                            format!(
+                                "{} surge incoming ({} turns)",
+                                modifier.display_name(),
+                                duration
+                            )
+                        }
+                        crate::components::FloorEventKind::MiniBossIncursion {
+                            class,
+                            position,
+                        } => {
+                            format!(
+                                "{} incursion incoming at ({}, {})",
+                                Game::get_class_name(*class),
+                                position.x,
+                                position.y
+                            )
+                        }
+                    })
+                }),
+            pending_floor_event_resolves_on: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .and_then(|events| {
+                    events
+                        .pending
+                        .as_ref()
+                        .map(|pending| pending.resolves_on_turn)
+                })
+                .unwrap_or_default(),
+            pending_floor_event_tiles: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .and_then(|events| events.pending.as_ref().map(|pending| pending.tiles.clone()))
+                .unwrap_or_default(),
+            pending_floor_event_response: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .and_then(|events| {
+                    events.pending.as_ref().and_then(|pending| {
+                        pending
+                            .response
+                            .map(|response| response.display_name().to_string())
+                    })
+                }),
+            pending_floor_event_pattern: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .and_then(|events| {
+                    events
+                        .pending
+                        .as_ref()
+                        .and_then(|pending| pending.kind.telegraph_pattern_name())
+                        .map(|name| name.to_string())
+                }),
+            pending_floor_event_item_offers: self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .and_then(|events| {
+                    events
+                        .pending
+                        .as_ref()
+                        .map(|pending| pending.kind.item_offers())
+                })
+                .unwrap_or_default(),
+            incursion_attacks: self
+                .world
+                .resource::<crate::components::IncursionAttackTelegraphs>()
+                .map(|telegraphs| {
+                    telegraphs
+                        .attacks
+                        .iter()
+                        .map(|attack| crate::snapshot::IncursionAttackPreview {
+                            source: attack.source,
+                            attacker: Game::get_class_name(attack.class).to_string(),
+                            pattern: attack.pattern_name().to_string(),
+                            origin: attack.origin,
+                            tiles: attack.tiles.clone(),
+                            damage: attack.damage,
+                            resolves_on_turn: attack.resolves_on_turn,
+                            intercepted: attack.intercepted,
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),

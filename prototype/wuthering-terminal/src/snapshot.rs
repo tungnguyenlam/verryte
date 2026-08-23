@@ -16,6 +16,20 @@ pub struct TeamSummary {
     pub max_hp: i32,
 }
 
+/// Structured warning for a pending incursion mini-boss attack.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IncursionAttackPreview {
+    pub source: verryte_core::Entity,
+    pub attacker: String,
+    pub pattern: String,
+    pub origin: Position,
+    pub tiles: Vec<Position>,
+    pub damage: i32,
+    pub resolves_on_turn: u32,
+    #[serde(default)]
+    pub intercepted: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub turn: u32,
@@ -73,6 +87,27 @@ pub struct Snapshot {
     /// Bounded, oldest-to-newest descriptions of triggered floor events.
     #[serde(default)]
     pub recent_floor_events: Vec<String>,
+    /// Warning text for a telegraphed but unresolved floor event.
+    #[serde(default)]
+    pub pending_floor_event: Option<String>,
+    /// Turn on which the pending floor event will resolve if unanswered.
+    #[serde(default)]
+    pub pending_floor_event_resolves_on: u32,
+    /// Danger tiles for a pending mini-boss incursion (empty for modifier surges).
+    #[serde(default)]
+    pub pending_floor_event_tiles: Vec<Position>,
+    /// Player response already committed against the pending event, if any.
+    #[serde(default)]
+    pub pending_floor_event_response: Option<String>,
+    /// Telegraph pattern name for a pending mini-boss incursion (`cross` / `ring`).
+    #[serde(default)]
+    pub pending_floor_event_pattern: Option<String>,
+    /// Inventory items that can answer the pending floor event without a new recipe.
+    #[serde(default)]
+    pub pending_floor_event_item_offers: Vec<String>,
+    /// Class-specific attacks armed by already-spawned incursion mini-bosses.
+    #[serde(default)]
+    pub incursion_attacks: Vec<IncursionAttackPreview>,
     #[serde(default)]
     pub active_set_bonuses: Vec<String>,
 }
@@ -162,6 +197,16 @@ pub enum ActionOutcome {
     ModifiersRerolled { modifiers: Vec<String> },
     /// A scheduled dynamic floor event fired.
     FloorEventTriggered { description: String },
+    /// A deeper-floor event was telegraphed and can still be answered.
+    FloorEventTelegraphed {
+        description: String,
+        resolves_on_turn: u32,
+    },
+    /// The player answered a telegraphed floor event.
+    FloorEventResponded {
+        response: String,
+        description: String,
+    },
     /// The current game state was saved.
     GameSaved { path: String },
     /// A saved game state was loaded.
@@ -229,8 +274,16 @@ impl ActionOutcome {
                     || reason.starts_with("No save file")
                     || reason.starts_with("Replay mode")
                     || reason.starts_with("Enable Replay")
+                    || reason.starts_with("No pending floor event")
+                    || reason.starts_with("Already responded")
+                    || reason.starts_with("Intercept requires standing")
+                    || reason.contains("only purifies")
+                    || reason.contains("only bolsters")
+                    || reason.contains("only channels")
                 {
                     Some(FailureCategory::WrongContext)
+                } else if reason.starts_with("Requires ") {
+                    Some(FailureCategory::InvalidItem)
                 } else {
                     Some(FailureCategory::Other)
                 }
@@ -266,6 +319,10 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_component::<crate::components::Destructible>("Destructible");
     reg.register_component::<crate::components::SkillTree>("SkillTree");
     reg.register_component::<crate::components::EliteEnemy>("EliteEnemy");
+    reg.register_component::<crate::components::IncursionMiniBoss>("IncursionMiniBoss");
+    reg.register_component::<crate::components::IncursionFirstAttackDisrupted>(
+        "IncursionFirstAttackDisrupted",
+    );
 
     // Resources
     reg.register_core_resources();
@@ -286,6 +343,9 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_resource::<crate::components::LoreJournal>("LoreJournal");
     reg.register_resource::<crate::components::ActiveFloorModifiers>("ActiveFloorModifiers");
     reg.register_resource::<crate::components::DynamicFloorEvents>("DynamicFloorEvents");
+    reg.register_resource::<crate::components::IncursionAttackTelegraphs>(
+        "IncursionAttackTelegraphs",
+    );
     reg.register_resource::<crate::components::ActiveHazards>("ActiveHazards");
 
     reg

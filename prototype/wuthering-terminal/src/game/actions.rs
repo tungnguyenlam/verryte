@@ -3217,7 +3217,10 @@ impl Game {
                     }
                 }
                 if melted_tile {
-                    self.log(format!("The ice patch at ({}, {}) has melted into water!", target_pos.x, target_pos.y));
+                    self.log(format!(
+                        "The ice patch at ({}, {}) has melted into water!",
+                        target_pos.x, target_pos.y
+                    ));
                 }
 
                 if defeated {
@@ -3503,6 +3506,7 @@ impl Game {
         self.last_outcome = ActionOutcome::NoOp;
         self.boss_transitioned = false;
         self.apply_action_internal(action);
+        crate::systems::dynamic_floor_event_system(&mut self.world);
         self.check_boss_phase_transition();
 
         // Promote outcome based on observable state changes.
@@ -3705,18 +3709,48 @@ impl Game {
             }
         }
 
+        if matches!(self.last_outcome, ActionOutcome::FloorEventResponded { .. }) {
+            return self.last_outcome.clone();
+        }
+
         if let Some(event) = self
             .world
             .resource::<Events<GameEvent>>()
             .and_then(|events| {
                 events.iter().find_map(|event| match event {
-                    GameEvent::FloorEventTriggered(record) => Some(record),
+                    GameEvent::FloorEventTriggered(record) => Some(("triggered", record)),
                     _ => None,
                 })
             })
         {
             return ActionOutcome::FloorEventTriggered {
+                description: event.1.description.clone(),
+            };
+        }
+
+        if let Some(event) = self
+            .world
+            .resource::<Events<GameEvent>>()
+            .and_then(|events| {
+                events.iter().find_map(|event| match event {
+                    GameEvent::FloorEventTelegraphed(record) => Some(record),
+                    _ => None,
+                })
+            })
+        {
+            let resolves_on_turn = self
+                .world
+                .resource::<crate::components::DynamicFloorEvents>()
+                .and_then(|events| {
+                    events
+                        .pending
+                        .as_ref()
+                        .map(|pending| pending.resolves_on_turn)
+                })
+                .unwrap_or(event.turn.saturating_add(1));
+            return ActionOutcome::FloorEventTelegraphed {
                 description: event.description.clone(),
+                resolves_on_turn,
             };
         }
 
@@ -3736,6 +3770,11 @@ impl Game {
             | (ActionOutcome::Rested { .. }, Action::Rest)
             | (ActionOutcome::ModifiersRerolled { .. }, Action::RerollModifiers)
             | (ActionOutcome::FloorEventTriggered { .. }, _)
+            | (ActionOutcome::FloorEventTelegraphed { .. }, _)
+            | (
+                ActionOutcome::FloorEventResponded { .. },
+                Action::RespondToFloorEvent(_) | Action::UseItem(_),
+            )
             | (ActionOutcome::GameSaved { .. }, Action::Save)
             | (ActionOutcome::GameLoaded { .. }, Action::Load)
             | (ActionOutcome::RecordingChanged { .. }, Action::ToggleRecording)
@@ -4003,7 +4042,7 @@ impl Game {
                         .unwrap()
                         .selected_save_slot;
                     let base_path = super::saves_dir();
-                    let _ = std::fs::create_dir_all(&base_path);
+                    let _ = std::fs::create_dir_all(base_path);
                     if let Ok(state_str) = self.save_state() {
                         let filename = format!("save_slot_{}.json", slot);
                         let path = format!("{}/{}", base_path, filename);
@@ -5096,71 +5135,71 @@ impl Game {
                                 let item_name = item.name.clone();
                                 let effect = item.effect.clone();
                                 let mut should_consume = true;
+                                let mut apply_normal_effect = true;
                                 self.log(format!("Used {}!", item_name));
 
-                                match effect {
-                                    crate::components::ItemEffect::Heal(amount) => {
-                                        let (healed, _def) = crate::systems::apply_heal(
-                                            &mut self.world,
-                                            entity,
-                                            amount,
-                                        );
-                                        self.log(format!("Healed for {} HP.", healed));
-                                        let (tcx, tcy) = self.get_tile_center_pixels(
-                                            *self.world.get::<Position>(entity).unwrap(),
-                                        );
-                                        self.vfx_mut()
-                                            .particles
-                                            .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 20));
-                                        if let Some(events) = self
-                                            .world
-                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                        {
-                                            events.send(verryte_core::AudioEvent::play("heal"));
+                                if let Some(result) = crate::systems::try_use_item_on_floor_event(
+                                    &mut self.world,
+                                    &effect,
+                                    entity,
+                                ) {
+                                    match result {
+                                        Ok(applied) => {
+                                            self.last_outcome = crate::snapshot::ActionOutcome::FloorEventResponded {
+                                                response: applied.response_name,
+                                                description: applied.description,
+                                            };
+                                            apply_normal_effect = applied.apply_normal_effect;
+                                        }
+                                        Err(reason) => {
+                                            should_consume = false;
+                                            apply_normal_effect = false;
+                                            self.log(reason.clone());
+                                            self.last_outcome =
+                                                crate::snapshot::ActionOutcome::Failed { reason };
                                         }
                                     }
-                                    crate::components::ItemEffect::Combined(heal, ap) => {
-                                        let (healed, _def) = crate::systems::apply_heal(
-                                            &mut self.world,
-                                            entity,
-                                            heal,
-                                        );
-                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
-                                            stats.ap = std::cmp::min(stats.max_ap, stats.ap + ap);
-                                        }
-                                        self.log(format!("Combined effect! Healed for {} HP and replenished {} AP.", healed, ap));
-                                        let (tcx, tcy) = self.get_tile_center_pixels(
-                                            *self.world.get::<Position>(entity).unwrap(),
-                                        );
-                                        self.vfx_mut()
-                                            .particles
-                                            .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 20));
-                                        self.vfx_mut().particles.extend(
-                                            verryte_terminal::vfx::emit_burst(
-                                                tcx,
-                                                tcy,
-                                                12,
-                                                Color(255, 255, 100),
-                                                &['+', '⚡'],
-                                            ),
-                                        );
-                                        if let Some(events) = self
-                                            .world
-                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                        {
-                                            events.send(verryte_core::AudioEvent::play("heal"));
-                                            events.send(verryte_core::AudioEvent::play(
-                                                "replenish_ap",
-                                            ));
-                                        }
-                                    }
-                                    crate::components::ItemEffect::ReplenishAp(amount) => {
-                                        if let Some(stats) = self.world.get_mut::<Stats>(entity) {
-                                            stats.ap =
-                                                std::cmp::min(stats.max_ap, stats.ap + amount);
-                                            self.log(format!("Replenished {} AP.", amount));
+                                }
+
+                                if apply_normal_effect {
+                                    match effect {
+                                        crate::components::ItemEffect::Heal(amount) => {
+                                            let (healed, _def) = crate::systems::apply_heal(
+                                                &mut self.world,
+                                                entity,
+                                                amount,
+                                            );
+                                            self.log(format!("Healed for {} HP.", healed));
                                             let (tcx, tcy) = self.get_tile_center_pixels(
                                                 *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_heal(tcx, tcy, 20),
+                                            );
+                                            if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events.send(verryte_core::AudioEvent::play("heal"));
+                                            }
+                                        }
+                                        crate::components::ItemEffect::Combined(heal, ap) => {
+                                            let (healed, _def) = crate::systems::apply_heal(
+                                                &mut self.world,
+                                                entity,
+                                                heal,
+                                            );
+                                            if let Some(stats) = self.world.get_mut::<Stats>(entity)
+                                            {
+                                                stats.ap =
+                                                    std::cmp::min(stats.max_ap, stats.ap + ap);
+                                            }
+                                            self.log(format!("Combined effect! Healed for {} HP and replenished {} AP.", healed, ap));
+                                            let (tcx, tcy) = self.get_tile_center_pixels(
+                                                *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_heal(tcx, tcy, 20),
                                             );
                                             self.vfx_mut().particles.extend(
                                                 verryte_terminal::vfx::emit_burst(
@@ -5175,111 +5214,176 @@ impl Game {
                                                 .world
                                                 .resource_mut::<Events<verryte_core::AudioEvent>>()
                                             {
+                                                events.send(verryte_core::AudioEvent::play("heal"));
                                                 events.send(verryte_core::AudioEvent::play(
                                                     "replenish_ap",
                                                 ));
                                             }
                                         }
-                                    }
-                                    crate::components::ItemEffect::CleanseAndHeal(amount) => {
-                                        self.world.insert(
-                                            entity,
-                                            crate::components::ElementalStatus::None,
-                                        );
-                                        self.world.remove::<crate::components::Rooted>(entity);
-                                        self.world.remove::<crate::components::Stunned>(entity);
-                                        let (healed, _def) = crate::systems::apply_heal(
-                                            &mut self.world,
-                                            entity,
-                                            amount,
-                                        );
-                                        let mut final_hp = 0;
-                                        if let Some(stats) = self.world.get::<Stats>(entity) {
-                                            final_hp = stats.hp;
+                                        crate::components::ItemEffect::ReplenishAp(amount) => {
+                                            if let Some(stats) = self.world.get_mut::<Stats>(entity)
+                                            {
+                                                stats.ap =
+                                                    std::cmp::min(stats.max_ap, stats.ap + amount);
+                                                self.log(format!("Replenished {} AP.", amount));
+                                                let (tcx, tcy) = self.get_tile_center_pixels(
+                                                    *self.world.get::<Position>(entity).unwrap(),
+                                                );
+                                                self.vfx_mut().particles.extend(
+                                                    verryte_terminal::vfx::emit_burst(
+                                                        tcx,
+                                                        tcy,
+                                                        12,
+                                                        Color(255, 255, 100),
+                                                        &['+', '⚡'],
+                                                    ),
+                                                );
+                                                if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events.send(verryte_core::AudioEvent::play(
+                                                    "replenish_ap",
+                                                ));
+                                            }
+                                            }
                                         }
-                                        self.log(format!(
-                                            "Cleansed and healed for {} HP! (HP: {})",
-                                            healed, final_hp
-                                        ));
-                                        let (tcx, tcy) = self.get_tile_center_pixels(
-                                            *self.world.get::<Position>(entity).unwrap(),
-                                        );
-                                        self.vfx_mut().particles.extend(
-                                            verryte_terminal::vfx::emit_bloom(tcx, tcy, 18),
-                                        );
-                                        self.vfx_mut()
-                                            .particles
-                                            .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 15));
-                                        self.vfx_mut().trigger_flash(Color(100, 255, 100), 0.25);
-                                        if let Some(events) = self
-                                            .world
-                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                        {
-                                            events.send(verryte_core::AudioEvent::play("cleanse"));
-                                            events.send(verryte_core::AudioEvent::play("heal"));
-                                        }
-                                    }
-                                    crate::components::ItemEffect::Cleanse => {
-                                        self.world.insert(
-                                            entity,
-                                            crate::components::ElementalStatus::None,
-                                        );
-                                        self.world.remove::<crate::components::Rooted>(entity);
-                                        self.world.remove::<crate::components::Stunned>(entity);
-                                        self.log("All negative statuses cleansed!");
-                                        let (tcx, tcy) = self.get_tile_center_pixels(
-                                            *self.world.get::<Position>(entity).unwrap(),
-                                        );
-                                        self.vfx_mut().particles.extend(
-                                            verryte_terminal::vfx::emit_bloom(tcx, tcy, 18),
-                                        );
-                                        self.vfx_mut().trigger_flash(Color(100, 255, 100), 0.25);
-                                        if let Some(events) = self
-                                            .world
-                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                        {
-                                            events.send(verryte_core::AudioEvent::play("cleanse"));
-                                        }
-                                    }
-                                    crate::components::ItemEffect::RestoreShield(
-                                        shield_type,
-                                        amount,
-                                    ) => {
-                                        self.world.insert(
-                                            entity,
-                                            crate::components::ElementalShield {
-                                                shield_type,
+                                        crate::components::ItemEffect::CleanseAndHeal(amount) => {
+                                            self.world.insert(
+                                                entity,
+                                                crate::components::ElementalStatus::None,
+                                            );
+                                            self.world.remove::<crate::components::Rooted>(entity);
+                                            self.world.remove::<crate::components::Stunned>(entity);
+                                            let (healed, _def) = crate::systems::apply_heal(
+                                                &mut self.world,
+                                                entity,
                                                 amount,
-                                                max_amount: amount,
-                                            },
-                                        );
-                                        self.log(format!(
-                                            "Shielded! Created a {} HP {:?} Shield.",
-                                            amount, shield_type
-                                        ));
-                                        let (tcx, tcy) = self.get_tile_center_pixels(
-                                            *self.world.get::<Position>(entity).unwrap(),
-                                        );
-                                        self.vfx_mut()
-                                            .particles
-                                            .extend(verryte_terminal::vfx::emit_ice(tcx, tcy, 15));
-                                        if let Some(events) = self
-                                            .world
-                                            .resource_mut::<Events<verryte_core::AudioEvent>>()
-                                        {
-                                            events.send(verryte_core::AudioEvent::play("shield"));
+                                            );
+                                            let mut final_hp = 0;
+                                            if let Some(stats) = self.world.get::<Stats>(entity) {
+                                                final_hp = stats.hp;
+                                            }
+                                            self.log(format!(
+                                                "Cleansed and healed for {} HP! (HP: {})",
+                                                healed, final_hp
+                                            ));
+                                            let (tcx, tcy) = self.get_tile_center_pixels(
+                                                *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_bloom(tcx, tcy, 18),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_heal(tcx, tcy, 15),
+                                            );
+                                            self.vfx_mut()
+                                                .trigger_flash(Color(100, 255, 100), 0.25);
+                                            if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events.send(verryte_core::AudioEvent::play(
+                                                    "cleanse",
+                                                ));
+                                                events.send(verryte_core::AudioEvent::play("heal"));
+                                            }
                                         }
-                                    }
-                                    crate::components::ItemEffect::UpgradeKit => {
-                                        should_consume = false;
-                                        self.log(
+                                        crate::components::ItemEffect::Cleanse => {
+                                            self.world.insert(
+                                                entity,
+                                                crate::components::ElementalStatus::None,
+                                            );
+                                            self.world.remove::<crate::components::Rooted>(entity);
+                                            self.world.remove::<crate::components::Stunned>(entity);
+                                            self.log("All negative statuses cleansed!");
+                                            let (tcx, tcy) = self.get_tile_center_pixels(
+                                                *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_bloom(tcx, tcy, 18),
+                                            );
+                                            self.vfx_mut()
+                                                .trigger_flash(Color(100, 255, 100), 0.25);
+                                            if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events.send(verryte_core::AudioEvent::play(
+                                                    "cleanse",
+                                                ));
+                                            }
+                                        }
+                                        crate::components::ItemEffect::RestoreShield(
+                                            shield_type,
+                                            amount,
+                                        ) => {
+                                            self.world.insert(
+                                                entity,
+                                                crate::components::ElementalShield {
+                                                    shield_type,
+                                                    amount,
+                                                    max_amount: amount,
+                                                },
+                                            );
+                                            self.log(format!(
+                                                "Shielded! Created a {} HP {:?} Shield.",
+                                                amount, shield_type
+                                            ));
+                                            let (tcx, tcy) = self.get_tile_center_pixels(
+                                                *self.world.get::<Position>(entity).unwrap(),
+                                            );
+                                            self.vfx_mut().particles.extend(
+                                                verryte_terminal::vfx::emit_ice(tcx, tcy, 15),
+                                            );
+                                            if let Some(events) = self
+                                                .world
+                                                .resource_mut::<Events<verryte_core::AudioEvent>>()
+                                            {
+                                                events
+                                                    .send(verryte_core::AudioEvent::play("shield"));
+                                            }
+                                        }
+                                        crate::components::ItemEffect::UpgradeKit => {
+                                            should_consume = false;
+                                            self.log(
                                             "Upgrade Kit must be used with equip_upgrade:<slot>.",
                                         );
-                                        self.last_outcome =
-                                            crate::snapshot::ActionOutcome::Failed {
-                                                reason: "Upgrade Kit requires an equipment slot"
-                                                    .to_string(),
-                                            };
+                                            self.last_outcome =
+                                                crate::snapshot::ActionOutcome::Failed {
+                                                    reason:
+                                                        "Upgrade Kit requires an equipment slot"
+                                                            .to_string(),
+                                                };
+                                        }
+                                        crate::components::ItemEffect::EventWard => {
+                                            let actor = Some(entity);
+                                            match crate::systems::apply_floor_event_response(
+                                                &mut self.world,
+                                                crate::components::FloorEventResponse::Brace,
+                                                actor,
+                                                false,
+                                            ) {
+                                                Ok(description) => {
+                                                    self.log(format!(
+                                                        "Ward Charm braces the incoming event: {}",
+                                                        description
+                                                    ));
+                                                    self.last_outcome = crate::snapshot::ActionOutcome::FloorEventResponded {
+                                                    response: "Brace".to_string(),
+                                                    description,
+                                                };
+                                                }
+                                                Err(reason) => {
+                                                    should_consume = false;
+                                                    self.log(reason.clone());
+                                                    self.last_outcome =
+                                                        crate::snapshot::ActionOutcome::Failed {
+                                                            reason,
+                                                        };
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
@@ -5288,9 +5392,15 @@ impl Game {
                                     crate::components::UIState::Normal;
 
                                 if should_consume {
-                                    self.last_outcome = crate::snapshot::ActionOutcome::ItemUsed {
-                                        name: item_name,
-                                    };
+                                    if !matches!(
+                                        self.last_outcome,
+                                        crate::snapshot::ActionOutcome::FloorEventResponded { .. }
+                                    ) {
+                                        self.last_outcome =
+                                            crate::snapshot::ActionOutcome::ItemUsed {
+                                                name: item_name,
+                                            };
+                                    }
                                     // Consumed item entity is gone
                                     self.world.despawn(item_ent);
                                 } else if let Some(inv) =
@@ -5990,6 +6100,12 @@ impl Game {
                                     "Elixir of the Gods".to_string(),
                                     crate::components::ItemEffect::Combined(100, 4),
                                 ),
+                                ("Cleanse Remedy", "Energy Elixir")
+                                | ("Energy Elixir", "Cleanse Remedy") => (
+                                    true,
+                                    "Ward Charm".to_string(),
+                                    crate::components::ItemEffect::EventWard,
+                                ),
                                 _ => (false, String::new(), crate::components::ItemEffect::Cleanse),
                             };
 
@@ -6302,6 +6418,26 @@ impl Game {
                 self.last_outcome = crate::snapshot::ActionOutcome::StatusViewed {
                     name: "prestige".to_string(),
                 };
+            }
+            Action::RespondToFloorEvent(response) => {
+                let actor = self.world.resource::<GameState>().unwrap().selected_entity;
+                match crate::systems::apply_floor_event_response(
+                    &mut self.world,
+                    response,
+                    actor,
+                    true,
+                ) {
+                    Ok(description) => {
+                        self.last_outcome = crate::snapshot::ActionOutcome::FloorEventResponded {
+                            response: response.display_name().to_string(),
+                            description,
+                        };
+                    }
+                    Err(reason) => {
+                        self.log(reason.clone());
+                        self.last_outcome = crate::snapshot::ActionOutcome::Failed { reason };
+                    }
+                }
             }
             _ => {}
         }

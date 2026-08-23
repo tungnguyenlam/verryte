@@ -400,6 +400,14 @@ impl Game {
             self.world
                 .insert_resource(crate::components::DynamicFloorEvents::default());
         }
+        if self
+            .world
+            .resource::<crate::components::IncursionAttackTelegraphs>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::IncursionAttackTelegraphs::default());
+        }
 
         // Sync camera from resource
         if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {

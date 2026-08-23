@@ -936,14 +936,29 @@ fn test_defender_ai_behavior() {
     let mut game = Game::new();
 
     // Clear positions
-    clear_entities_at(&mut game, &[Position::new(5, 5), Position::new(5, 6), Position::new(7, 5)]);
+    clear_entities_at(
+        &mut game,
+        &[
+            Position::new(5, 5),
+            Position::new(5, 6),
+            Position::new(7, 5),
+        ],
+    );
 
     // 1. Spawn a Boss (priority to protect) at (5, 5)
-    let _boss = game.world.spawn_character(Position::new(5, 5), Team::Enemy, CharacterClass::Boss);
+    let _boss = game
+        .world
+        .spawn_character(Position::new(5, 5), Team::Enemy, CharacterClass::Boss);
     // 2. Spawn a Defender near the Boss at (5, 6)
-    let defender = game.world.spawn_character(Position::new(5, 6), Team::Enemy, CharacterClass::FrozenSentinel);
+    let defender = game.world.spawn_character(
+        Position::new(5, 6),
+        Team::Enemy,
+        CharacterClass::FrozenSentinel,
+    );
     // 3. Spawn a Player far away at (7, 5)
-    let _player = game.world.spawn_character(Position::new(7, 5), Team::Player, CharacterClass::Warrior);
+    let _player =
+        game.world
+            .spawn_character(Position::new(7, 5), Team::Player, CharacterClass::Warrior);
 
     if let Some(stats) = game.world.get_mut::<Stats>(defender) {
         stats.ap = 2;
@@ -957,7 +972,7 @@ fn test_defender_ai_behavior() {
     // Defender at (5, 6) is dist 1 from Boss.
     // It should stay near Boss and attack Player if Player is within 3 tiles of Boss.
     // Player at (7, 5) is dist 2 from Boss.
-    
+
     // Check if Defender moved or attacked
     let def_pos = game.world.get::<Position>(defender).unwrap();
     // Defender should still be at (5, 6) or (6, 5) or somewhere adjacent to Boss
@@ -973,8 +988,10 @@ fn test_melt_reaction() {
     clear_entities_at(&mut game, &[Position::new(3, 3)]);
 
     // Spawn player at (3, 3)
-    let p1 = game.world.spawn_character(Position::new(3, 3), Team::Player, CharacterClass::Warrior);
-    
+    let p1 = game
+        .world
+        .spawn_character(Position::new(3, 3), Team::Player, CharacterClass::Warrior);
+
     // Set tile to Ice
     if let Some(map) = game.world.resource_mut::<TacticalMap>() {
         map.tiles.set(Position::new(3, 3), Tile::Ice);
@@ -985,17 +1002,29 @@ fn test_melt_reaction() {
     }
 
     // Apply Ice status
-    game.apply_elemental_status(p1, wuthering_terminal::components::ElementalStatus::Ice { duration: 3 });
+    game.apply_elemental_status(
+        p1,
+        wuthering_terminal::components::ElementalStatus::Ice { duration: 3 },
+    );
     // Apply Fire status to trigger MELT
-    game.apply_elemental_status(p1, wuthering_terminal::components::ElementalStatus::Fire { duration: 3 });
+    game.apply_elemental_status(
+        p1,
+        wuthering_terminal::components::ElementalStatus::Fire { duration: 3 },
+    );
 
     // 1. HP should decrease by 25 (100 -> 75)
     let hp = game.world.get::<Stats>(p1).unwrap().hp;
     assert_eq!(hp, 75);
 
     // 2. Elemental status should be None
-    let status = game.world.get::<wuthering_terminal::components::ElementalStatus>(p1).unwrap();
-    assert_eq!(*status, wuthering_terminal::components::ElementalStatus::None);
+    let status = game
+        .world
+        .get::<wuthering_terminal::components::ElementalStatus>(p1)
+        .unwrap();
+    assert_eq!(
+        *status,
+        wuthering_terminal::components::ElementalStatus::None
+    );
 
     // 3. Tile at (3, 3) should be Water now
     let map = game.world.resource::<TacticalMap>().unwrap();

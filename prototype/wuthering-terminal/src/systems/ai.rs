@@ -1,7 +1,9 @@
 use crate::components::{
-    AIArchetype, ActiveHazards, BossConfig, BossPhase, CharacterClass, CharacterTrait, EchoAbility,
-    ElementalStatus, EquippedEchoes, GameEvent, GameState, HeroTrait, Outcome, Position, Stats,
-    Team, TelegraphZone, Threat, TurnPhase, Weather, WeatherType,
+    incursion_shape, AIArchetype, ActiveHazards, BossConfig, BossPhase, CharacterClass,
+    CharacterTrait, EchoAbility, ElementalStatus, EquippedEchoes, GameEvent, GameState, HeroTrait,
+    IncursionAttackTelegraph, IncursionAttackTelegraphs, IncursionFirstAttackDisrupted,
+    IncursionMiniBoss, Outcome, Position, Stats, Team, TelegraphZone, Threat, TurnPhase, Weather,
+    WeatherType,
 };
 use crate::game::Game;
 use crate::hazards::HazardSystem;
@@ -66,7 +68,7 @@ pub fn auto_battle_system(world: &mut World) {
                     _ => 1,
                 };
 
-                if min_dist <= range as i32 {
+                if min_dist <= range {
                     // Attack!
                     // In a real system, we'd inject an action.
                     // For simplicity here, we'll use a helper that simulates the action injection.
@@ -220,6 +222,245 @@ fn enemy_hazard_check(world: &mut World, entity: Entity, pos: Position) {
     }
 }
 
+fn incursion_attack_name(class: CharacterClass) -> &'static str {
+    match class {
+        CharacterClass::FrozenSentinel => "Glacial Lock",
+        _ => "Void Rend",
+    }
+}
+
+fn resolve_due_incursion_attacks(
+    world: &mut World,
+    turn: u32,
+) -> std::collections::HashSet<Entity> {
+    let due = if let Some(telegraphs) = world.resource_mut::<IncursionAttackTelegraphs>() {
+        let (due, pending): (Vec<_>, Vec<_>) = telegraphs
+            .attacks
+            .drain(..)
+            .partition(|attack| attack.resolves_on_turn <= turn);
+        telegraphs.attacks = pending;
+        due
+    } else {
+        Vec::new()
+    };
+
+    let mut resolved_sources = std::collections::HashSet::new();
+    for attack in due {
+        if world.get::<IncursionMiniBoss>(attack.source).is_none()
+            || world
+                .get::<Stats>(attack.source)
+                .is_none_or(|stats| stats.hp <= 0)
+        {
+            continue;
+        }
+        resolved_sources.insert(attack.source);
+        let attack_name = incursion_attack_name(attack.class);
+        let attacker_name = Game::get_class_name(attack.class);
+        let victims: Vec<(Entity, Position, CharacterClass)> = world
+            .query3::<Position, Team, CharacterClass>()
+            .into_iter()
+            .filter(|(_, position, team, _)| {
+                **team == Team::Player && attack.tiles.contains(position)
+            })
+            .map(|(entity, position, _, class)| (entity, *position, *class))
+            .collect();
+
+        let mut hit_count = 0;
+        let mut total_damage = 0;
+        for (victim, position, class) in victims {
+            let target_name = Game::get_class_name(class);
+            let (damage, defeated) = resolve_combat_hit(
+                world,
+                Some(attack.source),
+                victim,
+                attack.damage,
+                attack_name,
+                target_name,
+                position,
+            );
+            hit_count += 1;
+            total_damage += damage;
+            if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+                events.send(GameEvent::Attacked {
+                    attacker: attack.source,
+                    target: victim,
+                    damage,
+                });
+            }
+            if defeated {
+                handle_defeat(world, victim, target_name, class, position);
+            }
+        }
+        if let Some(stats) = world.get_mut::<Stats>(attack.source) {
+            stats.ap = 0;
+        }
+        log(
+            world,
+            format!(
+                "[fg:FF6347][b]{} released {}:[/] {} target(s) hit for {} total damage.[/fg]",
+                attacker_name, attack_name, hit_count, total_damage
+            ),
+        );
+        if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+            events.send(GameEvent::IncursionAttackResolved {
+                source: attack.source,
+                attack_name: attack_name.to_string(),
+                hit_count,
+                total_damage,
+            });
+        }
+    }
+    let player_exists = world
+        .query2::<Team, Stats>()
+        .into_iter()
+        .any(|(_, team, stats)| *team == Team::Player && stats.hp > 0);
+    if !player_exists {
+        if let Some(state) = world.resource_mut::<GameState>() {
+            state.outcome = Outcome::Defeat;
+        }
+        log(
+            world,
+            "[fg:FF3333][b]Defeat![/] The incursion overwhelmed the party.[/fg]",
+        );
+    }
+    resolved_sources
+}
+
+fn arm_incursion_attack(
+    world: &mut World,
+    source: Entity,
+    class: CharacterClass,
+    target: Position,
+    turn: u32,
+) {
+    let intercepted = world.get::<IncursionFirstAttackDisrupted>(source).is_some();
+    let shape = if intercepted && class != CharacterClass::FrozenSentinel {
+        verryte_map::TileShape::Cross { radius: 1 }
+    } else {
+        incursion_shape(class)
+    };
+    let mut tiles = world
+        .resource::<TacticalMap>()
+        .map(|map| map.tiles.points_in_shape(target, shape))
+        .unwrap_or_else(|| shape.points(target));
+    if intercepted && class == CharacterClass::FrozenSentinel {
+        let source_pos = world.get::<Position>(source).copied().unwrap_or(target);
+        let dx = target.x - source_pos.x;
+        let dy = target.y - source_pos.y;
+        let gap = if dx.abs() >= dy.abs() && dx != 0 {
+            target.offset(dx.signum() * 2, 0)
+        } else if dy != 0 {
+            target.offset(0, dy.signum() * 2)
+        } else {
+            target.offset(0, -2)
+        };
+        tiles.retain(|tile| *tile != gap);
+    }
+    let damage = effective_atk(world, source).max(1);
+    let attack = IncursionAttackTelegraph {
+        source,
+        class,
+        origin: target,
+        tiles,
+        damage,
+        resolves_on_turn: turn.saturating_add(1),
+        intercepted,
+    };
+    if let Some(telegraphs) = world.resource_mut::<IncursionAttackTelegraphs>() {
+        telegraphs.attacks.push(attack.clone());
+    }
+    if let Some(stats) = world.get_mut::<Stats>(source) {
+        stats.ap = 0;
+    }
+    if intercepted {
+        world.remove::<IncursionFirstAttackDisrupted>(source);
+    }
+    log(
+        world,
+        format!(
+            "[fg:FF4500][b]{} is charging {}![/] {} pattern resolves on turn {}.[/fg]",
+            Game::get_class_name(class),
+            incursion_attack_name(class),
+            attack.pattern_name(),
+            attack.resolves_on_turn
+        ),
+    );
+    let (cx, cy) = get_tile_center_pixels(world, target);
+    if let Some(vfx) = world.resource_mut::<VfxSystem>() {
+        let color = if class == CharacterClass::FrozenSentinel {
+            Color(100, 200, 255)
+        } else {
+            Color(190, 60, 255)
+        };
+        vfx.particles
+            .extend(verryte_terminal::vfx::emit_shockwave(cx, cy, 18, color));
+    }
+    if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+        events.send(GameEvent::IncursionAttackTelegraphed(attack));
+    }
+}
+
+/// Arms and resolves event-spawned mini-boss attacks on the normal enemy-AI
+/// phase. The warnings persist through the intervening player turn.
+pub fn incursion_attack_system(world: &mut World) {
+    let (phase, outcome, turn) = world
+        .resource::<GameState>()
+        .map(|state| (state.phase, state.outcome, state.turn))
+        .unwrap_or((TurnPhase::Player, Outcome::Playing, 1));
+    if phase != TurnPhase::Enemy || outcome != Outcome::Playing {
+        return;
+    }
+
+    let resolved_sources = resolve_due_incursion_attacks(world, turn);
+    let sources: Vec<(Entity, CharacterClass)> = world
+        .query::<IncursionMiniBoss>()
+        .into_iter()
+        .filter_map(|(entity, _)| {
+            world
+                .get::<CharacterClass>(entity)
+                .copied()
+                .map(|class| (entity, class))
+        })
+        .collect();
+
+    for (source, class) in sources {
+        if resolved_sources.contains(&source) {
+            continue;
+        }
+        let already_armed = world
+            .resource::<IncursionAttackTelegraphs>()
+            .is_some_and(|telegraphs| telegraphs.attacks.iter().any(|a| a.source == source));
+        if already_armed {
+            if let Some(stats) = world.get_mut::<Stats>(source) {
+                stats.ap = 0;
+            }
+            continue;
+        }
+        let can_act = world
+            .get::<Stats>(source)
+            .is_some_and(|stats| stats.hp > 0 && stats.ap > 0);
+        if !can_act {
+            continue;
+        }
+        let source_pos = world.get::<Position>(source).copied().unwrap_or_default();
+        let target = world
+            .query2::<Position, Team>()
+            .into_iter()
+            .filter(|(_, _, team)| **team == Team::Player)
+            .filter(|(entity, _, _)| world.get::<Stats>(*entity).is_some_and(|s| s.hp > 0))
+            .min_by_key(|(entity, position, _)| {
+                (
+                    (position.x - source_pos.x).abs() + (position.y - source_pos.y).abs(),
+                    *entity,
+                )
+            })
+            .map(|(_, position, _)| *position);
+        if let Some(target) = target {
+            arm_incursion_attack(world, source, class, target, turn);
+        }
+    }
+}
+
 pub fn enemy_ai_system(world: &mut World) {
     let (phase, outcome) = {
         let state = world
@@ -230,6 +471,8 @@ pub fn enemy_ai_system(world: &mut World) {
     if phase != TurnPhase::Enemy || outcome != Outcome::Playing {
         return;
     }
+
+    incursion_attack_system(world);
 
     let mut enemies = Vec::new();
     for (e, team) in world.query::<Team>() {
@@ -563,17 +806,16 @@ pub fn enemy_ai_system(world: &mut World) {
                             && adj.x < map.width as i16
                             && adj.y >= 0
                             && adj.y < map.height as i16
+                            && map.is_walkable(adj)
+                            && !is_occupied_except(world, adj, enemy_entity)
                         {
-                            if map.is_walkable(adj) && !is_occupied_except(world, adj, enemy_entity)
-                            {
-                                let is_flanking =
-                                    is_flanking_position_from(world, adj, player_pos, enemy_entity);
-                                if is_flanking {
-                                    best_teleport_pos = Some(adj);
-                                    break;
-                                } else if best_teleport_pos.is_none() {
-                                    best_teleport_pos = Some(adj);
-                                }
+                            let is_flanking =
+                                is_flanking_position_from(world, adj, player_pos, enemy_entity);
+                            if is_flanking {
+                                best_teleport_pos = Some(adj);
+                                break;
+                            } else if best_teleport_pos.is_none() {
+                                best_teleport_pos = Some(adj);
                             }
                         }
                     }

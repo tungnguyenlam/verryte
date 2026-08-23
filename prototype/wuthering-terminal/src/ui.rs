@@ -119,6 +119,27 @@ pub fn render_tile_overlays(
 }
 
 pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
+    let event_label = world
+        .resource::<crate::components::DynamicFloorEvents>()
+        .and_then(|events| {
+            events.pending.as_ref().map(|pending| {
+                let answered = pending
+                    .response
+                    .map(|response| format!(" {}", response.display_name().to_uppercase()))
+                    .unwrap_or_default();
+                let pattern = pending
+                    .kind
+                    .telegraph_pattern_name()
+                    .map(|name| format!(" {}", name.to_uppercase()))
+                    .unwrap_or_default();
+                format!(
+                    " | EVENT T{}{}{}",
+                    pending.resolves_on_turn, pattern, answered
+                )
+            })
+        })
+        .unwrap_or_default();
+    let event_color = Color(255, 140, 0);
     let state = world.resource::<GameState>().unwrap();
     let map = world.resource::<TacticalMap>().unwrap();
 
@@ -250,7 +271,8 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     let turn_x = 2u16;
     let phase_x = turn_x + turn_label.len() as u16;
     let combo_x = phase_x + phase_label.len() as u16;
-    let sel_x = combo_x + combo_label.len() as u16 + 1;
+    let event_x = combo_x + combo_label.len() as u16;
+    let sel_x = event_x + event_label.len() as u16 + 1;
 
     if turn_x < ce_x {
         grid.write_str(turn_x, hud_y + 1, &turn_label, Color::WHITE, hud_bg);
@@ -260,6 +282,9 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     }
     if combo_x < ce_x && !combo_label.is_empty() {
         grid.write_str(combo_x, hud_y + 1, &combo_label, combo_color, hud_bg);
+    }
+    if event_x < ce_x && !event_label.is_empty() {
+        grid.write_str(event_x, hud_y + 1, &event_label, event_color, hud_bg);
     }
     if sel_x < ce_x {
         let max_sel = (ce_x.saturating_sub(sel_x + 1)) as usize;
@@ -512,6 +537,32 @@ pub fn render_hud(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     }
 }
 
+fn event_item_hint(
+    effect: &crate::components::ItemEffect,
+    kind: &crate::components::FloorEventKind,
+) -> Option<&'static str> {
+    use crate::components::{FloorEventKind, FloorModifier, ItemEffect};
+    match (effect, kind) {
+        (
+            ItemEffect::Cleanse | ItemEffect::CleanseAndHeal(_),
+            FloorEventKind::ModifierSurge { .. },
+        ) => Some("(Purify surge)"),
+        (ItemEffect::RestoreShield(_, _), FloorEventKind::MiniBossIncursion { .. }) => {
+            Some("(Bolster incursion)")
+        }
+        (ItemEffect::ReplenishAp(_), _) => Some("(Remote intercept)"),
+        (
+            ItemEffect::Heal(_),
+            FloorEventKind::ModifierSurge {
+                modifier: FloorModifier::HealingSurge,
+                ..
+            },
+        ) => Some("(Channel surge)"),
+        (ItemEffect::EventWard, _) => Some("(Brace event)"),
+        _ => None,
+    }
+}
+
 pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16) {
     let state = world.resource::<GameState>().unwrap();
     let Some(selected) = state.selected_entity else {
@@ -545,6 +596,12 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
         Color::WHITE,
     );
 
+    let pending_kind = world
+        .resource::<crate::components::DynamicFloorEvents>()
+        .and_then(|events| events.pending.as_ref())
+        .filter(|pending| pending.response.is_none())
+        .map(|pending| pending.kind.clone());
+
     if inventory.items.is_empty() {
         grid.write_str(
             panel_rect.x + 2,
@@ -562,7 +619,7 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
                     grid.write_str(panel_rect.x + 2, y, &shortcut, Color::YELLOW, panel_bg);
                     grid.write_str(panel_rect.x + 6, y, &item.name, Color::WHITE, panel_bg);
 
-                    let effect_str = match item.effect {
+                    let mut effect_str = match item.effect {
                         crate::components::ItemEffect::Heal(v) => format!("(Heal {})", v),
                         crate::components::ItemEffect::ReplenishAp(v) => format!("(AP +{})", v),
                         crate::components::ItemEffect::Cleanse => "(Cleanse)".to_string(),
@@ -576,7 +633,13 @@ pub fn render_inventory(grid: &mut Grid, world: &World, term_w: u16, term_h: u16
                             format!("(Cleanse, +{} HP)", v)
                         }
                         crate::components::ItemEffect::UpgradeKit => "(Upgrade Kit)".to_string(),
+                        crate::components::ItemEffect::EventWard => "(Brace event)".to_string(),
                     };
+                    if let Some(kind) = pending_kind.as_ref() {
+                        if let Some(hint) = event_item_hint(&item.effect, kind) {
+                            effect_str = format!("{} {}", effect_str, hint);
+                        }
+                    }
                     grid.write_str(panel_rect.x + 25, y, &effect_str, Color::GREY, panel_bg);
                 }
             }
@@ -636,6 +699,8 @@ pub fn render_help(grid: &mut Grid, term_w: u16, term_h: u16) {
         ("F9", "Load game"),
         ("B", "Auto battle toggle"),
         ("R", "Step to safety"),
+        ("F", "Brace floor event"),
+        ("N / [", "Intercept / Embrace event"),
         ("M", "Toggle minimap"),
         ("U / Y", "Undo / Redo"),
         ("F3", "Performance overlay"),
@@ -671,6 +736,11 @@ pub fn render_help(grid: &mut Grid, term_w: u16, term_h: u16) {
         "Telegraphed attacks shown in",
         "RED tiles. Attack the boss to",
         "Parry and stun it.",
+        "",
+        "Floor events warn one turn",
+        "ahead in ORANGE. Brace, Intercept,",
+        "or Embrace before they resolve.",
+        "Ward Charm auto-braces.",
         "",
         "Defeated enemies may drop",
         "Echoes. Move a character to",
@@ -1328,10 +1398,8 @@ pub fn render_combat_log(grid: &mut Grid, world: &World, term_w: u16, term_h: u1
     let start_idx = end_idx.saturating_sub(max_visible);
     let visible_slice = &messages[start_idx..end_idx];
 
-    let mut y = panel_rect.y + 2;
-    for msg in visible_slice {
+    for (y, msg) in (panel_rect.y + 2..).zip(visible_slice.iter()) {
         grid.write_str(panel_rect.x + 2, y, msg, Color::WHITE, panel_bg);
-        y += 1;
     }
 }
 
@@ -1537,7 +1605,7 @@ pub fn render_inspect_character(grid: &mut Grid, world: &World, term_w: u16, ter
         .unwrap_or(CharacterClass::Warrior);
     let name = Game::get_class_name(class);
 
-    let stats = world.get::<Stats>(ent).cloned().unwrap_or_else(|| Stats {
+    let stats = world.get::<Stats>(ent).cloned().unwrap_or(Stats {
         hp: 0,
         max_hp: 0,
         atk: 0,

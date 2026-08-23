@@ -1,4 +1,6 @@
-use crate::{line_between, Bounds, Direction, Direction8, GridError, LineIter, Point, Rect, Size};
+use crate::{
+    line_between, Bounds, Direction, Direction8, GridError, LineIter, Point, Rect, Size, TileShape,
+};
 
 use std::collections::{HashMap, VecDeque};
 use std::ops::{Index, IndexMut};
@@ -639,6 +641,22 @@ impl<T> TileGrid<T> {
         let width = self.size.width as i16;
         let height = self.size.height as i16;
         (0..height).flat_map(move |y| (0..width).map(move |x| Point { x, y }))
+    }
+
+    /// Keep only the points that lie inside this grid, preserving input order.
+    pub fn clip_points<I>(&self, points: I) -> Vec<Point>
+    where
+        I: IntoIterator<Item = Point>,
+    {
+        points
+            .into_iter()
+            .filter(|point| self.in_bounds(*point))
+            .collect()
+    }
+
+    /// Origin-centered shape tiles clipped to this grid.
+    pub fn points_in_shape(&self, origin: Point, shape: TileShape) -> Vec<Point> {
+        self.clip_points(shape.points(origin))
     }
 
     /// Iterate over points within the provided bounds, clipped to the grid.

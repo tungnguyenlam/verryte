@@ -319,21 +319,19 @@ impl TacticalAI {
         }
 
         // 1. Find the highest priority ally to protect
-        let priority_ally = allies
-            .iter()
-            .min_by_key(|(_, _, s)| {
-                // Heuristically: Boss is priority 0, then based on HP pct
-                // We don't have CharacterClass here easily without a query,
-                // but we can assume lower max_hp might be more fragile or
-                // just use a placeholder for now since we can't easily query
-                // character class from just Stats.
-                // Actually, let's just pick the one with lowest HP percentage.
-                if s.max_hp > 0 {
-                    (s.hp * 100) / s.max_hp
-                } else {
-                    100
-                }
-            });
+        let priority_ally = allies.iter().min_by_key(|(_, _, s)| {
+            // Heuristically: Boss is priority 0, then based on HP pct
+            // We don't have CharacterClass here easily without a query,
+            // but we can assume lower max_hp might be more fragile or
+            // just use a placeholder for now since we can't easily query
+            // character class from just Stats.
+            // Actually, let's just pick the one with lowest HP percentage.
+            if s.max_hp > 0 {
+                (s.hp * 100) / s.max_hp
+            } else {
+                100
+            }
+        });
 
         if let Some((_ally_ent, ally_pos, _)) = priority_ally {
             let dist_to_ally = (enemy_pos.x - ally_pos.x).abs() + (enemy_pos.y - ally_pos.y).abs();
