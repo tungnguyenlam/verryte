@@ -837,34 +837,11 @@ impl Game {
                 self.get_entity_at(cursor)
                     .and_then(|(target, team, _stats, _class)| {
                         if team == Team::Enemy {
-                            if let (Some(atk_stats), Some(tgt_stats)) = (
-                                self.world.get::<Stats>(sel),
-                                self.world.get::<Stats>(target),
-                            ) {
-                                let mut preview =
-                                    crate::battle_preview::BattlePreview::calculate_damage_preview(
-                                        atk_stats.atk,
-                                        atk_stats.level,
-                                        tgt_stats.def,
-                                        tgt_stats.level,
-                                        1.0,
-                                        20,
-                                    );
-                                let shield = self
-                                    .world
-                                    .get::<crate::components::ElementalShield>(target)
-                                    .map(|shield| shield.amount)
-                                    .unwrap_or(0);
-                                preview.can_kill =
-                                    crate::battle_preview::BattlePreview::lethal_against(
-                                        &preview,
-                                        tgt_stats.hp,
-                                        shield,
-                                    );
-                                Some(preview)
-                            } else {
-                                None
-                            }
+                            crate::battle_preview::BattlePreview::preview_basic_attack(
+                                &self.world,
+                                sel,
+                                target,
+                            )
                         } else {
                             None
                         }

@@ -1462,6 +1462,67 @@ mod tests {
     }
 
     #[test]
+    fn test_damage_preview_includes_equipment_bonuses_on_shared_action_path() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::Warrior)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let stalker = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::ShadowStalker)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let stalker_pos = *game.world.get::<Position>(stalker).unwrap();
+        let atk_stats = game.world.get::<Stats>(warrior).unwrap().clone();
+        let tgt_stats = game.world.get::<Stats>(stalker).unwrap().clone();
+        let unequipped = crate::battle_preview::BattlePreview::calculate_damage_preview(
+            atk_stats.atk,
+            atk_stats.level,
+            tgt_stats.def,
+            tgt_stats.level,
+            1.0,
+            20,
+        );
+        let equipped = crate::battle_preview::BattlePreview::preview_basic_attack(
+            &game.world,
+            warrior,
+            stalker,
+        )
+        .expect("Kael and the stalker should produce a preview");
+        assert!(
+            equipped.max_damage > unequipped.max_damage,
+            "Iron Sword should raise previewed max damage, equipped={:?} unequipped={:?}",
+            equipped,
+            unequipped
+        );
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = stalker_pos;
+        }
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        let preview = report
+            .after
+            .damage_preview
+            .as_ref()
+            .expect("cursor on the stalker should produce a damage preview");
+        assert_eq!(preview.max_damage, equipped.max_damage);
+        assert_eq!(preview.min_damage, equipped.min_damage);
+        assert_eq!(preview.can_kill, equipped.can_kill);
+    }
+
+    #[test]
     fn stepping_on_spike_trap_via_shared_action_deals_damage() {
         let mut game = Game::new();
         let warrior = game

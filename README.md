@@ -235,7 +235,7 @@ weather danger-zone coordinates so a headless controller can plan from state
 rather than scrape the rendered frame. Unit summaries on each snapshot include
 name, team, position, HP/AP, selection, elemental status, remaining
 Rooted/Stunned durations, and any elemental shield. Armed hazard tiles are listed on `hazards`.
-`damage_preview.can_kill` counts remaining shield as extra HP.
+`damage_preview` uses equipment-adjusted ATK/DEF; `can_kill` counts remaining shield as extra HP.
 The shared `safety` action plans against
 the union of boss, incursion, committed lightning warnings, and damaging trap tiles, while weather
 effects themselves advance once per game turn. Event-spawned mini-bosses keep

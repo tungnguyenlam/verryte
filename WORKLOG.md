@@ -1,5 +1,22 @@
 # Verryte Worklog
 
+## 2026-09-21 - equipment-aware damage preview
+
+**Goal.** Snapshot `damage_preview` used raw `Stats.atk`/`Stats.def`, so Kael's
+Iron Sword never entered min/max/`can_kill` even though combat adds equipment.
+
+**Accomplishments.** `BattlePreview::preview_basic_attack` uses `effective_atk` /
+`effective_def` and remaining shield. Snapshot construction shares that helper.
+A Script-sourced `Wait` with the cursor on a stalker matches the equipped
+preview, which is strictly higher than the unequipped formula.
+
+**Verification.** `cargo test -p wuthering-terminal --lib preview_basic_attack_uses_equipment`,
+`equipment_bonuses`, and `can_kill` pass.
+
+**Next Steps.** Expose selected-unit inventory on snapshots. Apply destination
+hazards after `StepToSafety`. Print Rooted/Stunned/shield on script-runner
+diagnostics lines.
+
 ## 2026-09-21 - targetable tiles from the selected unit
 
 **Goal.** `Snapshot.targetable_tiles` was documented as the selected unit's
