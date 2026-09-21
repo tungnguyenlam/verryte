@@ -173,8 +173,17 @@ fn main() {
             );
             for ch in &diag.characters {
                 println!(
-                    "  {}: hp={}/{} ap={}/{} status={} alive={}",
-                    ch.name, ch.hp, ch.max_hp, ch.ap, ch.max_ap, ch.status, ch.alive
+                    "  {} {:?}: pos=({},{}) hp={}/{} ap={}/{} status={} alive={}",
+                    ch.name,
+                    ch.team,
+                    ch.position.x,
+                    ch.position.y,
+                    ch.hp,
+                    ch.max_hp,
+                    ch.ap,
+                    ch.max_ap,
+                    ch.status,
+                    ch.alive
                 );
             }
             print_battle_summary(&game);
@@ -308,8 +317,17 @@ fn run_repl() {
             );
             for ch in &diag.characters {
                 println!(
-                    "  {}: hp={}/{} ap={}/{} status={} alive={}",
-                    ch.name, ch.hp, ch.max_hp, ch.ap, ch.max_ap, ch.status, ch.alive
+                    "  {} {:?}: pos=({},{}) hp={}/{} ap={}/{} status={} alive={}",
+                    ch.name,
+                    ch.team,
+                    ch.position.x,
+                    ch.position.y,
+                    ch.hp,
+                    ch.max_hp,
+                    ch.ap,
+                    ch.max_ap,
+                    ch.status,
+                    ch.alive
                 );
             }
         } else {

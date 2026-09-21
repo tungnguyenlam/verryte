@@ -1,5 +1,43 @@
 # Verryte Worklog
 
+## 2026-09-21 - snapshot unit positions for agents
+
+**Goal.** Give scripts and agents structured combatant positions instead of
+requiring them to scrape the rendered frame.
+
+**Accomplishments.** Each `Snapshot` now includes a deterministic `units` list
+(name, team, position, HP/AP, selection, status). `CharacterDiag` carries the
+same position/team fields. A Script-sourced select-and-move regression proves
+the shared `apply_action()` path updates snapshot units. The script runner
+prints tile coordinates.
+
+**Verification.** `cargo test -p wuthering-terminal --lib snapshot` (8 tests)
+passes, including `test_snapshot_units_expose_positions_on_shared_action_path`
+and `test_diagnostics_snapshot`.
+
+**Next Steps.** Wire `HazardSystem::populate_hazards` into Floor 2+ generation
+and expose hazard tiles on snapshots. Keep Frenzy deltas on `active_modifiers`.
+
+## 2026-09-21 - save/load restores runtime resources
+
+**Goal.** Keep the shared action path usable after `load_state()`: `WorldRegistry::apply`
+clears the world, so unregistered resources vanished and `ToggleReplay` / `vfx_mut()`
+could panic.
+
+**Accomplishments.** Register `ReplayState` and `BossConfig` for persistence. After
+apply, restore presentation/runtime resources that are not snapshotted (`VfxSystem`,
+`DialogueState`, `TextInput`, `AvailableCombos`, `Diagnostics`) and default
+older-save omissions (`ReplayState`, `BossConfig`, `ActiveHazards` from the map).
+Script-sourced `Wait` and `ToggleReplay` after load stay on `apply_action()`.
+
+**Verification.** `cargo test -p wuthering-terminal --test save_load save_load_`
+passes (22 tests), including `save_load_restores_runtime_resources_for_shared_actions`,
+`save_load_preserves_custom_boss_config`, and `save_load_preserves_replay_cursor`.
+
+**Next Steps.** Expose unit positions on `Snapshot` so agents need not scrape frames.
+Wire `HazardSystem::populate_hazards` into Floor 2+ generation. Keep Frenzy deltas
+on `active_modifiers` unless a JSON consumer needs per-entity values.
+
 ## 2026-09-21 - rustc 1.83 clippy -D warnings
 
 **Goal.** Restore the workspace `clippy --all-targets -- -D warnings` gate on the

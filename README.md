@@ -232,7 +232,8 @@ Agent commands use `ActionSource::Agent` in their step reports, keeping agent
 control distinguishable from scripts without changing the shared action path.
 Snapshots expose active modifier names alongside their remaining turns and
 weather danger-zone coordinates so a headless controller can plan from state
-rather than scrape the rendered frame. The shared `safety` action plans against
+rather than scrape the rendered frame. Unit summaries on each snapshot include
+name, team, position, HP/AP, selection, and status. The shared `safety` action plans against
 the union of boss, incursion, and committed lightning warnings, while weather
 effects themselves advance once per game turn. Event-spawned mini-bosses keep
 that contract after arrival: they arm class-specific `TileShape` attacks for one

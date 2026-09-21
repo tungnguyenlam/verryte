@@ -16,6 +16,23 @@ pub struct TeamSummary {
     pub max_hp: i32,
 }
 
+/// Per-unit battlefield summary for scripts, agents, and replays.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UnitSummary {
+    pub entity: verryte_core::Entity,
+    pub name: String,
+    pub team: Team,
+    pub position: Position,
+    pub hp: i32,
+    pub max_hp: i32,
+    pub ap: i32,
+    pub max_ap: i32,
+    #[serde(default)]
+    pub selected: bool,
+    #[serde(default)]
+    pub status: String,
+}
+
 /// Structured warning for a pending incursion mini-boss attack.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct IncursionAttackPreview {
@@ -38,6 +55,9 @@ pub struct Snapshot {
     pub cursor: Position,
     pub player_team: TeamSummary,
     pub enemy_team: TeamSummary,
+    /// Living and defeated combatants with positions for agent planning.
+    #[serde(default)]
+    pub units: Vec<UnitSummary>,
     /// Tiles the currently selected character can reach with movement.
     #[serde(default)]
     pub reachable_tiles: Vec<Position>,
@@ -352,6 +372,8 @@ pub fn create_registry() -> WorldRegistry {
         "IncursionAttackTelegraphs",
     );
     reg.register_resource::<crate::components::ActiveHazards>("ActiveHazards");
+    reg.register_resource::<crate::components::ReplayState>("ReplayState");
+    reg.register_resource::<crate::components::BossConfig>("BossConfig");
 
     reg
 }
@@ -456,6 +478,9 @@ pub struct CharacterDiag {
     pub morale_state: String,
     #[serde(default)]
     pub fatigue: i32,
+    #[serde(default)]
+    pub position: Position,
+    pub team: Team,
 }
 
 /// A snapshot of diagnostic information about the game state, useful for

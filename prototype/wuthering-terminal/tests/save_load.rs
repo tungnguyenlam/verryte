@@ -1,8 +1,9 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
-    ActiveFloorModifiers, CharacterClass, DynamicFloorEvents, EquippedItems, FloorEventKind,
-    FloorModifier, FrenzyBuff, GameState, IncursionAttackTelegraphs, IncursionFirstAttackDisrupted,
-    IncursionMiniBoss, Inventory, Outcome, Stats, Team, TurnPhase, Weather, WeatherType,
+    ActiveFloorModifiers, BossConfig, CharacterClass, DynamicFloorEvents, EquippedItems,
+    FloorEventKind, FloorModifier, FrenzyBuff, GameState, IncursionAttackTelegraphs,
+    IncursionFirstAttackDisrupted, IncursionMiniBoss, Inventory, Outcome, ReplayState, Stats, Team,
+    TurnPhase, Weather, WeatherType,
 };
 use wuthering_terminal::snapshot::{ActionOutcome, FullSaveState, CURRENT_SAVE_VERSION};
 use wuthering_terminal::{Action, Game, Position};
@@ -513,6 +514,76 @@ fn save_load_allows_subsequent_actions() {
 
     let state = game2.world.resource::<GameState>().unwrap();
     assert_eq!(state.outcome, Outcome::Playing);
+}
+
+#[test]
+fn save_load_restores_runtime_resources_for_shared_actions() {
+    let game = build_active_game();
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+
+    assert!(restored
+        .world
+        .resource::<verryte_terminal::vfx::VfxSystem>()
+        .is_some());
+    assert!(restored.world.resource::<ReplayState>().is_some());
+    assert!(restored.world.resource::<BossConfig>().is_some());
+    assert!(restored
+        .world
+        .resource::<verryte_input::TextInput>()
+        .is_some());
+    assert!(restored
+        .world
+        .resource::<verryte_terminal::DialogueState>()
+        .is_some());
+
+    // Combat and replay both unwrap these resources on the shared action path.
+    let _ = restored.vfx();
+    let wait = restored.apply_action(Action::Wait, ActionSource::Script);
+    assert!(!wait.outcome.is_failed());
+    let replay = restored.apply_action(Action::ToggleReplay, ActionSource::Script);
+    assert!(
+        replay.outcome.is_failed() || matches!(replay.outcome, ActionOutcome::ReplayChanged { .. })
+    );
+}
+
+#[test]
+fn save_load_preserves_custom_boss_config() {
+    let mut game = Game::new();
+    {
+        let config = game.world.resource_mut::<BossConfig>().unwrap();
+        config.phase2_hp_threshold = 123;
+        config.phase2_shield_amount = 77;
+    }
+
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+
+    let config = restored.world.resource::<BossConfig>().unwrap();
+    assert_eq!(config.phase2_hp_threshold, 123);
+    assert_eq!(config.phase2_shield_amount, 77);
+}
+
+#[test]
+fn save_load_preserves_replay_cursor() {
+    let mut game = Game::new();
+    {
+        let replay = game.world.resource_mut::<ReplayState>().unwrap();
+        replay.active = true;
+        replay.next_index = 3;
+        replay.auto = true;
+    }
+
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+
+    let replay = restored.world.resource::<ReplayState>().unwrap();
+    assert!(replay.active);
+    assert_eq!(replay.next_index, 3);
+    assert!(replay.auto);
 }
 
 #[test]
