@@ -731,6 +731,45 @@ impl Game {
             cursor: state.cursor,
             player_team,
             enemy_team,
+            units: {
+                let mut units = Vec::new();
+                for (entity, team, stats, class) in
+                    self.world.query3::<Team, Stats, CharacterClass>()
+                {
+                    let Some(position) = self.world.get::<Position>(entity).copied() else {
+                        continue;
+                    };
+                    let status = self
+                        .world
+                        .get::<crate::components::ElementalStatus>(entity)
+                        .map(|status| format!("{:?}", status))
+                        .unwrap_or_else(|| "None".to_string());
+                    units.push(crate::snapshot::UnitSummary {
+                        entity,
+                        name: Self::get_class_name(*class).to_string(),
+                        team: *team,
+                        position,
+                        hp: stats.hp,
+                        max_hp: stats.max_hp,
+                        ap: stats.ap,
+                        max_ap: stats.max_ap,
+                        selected: state.selected_entity == Some(entity),
+                        status,
+                    });
+                }
+                units.sort_by(|a, b| {
+                    let team_rank = |team: Team| match team {
+                        Team::Player => 0u8,
+                        Team::Enemy => 1,
+                    };
+                    team_rank(a.team)
+                        .cmp(&team_rank(b.team))
+                        .then_with(|| a.name.cmp(&b.name))
+                        .then_with(|| a.position.y.cmp(&b.position.y))
+                        .then_with(|| a.position.x.cmp(&b.position.x))
+                });
+                units
+            },
             reachable_tiles,
             targetable_tiles,
             selected_can_act,

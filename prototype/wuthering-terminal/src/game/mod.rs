@@ -202,7 +202,7 @@ impl Game {
         let mut dead = 0usize;
         let mut characters = Vec::new();
 
-        for (e, _team, stats, class) in self.world.query3::<Team, Stats, CharacterClass>() {
+        for (e, team, stats, class) in self.world.query3::<Team, Stats, CharacterClass>() {
             let name = Self::get_class_name(*class).to_string();
             let status = self
                 .world
@@ -251,8 +251,25 @@ impl Game {
                 morale: morale_val,
                 morale_state: morale_state_str,
                 fatigue: fatigue_val,
+                position: self
+                    .world
+                    .get::<Position>(e)
+                    .copied()
+                    .unwrap_or(Position::ZERO),
+                team: *team,
             });
         }
+        characters.sort_by(|a, b| {
+            let team_rank = |team: Team| match team {
+                Team::Player => 0u8,
+                Team::Enemy => 1,
+            };
+            team_rank(a.team)
+                .cmp(&team_rank(b.team))
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.position.y.cmp(&b.position.y))
+                .then_with(|| a.position.x.cmp(&b.position.x))
+        });
 
         let weather = self
             .world

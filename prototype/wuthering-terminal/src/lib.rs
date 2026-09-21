@@ -19,7 +19,7 @@ pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
 pub use snapshot::{
-    ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, Snapshot, StepReport,
+    ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, Snapshot, StepReport, UnitSummary,
 };
 pub use spawn::{base_stats, scale_stats_by_floor, Spawner};
 pub use verryte_map::Point as Position;
@@ -1282,6 +1282,53 @@ mod tests {
         let snap2 = game.snapshot();
         assert_eq!(snap2.turn, 1);
         assert_eq!(snap2.player_team.total_hp, snap1.player_team.total_hp);
+    }
+
+    #[test]
+    fn test_snapshot_units_expose_positions_on_shared_action_path() {
+        let mut game = Game::new();
+        let snap = game.snapshot();
+        assert_eq!(
+            snap.units.len(),
+            snap.player_team.count + snap.enemy_team.count
+        );
+        let kael = snap
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .expect("Kael should appear in snapshot units");
+        assert_eq!(kael.position, Position::new(4, 4));
+        assert_eq!(kael.team, Team::Player);
+        assert!(!kael.selected);
+        assert_eq!(kael.hp, kael.max_hp);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        let selected = game.snapshot();
+        let kael = selected
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .unwrap();
+        assert!(kael.selected);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        let report = game.apply_action(Action::Confirm, ActionSource::Script);
+        assert!(
+            matches!(report.outcome, ActionOutcome::Moved { .. }),
+            "expected move, got {:?}",
+            report.outcome
+        );
+        let moved = report.after;
+        let kael = moved.units.iter().find(|unit| unit.name == "Kael").unwrap();
+        assert_eq!(kael.position, Position::new(4, 5));
+        assert!(!kael.selected);
     }
 
     #[test]
@@ -3734,6 +3781,14 @@ mod tests {
             assert!(ch.alive, "{} should be alive", ch.name);
             assert!(ch.hp > 0, "{} should have positive HP", ch.name);
         }
+
+        let kael = diag
+            .characters
+            .iter()
+            .find(|ch| ch.name == "Kael")
+            .expect("diagnostics should include Kael");
+        assert_eq!(kael.position, Position::new(4, 4));
+        assert_eq!(kael.team, Team::Player);
     }
 
     #[test]
