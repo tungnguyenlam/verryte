@@ -1,5 +1,23 @@
 # Verryte Worklog
 
+## 2026-09-21 - Rooted and Stunned on snapshots
+
+**Goal.** HUD badges showed crowd control, but `Snapshot.units` and
+`CharacterDiag` only serialized elemental status, so scripts and agents could
+not see Rooted or Stunned without scraping the frame.
+
+**Accomplishments.** Unit summaries and diagnostics expose remaining
+`rooted_turns` / `stunned_turns` (serde-default 0). A Script-sourced cursor
+move proves the shared `apply_action()` path updates those fields.
+
+**Verification.** `cargo test -p wuthering-terminal --lib snapshot` (10 tests)
+passes, including
+`test_snapshot_units_expose_rooted_and_stunned_on_shared_action_path`.
+
+**Next Steps.** Expose elemental shields on the same unit summaries and make
+`damage_preview.can_kill` account for remaining shield. Keep Frenzy deltas on
+`active_modifiers`.
+
 ## 2026-09-21 - verification docs and stable hazard snapshots
 
 **Goal.** README still documented `cargo fmt --check` / `cargo test` while the
