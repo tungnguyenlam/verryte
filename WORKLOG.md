@@ -1,5 +1,22 @@
 # Verryte Worklog
 
+## 2026-09-21 - shields on snapshots and shield-aware can_kill
+
+**Goal.** Combat absorbs `ElementalShield` before HP, but unit snapshots omitted
+shields and `damage_preview.can_kill` compared max damage to HP only.
+
+**Accomplishments.** Unit summaries and diagnostics expose `shield_type`,
+`shield_amount`, and `shield_max`. `BattlePreview::lethal_against` treats
+remaining shield as extra HP. A Script-sourced `Wait` on a 1 HP Physical-shielded
+stalker proves `can_kill` is false.
+
+**Verification.** `cargo test -p wuthering-terminal --lib snapshot` (11 tests)
+and `cargo test -p wuthering-terminal --lib can_kill` pass.
+
+**Next Steps.** Keep Frenzy deltas on `active_modifiers`. Add
+`TileGrid::contains_in_shape` only if a second clipped membership caller
+appears. Keep schedule-settling local until a second consumer exists.
+
 ## 2026-09-21 - Rooted and Stunned on snapshots
 
 **Goal.** HUD badges showed crowd control, but `Snapshot.units` and
