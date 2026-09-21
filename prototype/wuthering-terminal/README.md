@@ -53,7 +53,8 @@ Characters can have unique traits that modify gameplay:
   to radius one or removes the escape-side tile from Frozen Sentinel's first
   ring; later attacks return to their normal patterns.
   The existing `safety` action treats boss telegraphs, armed incursion tiles,
-  and committed lightning-strike tiles as one danger set, moves the selected
+  committed lightning-strike tiles, and damaging trap tiles (spikes, poison,
+  thorns, steam vents, cracked floors) as one danger set, moves the selected
   hero to the nearest reachable safe tile, and reports the move through the
   same structured action/event/history path as ordinary movement. Weather
   effects and ambient-loop changes are prepared once per game turn rather than

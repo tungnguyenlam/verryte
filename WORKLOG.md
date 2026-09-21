@@ -1,5 +1,38 @@
 # Verryte Worklog
 
+## 2026-09-21 - StepToSafety avoids damaging traps
+
+**Goal.** `Action::StepToSafety` treated telegraphs, incursions, and lightning as
+danger but would leave a hero standing on spikes or path onto a trap.
+
+**Accomplishments.** Armed trap tiles (`spike-trap`, `poison-cloud`, `thorn-bush`,
+`steam-vent`, `cracked-floor`, `exploding-barrel`) join the existing danger union.
+Lava/ice keep their special movement rules and do not change the no-telegraph
+failure. A Script-sourced `StepToSafety` regression moves Kael off a spike.
+
+**Verification.** `cargo test -p wuthering-terminal --test integration step_to_safety`
+(5 tests) passes.
+
+**Next Steps.** Align README verification commands with the workspace fmt/test/clippy
+gate. Keep Frenzy deltas on `active_modifiers`.
+
+## 2026-09-21 - floor hazards on the shared action path
+
+**Goal.** Environmental hazards were implemented and unit-tested in isolation but
+never inserted at `Game::new`, never populated on Floor 2+, and never visible in
+snapshots.
+
+**Accomplishments.** Floor 1 initializes `ActiveHazards` from the tactical map.
+Floor 2+ `NextFloor` places seed-driven traps away from occupied tiles.
+Snapshots expose armed `hazards`. Stepping on a trap through `apply_action()`
+emits `GameEvent::HazardTriggered` and updates battle-stat damage taken.
+
+**Verification.** `cargo test -p wuthering-terminal --lib stepping_on_spike_trap`,
+`floor_transition`, and `hazard` pass, plus `new_mechanics` steam-vent.
+
+**Next Steps.** Treat damaging hazard tiles as danger in `StepToSafety`. Keep
+Frenzy deltas on `active_modifiers`.
+
 ## 2026-09-21 - snapshot unit positions for agents
 
 **Goal.** Give scripts and agents structured combatant positions instead of

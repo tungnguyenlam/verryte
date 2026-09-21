@@ -464,6 +464,18 @@ impl HazardType {
             Self::ExplodingBarrel => "exploding-barrel",
         }
     }
+
+    pub fn threatens_step_to_safety(self) -> bool {
+        matches!(
+            self,
+            Self::SpikeTrap
+                | Self::PoisonCloud
+                | Self::ThornBush
+                | Self::SteamVent
+                | Self::CrackedFloor
+                | Self::ExplodingBarrel
+        )
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

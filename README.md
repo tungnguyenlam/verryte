@@ -234,7 +234,7 @@ Snapshots expose active modifier names alongside their remaining turns and
 weather danger-zone coordinates so a headless controller can plan from state
 rather than scrape the rendered frame. Unit summaries on each snapshot include
 name, team, position, HP/AP, selection, and status. The shared `safety` action plans against
-the union of boss, incursion, and committed lightning warnings, while weather
+the union of boss, incursion, committed lightning warnings, and damaging trap tiles, while weather
 effects themselves advance once per game turn. Event-spawned mini-bosses keep
 that contract after arrival: they arm class-specific `TileShape` attacks for one
 player turn, and `incursion_attacks` reports the attacker, pattern, origin,

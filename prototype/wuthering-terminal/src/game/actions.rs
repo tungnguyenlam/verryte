@@ -6752,6 +6752,17 @@ impl Game {
         {
             danger_tiles.extend(weather.danger_zones.iter().copied());
         }
+        if let Some(hazards) = self.world.resource::<crate::components::ActiveHazards>() {
+            danger_tiles.extend(
+                hazards
+                    .hazards
+                    .iter()
+                    .filter(|(_, effect)| {
+                        effect.trigger_count != 0 && effect.hazard_type.threatens_step_to_safety()
+                    })
+                    .map(|(pos, _)| *pos),
+            );
+        }
         if danger_tiles.is_empty() {
             let reason = "No danger zones telegraphed.".to_string();
             self.log(reason.clone());
