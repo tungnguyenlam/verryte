@@ -56,7 +56,9 @@ Characters can have unique traits that modify gameplay:
   committed lightning-strike tiles, and damaging trap tiles (spikes, poison,
   thorns, steam vents, cracked floors) as one danger set, moves the selected
   hero to the nearest reachable safe tile, and reports the move through the
-  same structured action/event/history path as ordinary movement. Weather
+  same structured action/event/history path as ordinary movement. Landing on a
+  remaining tile such as a healing spring still runs the shared occupant-hazard
+  path used by `Confirm`. Weather
   effects and ambient-loop changes are prepared once per game turn rather than
   once per rendered frame; lightning resolves against each team at its phase
   boundary, leaving the player warning actionable. Each hit emits a structured

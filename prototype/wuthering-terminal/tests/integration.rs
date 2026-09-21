@@ -1278,6 +1278,71 @@ fn step_to_safety_escapes_damaging_hazard_tiles() {
 }
 
 #[test]
+fn step_to_safety_applies_destination_hazards_on_shared_path() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let start = *game.world.get::<Position>(warrior).unwrap();
+    let spring = Position::new(start.x, start.y + 1);
+    {
+        let map = game
+            .world
+            .resource_mut::<wuthering_terminal::map::TacticalMap>()
+            .unwrap();
+        map.tiles
+            .set(start, wuthering_terminal::map::Tile::SpikeTrap);
+        map.tiles.set(
+            Position::new(start.x - 1, start.y),
+            wuthering_terminal::map::Tile::Wall,
+        );
+        map.tiles.set(
+            Position::new(start.x + 1, start.y),
+            wuthering_terminal::map::Tile::Wall,
+        );
+        map.tiles.set(
+            Position::new(start.x, start.y - 1),
+            wuthering_terminal::map::Tile::Wall,
+        );
+        map.tiles
+            .set(spring, wuthering_terminal::map::Tile::HealingSpring);
+    }
+    let hazards = {
+        let map = game
+            .world
+            .resource::<wuthering_terminal::map::TacticalMap>()
+            .unwrap();
+        wuthering_terminal::hazards::HazardSystem::initialize_hazards(map)
+    };
+    game.world.insert_resource(hazards);
+    game.world.get_mut::<Stats>(warrior).unwrap().hp = 50;
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.selected_entity = Some(warrior);
+        state.cursor = start;
+    }
+
+    let report = game.apply_action(Action::StepToSafety, ActionSource::Script);
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Moved {
+            entity: "Kael".to_string(),
+            to: spring,
+        }
+    );
+    assert_eq!(*game.world.get::<Position>(warrior).unwrap(), spring);
+    assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, 75);
+    assert!(
+        report.events.iter().any(|event| matches!(
+            event,
+            GameEvent::HazardTriggered { hazard, healing, .. }
+                if hazard == "healing-spring" && *healing == 25
+        )),
+        "expected HealingSpring on the shared path, got {:?}",
+        report.events
+    );
+}
+
+#[test]
 fn step_to_safety_reports_out_of_ap_before_pathfinding() {
     let mut game = Game::new();
     let warrior = find_entity(&game, CharacterClass::Warrior);

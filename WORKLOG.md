@@ -1,5 +1,22 @@
 # Verryte Worklog
 
+## 2026-09-21 - StepToSafety shares occupant hazards
+
+**Goal.** `Action::StepToSafety` teleported onto a safe tile without running the
+hazard trigger used by `Confirm`, so a healing spring at the destination did
+nothing and the control paths diverged.
+
+**Accomplishments.** `Game::apply_occupant_hazard` is the shared trigger for
+Confirm movement and StepToSafety (lava/ice still keep their special rules).
+A Script-sourced `safety` from a spike onto a forced adjacent spring heals 25
+HP and emits `GameEvent::HazardTriggered`.
+
+**Verification.** `cargo test -p wuthering-terminal --test integration step_to_safety`
+(6 tests) and `cargo test -p wuthering-terminal --lib stepping_on_spike_trap` pass.
+
+**Next Steps.** Print Rooted/Stunned/shield on script-runner diagnostics lines.
+Keep Frenzy deltas on `active_modifiers`.
+
 ## 2026-09-21 - selected inventory on snapshots
 
 **Goal.** Scripts and agents use `use:N` / `craft:N,M` but had to scrape the

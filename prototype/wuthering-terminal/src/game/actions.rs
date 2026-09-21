@@ -4960,112 +4960,7 @@ impl Game {
                                         }
 
                                         // Check for Hazard terrain effects (SpikeTrap, PoisonCloud, etc.)
-                                        if final_dest_tile != Tile::Lava
-                                            && final_dest_tile != Tile::Ice
-                                        {
-                                            if let Some(hazards) =
-                                                self.world
-                                                    .resource::<crate::components::ActiveHazards>()
-                                            {
-                                                if let Some(stats) =
-                                                    self.world.get::<Stats>(sel_entity)
-                                                {
-                                                    let result = crate::hazards::HazardSystem::trigger_hazard(
-                                                        hazards, final_dest, stats,
-                                                    );
-                                                    if let Some(result) = result {
-                                                        self.log(&result.message);
-                                                        let dmg = result.damage;
-                                                        let heal = result.healing;
-                                                        let mut hp_after = 0;
-                                                        if let Some(stats_mut) =
-                                                            self.world.get_mut::<Stats>(sel_entity)
-                                                        {
-                                                            stats_mut.hp = (stats_mut.hp - dmg
-                                                                + heal)
-                                                                .clamp(0, stats_mut.max_hp);
-                                                            hp_after = stats_mut.hp;
-                                                        }
-                                                        if result.should_destroy_tile {
-                                                            if let Some(map) = self
-                                                                .world
-                                                                .resource_mut::<TacticalMap>()
-                                                            {
-                                                                crate::hazards::HazardSystem::process_cracked_floor(
-                                                                    map, final_dest,
-                                                                );
-                                                            }
-                                                        }
-                                                        let is_steam = result.hazard_type == crate::components::HazardType::SteamVent;
-                                                        if let Some(hazards_mut) = self
-                                                            .world
-                                                            .resource_mut::<crate::components::ActiveHazards>()
-                                                        {
-                                                            crate::hazards::HazardSystem::decrement_trigger(
-                                                                hazards_mut,
-                                                                final_dest,
-                                                            );
-                                                        }
-                                                        if is_steam {
-                                                            crate::systems::trigger_steam_vent_explosion(&mut self.world, final_dest);
-                                                        }
-                                                        let (tcx, tcy) =
-                                                            self.get_tile_center_pixels(final_dest);
-                                                        if dmg > 0 {
-                                                            self.vfx_mut().particles.extend(
-                                                                verryte_terminal::vfx::emit_burst(
-                                                                    tcx,
-                                                                    tcy,
-                                                                    8,
-                                                                    Color(180, 40, 40),
-                                                                    &['*', '·', '✦'],
-                                                                ),
-                                                            );
-                                                        }
-                                                        if heal > 0 {
-                                                            self.vfx_mut().particles.extend(
-                                                                verryte_terminal::vfx::emit_heal(
-                                                                    tcx, tcy, 10,
-                                                                ),
-                                                            );
-                                                        }
-                                                        if hp_after <= 0 {
-                                                            self.handle_defeat(
-                                                                sel_entity, char_name, sel_class,
-                                                                final_dest,
-                                                            );
-                                                        }
-                                                        if let Some(status) = result.status_effect {
-                                                            if self
-                                                                .world
-                                                                .get::<Stats>(sel_entity)
-                                                                .is_some_and(|s| s.hp > 0)
-                                                            {
-                                                                self.world
-                                                                    .insert(sel_entity, status);
-                                                            }
-                                                        }
-                                                        if let Some(events) = self
-                                                            .world
-                                                            .resource_mut::<Events<GameEvent>>()
-                                                        {
-                                                            events.send(
-                                                                GameEvent::HazardTriggered {
-                                                                    hazard: result
-                                                                        .hazard_type
-                                                                        .display_name()
-                                                                        .to_string(),
-                                                                    target: sel_entity,
-                                                                    position: final_dest,
-                                                                    damage: dmg,
-                                                                    healing: heal,
-                                                                },
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        self.apply_occupant_hazard(sel_entity, final_dest);
 
                                         self.try_absorb_echo(cursor);
 
@@ -6711,6 +6606,95 @@ impl Game {
         }
     }
 
+    fn apply_occupant_hazard(&mut self, entity: Entity, dest: Position) {
+        let dest_tile = {
+            let Some(map) = self.world.resource::<TacticalMap>() else {
+                return;
+            };
+            if dest.x < 0 || dest.y < 0 {
+                return;
+            }
+            map.tile(dest.x, dest.y)
+        };
+        if dest_tile == Tile::Lava || dest_tile == Tile::Ice {
+            return;
+        }
+        let Some(stats) = self.world.get::<Stats>(entity).cloned() else {
+            return;
+        };
+        let Some(hazards) = self.world.resource::<crate::components::ActiveHazards>() else {
+            return;
+        };
+        let Some(result) = crate::hazards::HazardSystem::trigger_hazard(hazards, dest, &stats)
+        else {
+            return;
+        };
+
+        self.log(&result.message);
+        let dmg = result.damage;
+        let heal = result.healing;
+        let mut hp_after = 0;
+        if let Some(stats_mut) = self.world.get_mut::<Stats>(entity) {
+            stats_mut.hp = (stats_mut.hp - dmg + heal).clamp(0, stats_mut.max_hp);
+            hp_after = stats_mut.hp;
+        }
+        if result.should_destroy_tile {
+            if let Some(map) = self.world.resource_mut::<TacticalMap>() {
+                crate::hazards::HazardSystem::process_cracked_floor(map, dest);
+            }
+        }
+        let is_steam = result.hazard_type == crate::components::HazardType::SteamVent;
+        if let Some(hazards_mut) = self
+            .world
+            .resource_mut::<crate::components::ActiveHazards>()
+        {
+            crate::hazards::HazardSystem::decrement_trigger(hazards_mut, dest);
+        }
+        if is_steam {
+            crate::systems::trigger_steam_vent_explosion(&mut self.world, dest);
+        }
+        let (tcx, tcy) = self.get_tile_center_pixels(dest);
+        if dmg > 0 {
+            self.vfx_mut()
+                .particles
+                .extend(verryte_terminal::vfx::emit_burst(
+                    tcx,
+                    tcy,
+                    8,
+                    Color(180, 40, 40),
+                    &['*', '·', '✦'],
+                ));
+        }
+        if heal > 0 {
+            self.vfx_mut()
+                .particles
+                .extend(verryte_terminal::vfx::emit_heal(tcx, tcy, 10));
+        }
+        if hp_after <= 0 {
+            let sel_class = self
+                .world
+                .get::<CharacterClass>(entity)
+                .copied()
+                .unwrap_or(CharacterClass::Warrior);
+            let char_name = Self::get_class_name(sel_class);
+            self.handle_defeat(entity, char_name, sel_class, dest);
+        }
+        if let Some(status) = result.status_effect {
+            if self.world.get::<Stats>(entity).is_some_and(|s| s.hp > 0) {
+                self.world.insert(entity, status);
+            }
+        }
+        if let Some(events) = self.world.resource_mut::<Events<GameEvent>>() {
+            events.send(GameEvent::HazardTriggered {
+                hazard: result.hazard_type.display_name().to_string(),
+                target: entity,
+                position: dest,
+                damage: dmg,
+                healing: heal,
+            });
+        }
+    }
+
     fn execute_step_to_safety(&mut self) {
         let (sel_entity, pos) = {
             let state = self.world.resource::<GameState>().unwrap();
@@ -6832,6 +6816,7 @@ impl Game {
                 if self.camera_locked {
                     self.camera.look_at(cx, cy);
                 }
+                self.apply_occupant_hazard(sel_entity, safe_pos);
             } else {
                 let reason = "Not enough AP to step to safety!".to_string();
                 self.log(reason.clone());
