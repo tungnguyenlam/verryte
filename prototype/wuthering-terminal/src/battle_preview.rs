@@ -34,6 +34,36 @@ impl BattlePreview {
         }
     }
 
+    /// True when even the preview's max roll would drop HP through remaining shield.
+    pub fn lethal_against(preview: &DamagePreview, hp: i32, shield_amount: i32) -> bool {
+        let effective_hp = hp.saturating_add(shield_amount.max(0));
+        preview.max_damage >= effective_hp
+    }
+
+    /// Basic-attack preview using equipment-adjusted ATK/DEF and remaining shield.
+    pub fn preview_basic_attack(
+        world: &World,
+        attacker: Entity,
+        target: Entity,
+    ) -> Option<DamagePreview> {
+        let atk_stats = world.get::<Stats>(attacker)?;
+        let tgt_stats = world.get::<Stats>(target)?;
+        let mut preview = Self::calculate_damage_preview(
+            crate::systems::effective_atk(world, attacker),
+            atk_stats.level,
+            crate::systems::effective_def(world, target),
+            tgt_stats.level,
+            1.0,
+            20,
+        );
+        let shield = world
+            .get::<ElementalShield>(target)
+            .map(|shield| shield.amount)
+            .unwrap_or(0);
+        preview.can_kill = Self::lethal_against(&preview, tgt_stats.hp, shield);
+        Some(preview)
+    }
+
     pub fn calculate_aoe_preview(
         center: Position,
         radius: i16,
@@ -848,13 +878,58 @@ mod tests {
     #[test]
     fn test_can_kill_flag() {
         let preview = BattlePreview::calculate_damage_preview(40, 5, 5, 1, 1.0, 20);
-        let mut p = preview.clone();
-        p.can_kill = p.max_damage >= 30;
-        assert!(p.can_kill);
+        assert!(BattlePreview::lethal_against(&preview, 30, 0));
+        assert!(!BattlePreview::lethal_against(&preview, 200, 0));
+        assert!(
+            !BattlePreview::lethal_against(&preview, 30, 500),
+            "remaining shield should prevent a can-kill preview"
+        );
+    }
 
-        let mut p2 = preview.clone();
-        p2.can_kill = p2.max_damage >= 200;
-        assert!(!p2.can_kill);
+    #[test]
+    fn test_preview_basic_attack_uses_equipment_atk() {
+        let mut world = World::new();
+        let mut equipped = crate::components::EquippedItems::default();
+        equipped.equip(crate::equipment::iron_sword());
+        let attacker = world
+            .builder()
+            .with(Stats {
+                hp: 100,
+                max_hp: 100,
+                atk: 20,
+                def: 10,
+                spd: 5,
+                ap: 3,
+                max_ap: 3,
+                level: 1,
+                xp: 0,
+            })
+            .with(equipped)
+            .build();
+        let target = world
+            .builder()
+            .with(Stats {
+                hp: 80,
+                max_hp: 80,
+                atk: 25,
+                def: 5,
+                spd: 8,
+                ap: 4,
+                max_ap: 4,
+                level: 1,
+                xp: 0,
+            })
+            .build();
+        let preview = BattlePreview::preview_basic_attack(&world, attacker, target)
+            .expect("both combatants have stats");
+        let unequipped = BattlePreview::calculate_damage_preview(20, 1, 5, 1, 1.0, 20);
+        assert!(
+            preview.max_damage > unequipped.max_damage,
+            "weapon ATK should raise max damage, got {:?} vs {:?}",
+            preview,
+            unequipped
+        );
+        assert!(!preview.can_kill);
     }
 
     #[test]

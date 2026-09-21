@@ -31,6 +31,90 @@ pub struct UnitSummary {
     pub selected: bool,
     #[serde(default)]
     pub status: String,
+    /// Remaining Rooted duration in turns (0 if the unit is not rooted).
+    #[serde(default)]
+    pub rooted_turns: u32,
+    /// Remaining Stunned duration in turns (0 if the unit is not stunned).
+    #[serde(default)]
+    pub stunned_turns: u32,
+    /// Shield element name, or empty when no shield is present.
+    #[serde(default)]
+    pub shield_type: String,
+    #[serde(default)]
+    pub shield_amount: i32,
+    #[serde(default)]
+    pub shield_max: i32,
+    /// Unspent skill-tree points (0 for units without a `SkillTree`).
+    #[serde(default)]
+    pub skill_points: u32,
+}
+
+/// Remaining Rooted / Stunned durations for a combatant (0 if the component is absent).
+pub(crate) fn crowd_control_turns(
+    world: &verryte_core::World,
+    entity: verryte_core::Entity,
+) -> (u32, u32) {
+    let rooted = world
+        .get::<Rooted>(entity)
+        .map(|rooted| rooted.duration)
+        .unwrap_or(0);
+    let stunned = world
+        .get::<Stunned>(entity)
+        .map(|stunned| stunned.duration)
+        .unwrap_or(0);
+    (rooted, stunned)
+}
+
+/// Remaining elemental shield for a combatant (empty type / zero amounts if absent).
+pub(crate) fn shield_summary(
+    world: &verryte_core::World,
+    entity: verryte_core::Entity,
+) -> (String, i32, i32) {
+    world
+        .get::<ElementalShield>(entity)
+        .filter(|shield| shield.amount > 0)
+        .map(|shield| {
+            (
+                format!("{:?}", shield.shield_type),
+                shield.amount,
+                shield.max_amount,
+            )
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn skill_points(world: &verryte_core::World, entity: verryte_core::Entity) -> u32 {
+    world
+        .get::<crate::components::SkillTree>(entity)
+        .map(|tree| tree.skill_points)
+        .unwrap_or(0)
+}
+
+/// 1-based inventory slot for the selected character (`use:N` / `craft:N,M`).
+pub(crate) fn selected_inventory(
+    world: &verryte_core::World,
+    selected: Option<verryte_core::Entity>,
+) -> Vec<InventoryItemPreview> {
+    let Some(entity) = selected else {
+        return Vec::new();
+    };
+    let Some(inventory) = world.get::<Inventory>(entity) else {
+        return Vec::new();
+    };
+    inventory
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item_entity)| {
+            world
+                .get::<Item>(*item_entity)
+                .map(|item| InventoryItemPreview {
+                    slot: index + 1,
+                    name: item.name.clone(),
+                    effect: item.effect.display_name(),
+                })
+        })
+        .collect()
 }
 
 /// Structured warning for a pending incursion mini-boss attack.
@@ -61,7 +145,8 @@ pub struct Snapshot {
     /// Tiles the currently selected character can reach with movement.
     #[serde(default)]
     pub reachable_tiles: Vec<Position>,
-    /// Tiles the currently selected character can attack (within attack range).
+    /// Enemy tiles the currently selected character can attack from their tile
+    /// (class attack range), independent of cursor position.
     #[serde(default)]
     pub targetable_tiles: Vec<Position>,
     /// True iff there is a character selected who still has AP to act.
@@ -125,11 +210,32 @@ pub struct Snapshot {
     /// Inventory items that can answer the pending floor event without a new recipe.
     #[serde(default)]
     pub pending_floor_event_item_offers: Vec<String>,
+    /// 1-based inventory slots of the currently selected character (`use:N` / `craft:N,M`).
+    #[serde(default)]
+    pub inventory: Vec<InventoryItemPreview>,
     /// Class-specific attacks armed by already-spawned incursion mini-bosses.
     #[serde(default)]
     pub incursion_attacks: Vec<IncursionAttackPreview>,
     #[serde(default)]
     pub active_set_bonuses: Vec<String>,
+    /// Map hazards currently armed for trigger (spikes, vents, lava, ice, ...).
+    #[serde(default)]
+    pub hazards: Vec<HazardPreview>,
+}
+
+/// Structured hazard tile for agent planning.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HazardPreview {
+    pub position: Position,
+    pub kind: String,
+}
+
+/// Selected character inventory slot for scripts and agents.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InventoryItemPreview {
+    pub slot: usize,
+    pub name: String,
+    pub effect: String,
 }
 
 fn default_floor_one() -> u32 {
@@ -469,6 +575,18 @@ pub struct CharacterDiag {
     pub ap: i32,
     pub max_ap: i32,
     pub status: String,
+    #[serde(default)]
+    pub rooted_turns: u32,
+    #[serde(default)]
+    pub stunned_turns: u32,
+    #[serde(default)]
+    pub shield_type: String,
+    #[serde(default)]
+    pub shield_amount: i32,
+    #[serde(default)]
+    pub shield_max: i32,
+    #[serde(default)]
+    pub skill_points: u32,
     pub alive: bool,
     #[serde(default)]
     pub prestige: String,
@@ -481,6 +599,36 @@ pub struct CharacterDiag {
     #[serde(default)]
     pub position: Position,
     pub team: Team,
+}
+
+impl CharacterDiag {
+    /// One-line script/REPL diagnostics, including crowd control and shield.
+    pub fn script_line(&self) -> String {
+        let shield = if self.shield_type.is_empty() || self.shield_amount <= 0 {
+            "none".to_string()
+        } else {
+            format!(
+                "{}:{}/{}",
+                self.shield_type, self.shield_amount, self.shield_max
+            )
+        };
+        format!(
+            "{} {:?}: pos=({},{}) hp={}/{} ap={}/{} status={} rooted={} stunned={} shield={} alive={}",
+            self.name,
+            self.team,
+            self.position.x,
+            self.position.y,
+            self.hp,
+            self.max_hp,
+            self.ap,
+            self.max_ap,
+            self.status,
+            self.rooted_turns,
+            self.stunned_turns,
+            shield,
+            self.alive
+        )
+    }
 }
 
 /// A snapshot of diagnostic information about the game state, useful for

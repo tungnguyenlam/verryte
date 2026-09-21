@@ -704,15 +704,21 @@ impl Game {
                     .get::<Stats>(sel)
                     .map(|s| s.ap > 0)
                     .unwrap_or(false);
+                let origin = self
+                    .world
+                    .get::<Position>(sel)
+                    .copied()
+                    .unwrap_or(state.cursor);
                 let mut targets: Vec<Position> = Vec::new();
                 for (_, team, pos) in self.world.query2::<Team, Position>() {
                     if team == &Team::Enemy {
-                        let dist = (pos.x - state.cursor.x).abs() + (pos.y - state.cursor.y).abs();
+                        let dist = (pos.x - origin.x).abs() + (pos.y - origin.y).abs();
                         if dist <= attack_range {
                             targets.push(*pos);
                         }
                     }
                 }
+                targets.sort_by(|a, b| a.y.cmp(&b.y).then(a.x.cmp(&b.x)));
                 (reachable, targets, can_act)
             } else {
                 (Vec::new(), Vec::new(), false)
@@ -744,6 +750,10 @@ impl Game {
                         .get::<crate::components::ElementalStatus>(entity)
                         .map(|status| format!("{:?}", status))
                         .unwrap_or_else(|| "None".to_string());
+                    let (rooted_turns, stunned_turns) =
+                        crate::snapshot::crowd_control_turns(&self.world, entity);
+                    let (shield_type, shield_amount, shield_max) =
+                        crate::snapshot::shield_summary(&self.world, entity);
                     units.push(crate::snapshot::UnitSummary {
                         entity,
                         name: Self::get_class_name(*class).to_string(),
@@ -755,6 +765,12 @@ impl Game {
                         max_ap: stats.max_ap,
                         selected: state.selected_entity == Some(entity),
                         status,
+                        rooted_turns,
+                        stunned_turns,
+                        shield_type,
+                        shield_amount,
+                        shield_max,
+                        skill_points: crate::snapshot::skill_points(&self.world, entity),
                     });
                 }
                 units.sort_by(|a, b| {
@@ -822,24 +838,11 @@ impl Game {
                 self.get_entity_at(cursor)
                     .and_then(|(target, team, _stats, _class)| {
                         if team == Team::Enemy {
-                            if let (Some(atk_stats), Some(tgt_stats)) = (
-                                self.world.get::<Stats>(sel),
-                                self.world.get::<Stats>(target),
-                            ) {
-                                let mut preview =
-                                    crate::battle_preview::BattlePreview::calculate_damage_preview(
-                                        atk_stats.atk,
-                                        atk_stats.level,
-                                        tgt_stats.def,
-                                        tgt_stats.level,
-                                        1.0,
-                                        20,
-                                    );
-                                preview.can_kill = preview.max_damage >= tgt_stats.hp;
-                                Some(preview)
-                            } else {
-                                None
-                            }
+                            crate::battle_preview::BattlePreview::preview_basic_attack(
+                                &self.world,
+                                sel,
+                                target,
+                            )
                         } else {
                             None
                         }
@@ -1045,6 +1048,7 @@ impl Game {
                         .map(|pending| pending.kind.item_offers())
                 })
                 .unwrap_or_default(),
+            inventory: crate::snapshot::selected_inventory(&self.world, state.selected_entity),
             incursion_attacks: self
                 .world
                 .resource::<crate::components::IncursionAttackTelegraphs>()
@@ -1086,6 +1090,31 @@ impl Game {
                     }
                 })
                 .collect(),
+            hazards: {
+                let mut hazards = self
+                    .world
+                    .resource::<crate::components::ActiveHazards>()
+                    .map(|active| {
+                        active
+                            .hazards
+                            .iter()
+                            .filter(|(_, effect)| effect.trigger_count != 0)
+                            .map(|(pos, effect)| crate::snapshot::HazardPreview {
+                                position: *pos,
+                                kind: effect.hazard_type.display_name().to_string(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                hazards.sort_by(|a, b| {
+                    a.position
+                        .y
+                        .cmp(&b.position.y)
+                        .then(a.position.x.cmp(&b.position.x))
+                        .then(a.kind.cmp(&b.kind))
+                });
+                hazards
+            },
         }
     }
 

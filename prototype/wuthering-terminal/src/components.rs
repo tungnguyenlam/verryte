@@ -348,6 +348,13 @@ pub enum GameEvent {
         position: Position,
         damage: i32,
     },
+    HazardTriggered {
+        hazard: String,
+        target: verryte_core::Entity,
+        position: Position,
+        damage: i32,
+        healing: i32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -361,6 +368,21 @@ pub enum ItemEffect {
     UpgradeKit,
     /// Spend to Brace a telegraphed floor event without paying AP.
     EventWard,
+}
+
+impl ItemEffect {
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Heal(amount) => format!("heal:{amount}"),
+            Self::ReplenishAp(amount) => format!("ap:{amount}"),
+            Self::Cleanse => "cleanse".to_string(),
+            Self::RestoreShield(kind, amount) => format!("shield:{:?}:{amount}", kind),
+            Self::Combined(heal, ap) => format!("heal:{heal}+ap:{ap}"),
+            Self::CleanseAndHeal(amount) => format!("cleanse+heal:{amount}"),
+            Self::UpgradeKit => "upgrade-kit".to_string(),
+            Self::EventWard => "event-ward".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -440,6 +462,35 @@ pub enum HazardType {
     IceTile,
     SteamVent,
     ExplodingBarrel,
+}
+
+impl HazardType {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::SpikeTrap => "spike-trap",
+            Self::PoisonCloud => "poison-cloud",
+            Self::HealingSpring => "healing-spring",
+            Self::CrackedFloor => "cracked-floor",
+            Self::PressurePlate => "pressure-plate",
+            Self::ThornBush => "thorn-bush",
+            Self::FireTile => "fire-tile",
+            Self::IceTile => "ice-tile",
+            Self::SteamVent => "steam-vent",
+            Self::ExplodingBarrel => "exploding-barrel",
+        }
+    }
+
+    pub fn threatens_step_to_safety(self) -> bool {
+        matches!(
+            self,
+            Self::SpikeTrap
+                | Self::PoisonCloud
+                | Self::ThornBush
+                | Self::SteamVent
+                | Self::CrackedFloor
+                | Self::ExplodingBarrel
+        )
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

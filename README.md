@@ -233,8 +233,12 @@ control distinguishable from scripts without changing the shared action path.
 Snapshots expose active modifier names alongside their remaining turns and
 weather danger-zone coordinates so a headless controller can plan from state
 rather than scrape the rendered frame. Unit summaries on each snapshot include
-name, team, position, HP/AP, selection, and status. The shared `safety` action plans against
-the union of boss, incursion, and committed lightning warnings, while weather
+name, team, position, HP/AP, selection, elemental status, remaining
+Rooted/Stunned durations, any elemental shield, and unspent skill points. Armed hazard tiles are listed on `hazards`.
+The selected character's 1-based inventory slots appear on `inventory` for `use:N` / `craft:N,M`.
+`damage_preview` uses equipment-adjusted ATK/DEF; `can_kill` counts remaining shield as extra HP.
+The shared `safety` action plans against
+the union of boss, incursion, committed lightning warnings, and damaging trap tiles, while weather
 effects themselves advance once per game turn. Event-spawned mini-bosses keep
 that contract after arrival: they arm class-specific `TileShape` attacks for one
 player turn, and `incursion_attacks` reports the attacker, pattern, origin,
@@ -252,15 +256,16 @@ cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
 `verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, save/load, recording, replay controls, UI/tool toggles, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, echo absorption, boss phase transition, save/load, recording/replay state changes, replay steps, rest recovery, floor modifier rerolls, scheduled deeper-floor events and player responses (brace/intercept/embrace plus item answers: purify/bolster/channel, and Energy Elixir remote intercept), status views, and precise failure reports for invalid inventory/crafting/floor/replay actions.
-The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
+The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action. Closing diagnostics lines include remaining Rooted/Stunned durations and elemental shield.
 
 ## Verification
 
 The normal check for the workspace is:
 
 ```sh
-cargo fmt --check
-cargo test
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 This environment must have the Rust toolchain on `PATH` for those commands.

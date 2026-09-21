@@ -19,7 +19,8 @@ pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
 pub use snapshot::{
-    ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, Snapshot, StepReport, UnitSummary,
+    ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, InventoryItemPreview, Snapshot,
+    StepReport, UnitSummary,
 };
 pub use spawn::{base_stats, scale_stats_by_floor, Spawner};
 pub use verryte_map::Point as Position;
@@ -1332,6 +1333,325 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_units_expose_rooted_and_stunned_on_shared_action_path() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::Warrior)
+            .map(|(entity, _)| entity)
+            .unwrap();
+
+        let start = game.snapshot();
+        let kael_start = start
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .expect("Kael should appear in snapshot units");
+        assert_eq!(kael_start.rooted_turns, 0);
+        assert_eq!(kael_start.stunned_turns, 0);
+
+        game.world
+            .insert(kael, crate::components::Rooted { duration: 2 });
+        game.world
+            .insert(kael, crate::components::Stunned { duration: 1 });
+
+        let report = game.apply_action(Action::MoveNorth, ActionSource::Script);
+        let kael_after = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .expect("Kael should remain in snapshot units");
+        assert_eq!(kael_after.rooted_turns, 2);
+        assert_eq!(kael_after.stunned_turns, 1);
+        assert_eq!(
+            kael_after.status, "None",
+            "crowd control is distinct from elemental status"
+        );
+
+        let mira = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.name == "Mira")
+            .expect("Mira should appear in snapshot units");
+        assert_eq!(mira.rooted_turns, 0);
+        assert_eq!(mira.stunned_turns, 0);
+
+        let diag = game.diagnostics();
+        let kael_diag = diag
+            .characters
+            .iter()
+            .find(|character| character.name == "Kael")
+            .expect("diagnostics should include Kael");
+        assert_eq!(kael_diag.rooted_turns, 2);
+        assert_eq!(kael_diag.stunned_turns, 1);
+        let line = kael_diag.script_line();
+        assert!(
+            line.contains("rooted=2") && line.contains("stunned=1") && line.contains("shield=none"),
+            "script diagnostics should print CC and empty shield, got {line}"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_units_expose_shields_and_can_kill_accounts_for_them() {
+        let mut game = Game::new();
+        let stalker = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::ShadowStalker)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let stalker_pos = *game.world.get::<Position>(stalker).unwrap();
+        game.world.get_mut::<Stats>(stalker).unwrap().hp = 1;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = stalker_pos;
+        }
+        let unshielded = game.snapshot();
+        let preview = unshielded
+            .damage_preview
+            .as_ref()
+            .expect("selecting Kael onto a stalker should produce a damage preview");
+        assert!(
+            preview.can_kill,
+            "1 HP target with no shield should be killable, got {:?}",
+            preview
+        );
+
+        game.world.insert(
+            stalker,
+            crate::components::ElementalShield {
+                shield_type: crate::components::ShieldType::Physical,
+                amount: 500,
+                max_amount: 500,
+            },
+        );
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        let stalker_unit = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.entity == stalker)
+            .expect("stalker should remain in snapshot units");
+        assert_eq!(stalker_unit.shield_type, "Physical");
+        assert_eq!(stalker_unit.shield_amount, 500);
+        assert_eq!(stalker_unit.shield_max, 500);
+        let preview = report
+            .after
+            .damage_preview
+            .as_ref()
+            .expect("cursor should still be on the stalker after Wait");
+        assert!(
+            !preview.can_kill,
+            "500 shield should block a can-kill preview, got {:?}",
+            preview
+        );
+
+        let diag = game.diagnostics();
+        let stalker_diag = diag
+            .characters
+            .iter()
+            .find(|character| character.name == stalker_unit.name)
+            .expect("diagnostics should include the stalker");
+        assert_eq!(stalker_diag.shield_type, "Physical");
+        assert_eq!(stalker_diag.shield_amount, 500);
+        assert!(
+            stalker_diag
+                .script_line()
+                .contains("shield=Physical:500/500"),
+            "script diagnostics should print remaining shield, got {}",
+            stalker_diag.script_line()
+        );
+    }
+
+    #[test]
+    fn test_snapshot_inventory_exposes_selected_slots_on_shared_action_path() {
+        let mut game = Game::new();
+        let snap = game.snapshot();
+        assert!(
+            snap.inventory.is_empty(),
+            "no selection should hide inventory slots, got {:?}",
+            snap.inventory
+        );
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        let selected = game.apply_action(Action::Confirm, ActionSource::Script);
+        assert_eq!(
+            selected
+                .after
+                .inventory
+                .iter()
+                .map(|item| (item.slot, item.name.as_str(), item.effect.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, "Healing Potion", "heal:30"),
+                (2, "Energy Elixir", "ap:2"),
+                (3, "Aegis Elixir", "shield:Physical:30"),
+            ]
+        );
+
+        game.apply_action(Action::ToggleInventory, ActionSource::Script);
+        let used = game.apply_action(Action::UseItem(0), ActionSource::Script);
+        assert!(
+            matches!(used.outcome, ActionOutcome::ItemUsed { ref name } if name == "Healing Potion"),
+            "expected potion use, got {:?}",
+            used.outcome
+        );
+        assert_eq!(
+            used.after
+                .inventory
+                .iter()
+                .map(|item| (item.slot, item.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1, "Energy Elixir"), (2, "Aegis Elixir")]
+        );
+    }
+
+    #[test]
+    fn test_damage_preview_includes_equipment_bonuses_on_shared_action_path() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::Warrior)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let stalker = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::ShadowStalker)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let stalker_pos = *game.world.get::<Position>(stalker).unwrap();
+        let atk_stats = game.world.get::<Stats>(warrior).unwrap().clone();
+        let tgt_stats = game.world.get::<Stats>(stalker).unwrap().clone();
+        let unequipped = crate::battle_preview::BattlePreview::calculate_damage_preview(
+            atk_stats.atk,
+            atk_stats.level,
+            tgt_stats.def,
+            tgt_stats.level,
+            1.0,
+            20,
+        );
+        let equipped = crate::battle_preview::BattlePreview::preview_basic_attack(
+            &game.world,
+            warrior,
+            stalker,
+        )
+        .expect("Kael and the stalker should produce a preview");
+        assert!(
+            equipped.max_damage > unequipped.max_damage,
+            "Iron Sword should raise previewed max damage, equipped={:?} unequipped={:?}",
+            equipped,
+            unequipped
+        );
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = stalker_pos;
+        }
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        let preview = report
+            .after
+            .damage_preview
+            .as_ref()
+            .expect("cursor on the stalker should produce a damage preview");
+        assert_eq!(preview.max_damage, equipped.max_damage);
+        assert_eq!(preview.min_damage, equipped.min_damage);
+        assert_eq!(preview.can_kill, equipped.can_kill);
+    }
+
+    #[test]
+    fn stepping_on_spike_trap_via_shared_action_deals_damage() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let hp_before = game.world.get::<Stats>(warrior).unwrap().hp;
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(Position::new(4, 5), Tile::SpikeTrap);
+        }
+        let hazards = {
+            let map = game.world.resource::<TacticalMap>().unwrap();
+            crate::hazards::HazardSystem::initialize_hazards(map)
+        };
+        game.world.insert_resource(hazards);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        let report = game.apply_action(Action::Confirm, ActionSource::Script);
+        assert!(
+            matches!(report.outcome, ActionOutcome::Moved { .. }),
+            "expected move onto spike trap, got {:?}",
+            report.outcome
+        );
+        assert!(
+            report.events.iter().any(|event| matches!(
+                event,
+                crate::components::GameEvent::HazardTriggered { hazard, damage, .. }
+                    if hazard == "spike-trap" && *damage == 15
+            )),
+            "expected HazardTriggered event, got {:?}",
+            report.events
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, hp_before - 15);
+        assert!(
+            !game
+                .snapshot()
+                .hazards
+                .iter()
+                .any(|h| h.position == Position::new(4, 5) && h.kind == "spike-trap"),
+            "one-shot spike trap should be exhausted after trigger"
+        );
+    }
+
+    #[test]
+    fn snapshot_hazards_are_sorted_by_tile() {
+        let game = Game::new();
+        let keys: Vec<_> = game
+            .snapshot()
+            .hazards
+            .iter()
+            .map(|h| (h.position.y, h.position.x, h.kind.clone()))
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
     fn test_full_script_victory_path() {
         let mut game = Game::new();
 
@@ -1615,9 +1935,58 @@ mod tests {
         assert!(snap.selected_can_act);
         // Reachable tiles are non-empty (warrior at (4,4) can reach several tiles).
         assert!(!snap.reachable_tiles.is_empty());
-        // Targetable tiles may or may not be empty depending on cursor position.
-        // The default cursor is (0,0), so no enemy is in range initially.
+        // No enemy starts adjacent to Kael, so melee range is empty.
         assert!(snap.targetable_tiles.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_targetable_tiles_use_selected_unit_not_cursor() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query2::<CharacterClass, Position>()
+            .into_iter()
+            .find(|(_, class, _)| **class == CharacterClass::Warrior)
+            .map(|(entity, _, _)| entity)
+            .unwrap();
+        let stalker = game
+            .world
+            .query2::<CharacterClass, Position>()
+            .into_iter()
+            .find(|(_, class, _)| **class == CharacterClass::ShadowStalker)
+            .map(|(entity, _, _)| entity)
+            .unwrap();
+        *game.world.get_mut::<Position>(stalker).unwrap() = Position::new(5, 4);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().selected_entity,
+            Some(warrior)
+        );
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(0, 0);
+        }
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        assert_eq!(report.after.cursor, Position::new(0, 0));
+        assert!(
+            report.after.targetable_tiles.contains(&Position::new(5, 4)),
+            "melee range is from Kael at (4,4), not the distant cursor, got {:?}",
+            report.after.targetable_tiles
+        );
+        let keys: Vec<_> = report
+            .after
+            .targetable_tiles
+            .iter()
+            .map(|pos| (pos.y, pos.x))
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
     }
 
     #[test]
@@ -2712,6 +3081,26 @@ mod tests {
         }
         assert!(has_grass);
         assert!(has_wall);
+
+        let hazards = game
+            .world
+            .resource::<crate::components::ActiveHazards>()
+            .expect("Floor 2 should initialize ActiveHazards");
+        assert!(
+            !hazards.hazards.is_empty(),
+            "Floor 2 should populate trap tiles"
+        );
+        let snap = game.snapshot();
+        assert!(
+            snap.hazards.iter().any(|h| h.kind == "spike-trap"
+                || h.kind == "poison-cloud"
+                || h.kind == "thorn-bush"
+                || h.kind == "healing-spring"
+                || h.kind == "cracked-floor"
+                || h.kind == "pressure-plate"),
+            "snapshot should expose populated floor hazards, got {:?}",
+            snap.hazards
+        );
 
         let enemy_boss_exists = game
             .world
@@ -8335,6 +8724,27 @@ mod tests {
             assert_eq!(skill_tree.skill_points, 1);
         }
 
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+        }
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        let kael = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.entity == warrior)
+            .expect("Kael should remain in snapshot units");
+        assert_eq!(kael.skill_points, 1);
+        assert_eq!(
+            game.diagnostics()
+                .characters
+                .iter()
+                .find(|character| character.name == "Kael")
+                .map(|character| character.skill_points),
+            Some(1)
+        );
+
         // Select Kael
         {
             let state = game.world.resource_mut::<GameState>().unwrap();
@@ -8373,6 +8783,13 @@ mod tests {
                 .unwrap();
             assert!(upgrade.unlocked);
         }
+        let kael = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.entity == warrior)
+            .expect("Kael should remain in snapshot units");
+        assert_eq!(kael.skill_points, 0);
     }
 
     #[test]

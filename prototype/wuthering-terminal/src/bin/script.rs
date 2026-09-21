@@ -172,19 +172,7 @@ fn main() {
                 diag.concert_energy
             );
             for ch in &diag.characters {
-                println!(
-                    "  {} {:?}: pos=({},{}) hp={}/{} ap={}/{} status={} alive={}",
-                    ch.name,
-                    ch.team,
-                    ch.position.x,
-                    ch.position.y,
-                    ch.hp,
-                    ch.max_hp,
-                    ch.ap,
-                    ch.max_ap,
-                    ch.status,
-                    ch.alive
-                );
+                println!("  {}", ch.script_line());
             }
             print_battle_summary(&game);
         }
@@ -316,19 +304,7 @@ fn run_repl() {
                 diag.concert_energy
             );
             for ch in &diag.characters {
-                println!(
-                    "  {} {:?}: pos=({},{}) hp={}/{} ap={}/{} status={} alive={}",
-                    ch.name,
-                    ch.team,
-                    ch.position.x,
-                    ch.position.y,
-                    ch.hp,
-                    ch.max_hp,
-                    ch.ap,
-                    ch.max_ap,
-                    ch.status,
-                    ch.alive
-                );
+                println!("  {}", ch.script_line());
             }
         } else {
             match game.router.inject_script_with(

@@ -176,6 +176,15 @@ fn enemy_hazard_check(world: &mut World, entity: Entity, pos: Position) {
         s.hp = (s.hp - dmg + heal).clamp(0, s.max_hp);
         hp_after = s.hp;
     }
+    if let Some(events) = world.resource_mut::<Events<GameEvent>>() {
+        events.send(GameEvent::HazardTriggered {
+            hazard: result.hazard_type.display_name().to_string(),
+            target: entity,
+            position: pos,
+            damage: dmg,
+            healing: heal,
+        });
+    }
     if hp_after <= 0 {
         let class = world
             .get::<CharacterClass>(entity)

@@ -125,6 +125,15 @@ impl HazardSystem {
     }
 
     pub fn populate_hazards(map: &mut TacticalMap, floor: u32, seed: u64) -> ActiveHazards {
+        Self::populate_hazards_except(map, floor, seed, &[])
+    }
+
+    pub fn populate_hazards_except(
+        map: &mut TacticalMap,
+        floor: u32,
+        seed: u64,
+        exclude: &[Position],
+    ) -> ActiveHazards {
         let mut state = seed | 1;
         let mut rng = || -> u64 {
             state ^= state << 13;
@@ -145,12 +154,15 @@ impl HazardSystem {
 
         let mut placed = 0;
         let mut attempts = 0;
-        while placed < count && attempts < count * 10 {
+        while placed < count && attempts < count * 20 {
             attempts += 1;
             let x = (rng() % (map.width.saturating_sub(2)) as u64) as i16 + 1;
             let y = (rng() % (map.height.saturating_sub(2)) as u64) as i16 + 1;
             let pos = Position::new(x, y);
-            if map.tile(x, y) == Tile::Grass {
+            let blocked = exclude
+                .iter()
+                .any(|p| (p.x - x).abs() + (p.y - y).abs() <= 1);
+            if map.tile(x, y) == Tile::Grass && !blocked {
                 let tile_idx = (rng() % hazard_tiles.len() as u64) as usize;
                 map.tiles.set(pos, hazard_tiles[tile_idx]);
                 placed += 1;

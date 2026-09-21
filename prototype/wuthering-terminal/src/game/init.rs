@@ -240,6 +240,12 @@ impl Game {
         game.log("Move cursor: Arrows/WASD. Confirm: Enter. Cancel: Esc.");
         game.log("End Turn: E. Cycle: Tab. Bestiary/Lore: J.");
 
+        let hazards = {
+            let map = game.world.resource::<TacticalMap>().unwrap();
+            crate::hazards::HazardSystem::initialize_hazards(map)
+        };
+        game.world.insert_resource(hazards);
+
         game
     }
 
@@ -474,6 +480,21 @@ impl Game {
                 );
             }
         }
+
+        let mut excluded = vec![player_spawn];
+        for (_, pos, _) in self.world.query2::<Position, Team>() {
+            excluded.push(*pos);
+        }
+        let hazards = {
+            let map = self.world.resource_mut::<TacticalMap>().unwrap();
+            crate::hazards::HazardSystem::populate_hazards_except(
+                map,
+                floor,
+                seed.wrapping_add(200),
+                &excluded,
+            )
+        };
+        self.world.insert_resource(hazards);
 
         // 6. Reset GameState parameters for next floor
         if let Some(state) = self.world.resource_mut::<GameState>() {
