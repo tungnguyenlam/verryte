@@ -37,6 +37,13 @@ pub struct UnitSummary {
     /// Remaining Stunned duration in turns (0 if the unit is not stunned).
     #[serde(default)]
     pub stunned_turns: u32,
+    /// Shield element name, or empty when no shield is present.
+    #[serde(default)]
+    pub shield_type: String,
+    #[serde(default)]
+    pub shield_amount: i32,
+    #[serde(default)]
+    pub shield_max: i32,
 }
 
 /// Remaining Rooted / Stunned durations for a combatant (0 if the component is absent).
@@ -53,6 +60,24 @@ pub(crate) fn crowd_control_turns(
         .map(|stunned| stunned.duration)
         .unwrap_or(0);
     (rooted, stunned)
+}
+
+/// Remaining elemental shield for a combatant (empty type / zero amounts if absent).
+pub(crate) fn shield_summary(
+    world: &verryte_core::World,
+    entity: verryte_core::Entity,
+) -> (String, i32, i32) {
+    world
+        .get::<ElementalShield>(entity)
+        .filter(|shield| shield.amount > 0)
+        .map(|shield| {
+            (
+                format!("{:?}", shield.shield_type),
+                shield.amount,
+                shield.max_amount,
+            )
+        })
+        .unwrap_or_default()
 }
 
 /// Structured warning for a pending incursion mini-boss attack.
@@ -505,6 +530,12 @@ pub struct CharacterDiag {
     pub rooted_turns: u32,
     #[serde(default)]
     pub stunned_turns: u32,
+    #[serde(default)]
+    pub shield_type: String,
+    #[serde(default)]
+    pub shield_amount: i32,
+    #[serde(default)]
+    pub shield_max: i32,
     pub alive: bool,
     #[serde(default)]
     pub prestige: String,

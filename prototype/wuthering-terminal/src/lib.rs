@@ -1390,6 +1390,78 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_units_expose_shields_and_can_kill_accounts_for_them() {
+        let mut game = Game::new();
+        let stalker = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::ShadowStalker)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let stalker_pos = *game.world.get::<Position>(stalker).unwrap();
+        game.world.get_mut::<Stats>(stalker).unwrap().hp = 1;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = stalker_pos;
+        }
+        let unshielded = game.snapshot();
+        let preview = unshielded
+            .damage_preview
+            .as_ref()
+            .expect("selecting Kael onto a stalker should produce a damage preview");
+        assert!(
+            preview.can_kill,
+            "1 HP target with no shield should be killable, got {:?}",
+            preview
+        );
+
+        game.world.insert(
+            stalker,
+            crate::components::ElementalShield {
+                shield_type: crate::components::ShieldType::Physical,
+                amount: 500,
+                max_amount: 500,
+            },
+        );
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        let stalker_unit = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.entity == stalker)
+            .expect("stalker should remain in snapshot units");
+        assert_eq!(stalker_unit.shield_type, "Physical");
+        assert_eq!(stalker_unit.shield_amount, 500);
+        assert_eq!(stalker_unit.shield_max, 500);
+        let preview = report
+            .after
+            .damage_preview
+            .as_ref()
+            .expect("cursor should still be on the stalker after Wait");
+        assert!(
+            !preview.can_kill,
+            "500 shield should block a can-kill preview, got {:?}",
+            preview
+        );
+
+        let diag = game.diagnostics();
+        let stalker_diag = diag
+            .characters
+            .iter()
+            .find(|character| character.name == stalker_unit.name)
+            .expect("diagnostics should include the stalker");
+        assert_eq!(stalker_diag.shield_type, "Physical");
+        assert_eq!(stalker_diag.shield_amount, 500);
+    }
+
+    #[test]
     fn stepping_on_spike_trap_via_shared_action_deals_damage() {
         let mut game = Game::new();
         let warrior = game

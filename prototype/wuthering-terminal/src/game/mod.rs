@@ -211,6 +211,8 @@ impl Game {
                 .unwrap_or_else(|| "None".to_string());
             let (rooted_turns, stunned_turns) =
                 crate::snapshot::crowd_control_turns(&self.world, e);
+            let (shield_type, shield_amount, shield_max) =
+                crate::snapshot::shield_summary(&self.world, e);
             let is_alive = stats.hp > 0;
             if is_alive {
                 alive += 1;
@@ -250,6 +252,9 @@ impl Game {
                 status,
                 rooted_turns,
                 stunned_turns,
+                shield_type,
+                shield_amount,
+                shield_max,
                 alive: is_alive,
                 prestige: prestige_str,
                 morale: morale_val,

@@ -34,6 +34,12 @@ impl BattlePreview {
         }
     }
 
+    /// True when even the preview's max roll would drop HP through remaining shield.
+    pub fn lethal_against(preview: &DamagePreview, hp: i32, shield_amount: i32) -> bool {
+        let effective_hp = hp.saturating_add(shield_amount.max(0));
+        preview.max_damage >= effective_hp
+    }
+
     pub fn calculate_aoe_preview(
         center: Position,
         radius: i16,
@@ -848,13 +854,12 @@ mod tests {
     #[test]
     fn test_can_kill_flag() {
         let preview = BattlePreview::calculate_damage_preview(40, 5, 5, 1, 1.0, 20);
-        let mut p = preview.clone();
-        p.can_kill = p.max_damage >= 30;
-        assert!(p.can_kill);
-
-        let mut p2 = preview.clone();
-        p2.can_kill = p2.max_damage >= 200;
-        assert!(!p2.can_kill);
+        assert!(BattlePreview::lethal_against(&preview, 30, 0));
+        assert!(!BattlePreview::lethal_against(&preview, 200, 0));
+        assert!(
+            !BattlePreview::lethal_against(&preview, 30, 500),
+            "remaining shield should prevent a can-kill preview"
+        );
     }
 
     #[test]
