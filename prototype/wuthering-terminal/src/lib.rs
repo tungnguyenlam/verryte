@@ -8724,6 +8724,27 @@ mod tests {
             assert_eq!(skill_tree.skill_points, 1);
         }
 
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+        }
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        let kael = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.entity == warrior)
+            .expect("Kael should remain in snapshot units");
+        assert_eq!(kael.skill_points, 1);
+        assert_eq!(
+            game.diagnostics()
+                .characters
+                .iter()
+                .find(|character| character.name == "Kael")
+                .map(|character| character.skill_points),
+            Some(1)
+        );
+
         // Select Kael
         {
             let state = game.world.resource_mut::<GameState>().unwrap();
@@ -8762,6 +8783,13 @@ mod tests {
                 .unwrap();
             assert!(upgrade.unlocked);
         }
+        let kael = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.entity == warrior)
+            .expect("Kael should remain in snapshot units");
+        assert_eq!(kael.skill_points, 0);
     }
 
     #[test]

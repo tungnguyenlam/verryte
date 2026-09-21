@@ -255,6 +255,7 @@ impl Game {
                 shield_type,
                 shield_amount,
                 shield_max,
+                skill_points: crate::snapshot::skill_points(&self.world, e),
                 alive: is_alive,
                 prestige: prestige_str,
                 morale: morale_val,

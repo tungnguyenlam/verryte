@@ -770,6 +770,7 @@ impl Game {
                         shield_type,
                         shield_amount,
                         shield_max,
+                        skill_points: crate::snapshot::skill_points(&self.world, entity),
                     });
                 }
                 units.sort_by(|a, b| {

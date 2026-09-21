@@ -44,6 +44,9 @@ pub struct UnitSummary {
     pub shield_amount: i32,
     #[serde(default)]
     pub shield_max: i32,
+    /// Unspent skill-tree points (0 for units without a `SkillTree`).
+    #[serde(default)]
+    pub skill_points: u32,
 }
 
 /// Remaining Rooted / Stunned durations for a combatant (0 if the component is absent).
@@ -78,6 +81,13 @@ pub(crate) fn shield_summary(
             )
         })
         .unwrap_or_default()
+}
+
+pub(crate) fn skill_points(world: &verryte_core::World, entity: verryte_core::Entity) -> u32 {
+    world
+        .get::<crate::components::SkillTree>(entity)
+        .map(|tree| tree.skill_points)
+        .unwrap_or(0)
 }
 
 /// 1-based inventory slot for the selected character (`use:N` / `craft:N,M`).
@@ -575,6 +585,8 @@ pub struct CharacterDiag {
     pub shield_amount: i32,
     #[serde(default)]
     pub shield_max: i32,
+    #[serde(default)]
+    pub skill_points: u32,
     pub alive: bool,
     #[serde(default)]
     pub prestige: String,
