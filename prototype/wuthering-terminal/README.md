@@ -160,6 +160,8 @@ appear in `enemy_intents` and as structured `IncursionAttackTelegraphed` /
 `IncursionAttackResolved` game events.
 Committed lightning strikes likewise appear in headless end-turn reports as
 `WeatherHazardResolved` events and contribute to battle damage-taken totals.
+Floor 2+ generation places seed-driven trap tiles; snapshots expose `hazards`
+and stepping on them emits `GameEvent::HazardTriggered` through `apply_action()`.
 
 ### Script tokens
 

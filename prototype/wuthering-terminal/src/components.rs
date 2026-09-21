@@ -348,6 +348,13 @@ pub enum GameEvent {
         position: Position,
         damage: i32,
     },
+    HazardTriggered {
+        hazard: String,
+        target: verryte_core::Entity,
+        position: Position,
+        damage: i32,
+        healing: i32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -440,6 +447,23 @@ pub enum HazardType {
     IceTile,
     SteamVent,
     ExplodingBarrel,
+}
+
+impl HazardType {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::SpikeTrap => "spike-trap",
+            Self::PoisonCloud => "poison-cloud",
+            Self::HealingSpring => "healing-spring",
+            Self::CrackedFloor => "cracked-floor",
+            Self::PressurePlate => "pressure-plate",
+            Self::ThornBush => "thorn-bush",
+            Self::FireTile => "fire-tile",
+            Self::IceTile => "ice-tile",
+            Self::SteamVent => "steam-vent",
+            Self::ExplodingBarrel => "exploding-barrel",
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

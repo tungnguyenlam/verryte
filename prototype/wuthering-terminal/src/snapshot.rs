@@ -130,6 +130,16 @@ pub struct Snapshot {
     pub incursion_attacks: Vec<IncursionAttackPreview>,
     #[serde(default)]
     pub active_set_bonuses: Vec<String>,
+    /// Map hazards currently armed for trigger (spikes, vents, lava, ice, ...).
+    #[serde(default)]
+    pub hazards: Vec<HazardPreview>,
+}
+
+/// Structured hazard tile for agent planning.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HazardPreview {
+    pub position: Position,
+    pub kind: String,
 }
 
 fn default_floor_one() -> u32 {

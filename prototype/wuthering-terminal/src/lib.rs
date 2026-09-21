@@ -1332,6 +1332,62 @@ mod tests {
     }
 
     #[test]
+    fn stepping_on_spike_trap_via_shared_action_deals_damage() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let hp_before = game.world.get::<Stats>(warrior).unwrap().hp;
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(Position::new(4, 5), Tile::SpikeTrap);
+        }
+        let hazards = {
+            let map = game.world.resource::<TacticalMap>().unwrap();
+            crate::hazards::HazardSystem::initialize_hazards(map)
+        };
+        game.world.insert_resource(hazards);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        let report = game.apply_action(Action::Confirm, ActionSource::Script);
+        assert!(
+            matches!(report.outcome, ActionOutcome::Moved { .. }),
+            "expected move onto spike trap, got {:?}",
+            report.outcome
+        );
+        assert!(
+            report.events.iter().any(|event| matches!(
+                event,
+                crate::components::GameEvent::HazardTriggered { hazard, damage, .. }
+                    if hazard == "spike-trap" && *damage == 15
+            )),
+            "expected HazardTriggered event, got {:?}",
+            report.events
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, hp_before - 15);
+        assert!(
+            !game
+                .snapshot()
+                .hazards
+                .iter()
+                .any(|h| h.position == Position::new(4, 5) && h.kind == "spike-trap"),
+            "one-shot spike trap should be exhausted after trigger"
+        );
+    }
+
+    #[test]
     fn test_full_script_victory_path() {
         let mut game = Game::new();
 
@@ -2712,6 +2768,26 @@ mod tests {
         }
         assert!(has_grass);
         assert!(has_wall);
+
+        let hazards = game
+            .world
+            .resource::<crate::components::ActiveHazards>()
+            .expect("Floor 2 should initialize ActiveHazards");
+        assert!(
+            !hazards.hazards.is_empty(),
+            "Floor 2 should populate trap tiles"
+        );
+        let snap = game.snapshot();
+        assert!(
+            snap.hazards.iter().any(|h| h.kind == "spike-trap"
+                || h.kind == "poison-cloud"
+                || h.kind == "thorn-bush"
+                || h.kind == "healing-spring"
+                || h.kind == "cracked-floor"
+                || h.kind == "pressure-plate"),
+            "snapshot should expose populated floor hazards, got {:?}",
+            snap.hazards
+        );
 
         let enemy_boss_exists = game
             .world

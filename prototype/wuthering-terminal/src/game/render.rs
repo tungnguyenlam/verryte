@@ -1086,6 +1086,21 @@ impl Game {
                     }
                 })
                 .collect(),
+            hazards: self
+                .world
+                .resource::<crate::components::ActiveHazards>()
+                .map(|active| {
+                    active
+                        .hazards
+                        .iter()
+                        .filter(|(_, effect)| effect.trigger_count != 0)
+                        .map(|(pos, effect)| crate::snapshot::HazardPreview {
+                            position: *pos,
+                            kind: effect.hazard_type.display_name().to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
