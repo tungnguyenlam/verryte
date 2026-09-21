@@ -352,6 +352,8 @@ pub fn create_registry() -> WorldRegistry {
         "IncursionAttackTelegraphs",
     );
     reg.register_resource::<crate::components::ActiveHazards>("ActiveHazards");
+    reg.register_resource::<crate::components::ReplayState>("ReplayState");
+    reg.register_resource::<crate::components::BossConfig>("BossConfig");
 
     reg
 }

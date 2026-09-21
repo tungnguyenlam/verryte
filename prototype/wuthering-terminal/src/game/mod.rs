@@ -350,7 +350,25 @@ impl Game {
             .map(|events| events.iter().count())
             .unwrap_or(0);
 
-        // Re-insert non-snapshotted resources
+        self.restore_runtime_resources();
+        crate::systems::adopt_legacy_frenzy_buffs(&mut self.world);
+
+        // Sync camera from resource
+        if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {
+            self.camera = camera.clone();
+        }
+
+        Ok(())
+    }
+
+    /// Re-insert resources that `WorldRegistry::apply` cannot restore.
+    ///
+    /// `apply` clears the world, then deserializes only registered types.
+    /// Presentation/runtime resources (VFX, dialogue, text input, diagnostics)
+    /// are not snapshotted, and older saves may omit newly registered ones
+    /// such as `ReplayState` and `BossConfig`. Gameplay actions unwrap several
+    /// of these, so a load must leave them present.
+    fn restore_runtime_resources(&mut self) {
         let mut asset_registry = verryte_terminal::assets::VisualRegistry::new();
         crate::generated_assets::register_assets(&mut asset_registry);
         self.world.insert_resource(asset_registry);
@@ -422,15 +440,64 @@ impl Game {
             self.world
                 .insert_resource(crate::components::IncursionAttackTelegraphs::default());
         }
-
-        crate::systems::adopt_legacy_frenzy_buffs(&mut self.world);
-
-        // Sync camera from resource
-        if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {
-            self.camera = camera.clone();
+        if self
+            .world
+            .resource::<verryte_terminal::vfx::VfxSystem>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(verryte_terminal::vfx::VfxSystem::new());
         }
-
-        Ok(())
+        if self
+            .world
+            .resource::<verryte_terminal::DialogueState>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(verryte_terminal::DialogueState::new("Narrative", ""));
+        }
+        if self.world.resource::<verryte_input::TextInput>().is_none() {
+            self.world.insert_resource(verryte_input::TextInput::new());
+        }
+        if self
+            .world
+            .resource::<crate::components::AvailableCombos>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::AvailableCombos::default());
+        }
+        if self.world.resource::<verryte_core::Diagnostics>().is_none() {
+            self.world.insert_resource(verryte_core::Diagnostics::new());
+        }
+        if self
+            .world
+            .resource::<crate::components::ReplayState>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::ReplayState::default());
+        }
+        if self
+            .world
+            .resource::<crate::components::BossConfig>()
+            .is_none()
+        {
+            self.world
+                .insert_resource(crate::components::BossConfig::default());
+        }
+        if self
+            .world
+            .resource::<crate::components::ActiveHazards>()
+            .is_none()
+        {
+            let hazards = self
+                .world
+                .resource::<crate::map::TacticalMap>()
+                .map(crate::hazards::HazardSystem::initialize_hazards)
+                .unwrap_or_default();
+            self.world.insert_resource(hazards);
+        }
     }
 
     fn migrate_save_state(
