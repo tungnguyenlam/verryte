@@ -1,5 +1,22 @@
 # Verryte Worklog
 
+## 2026-09-21 - verification docs and stable hazard snapshots
+
+**Goal.** README still documented `cargo fmt --check` / `cargo test` while the
+workspace gate is fmt `--all`, test `--workspace`, and clippy `-D warnings`.
+Hazard snapshot order followed `ActiveHazards` insertion order.
+
+**Accomplishments.** Root `README.md` and `OpenCode.md` now list the same
+verification commands as `prompt/improve.md`. Snapshot `hazards` sort by tile
+then kind so agent JSON is stable.
+
+**Verification.** `cargo test -p wuthering-terminal --lib sorted_by_tile` passes.
+Full workspace fmt/test/clippy follows this checkpoint.
+
+**Next Steps.** Keep Frenzy deltas on `active_modifiers`. Add
+`TileGrid::contains_in_shape` only if a second clipped membership caller
+appears. Keep schedule-settling local until a second consumer exists.
+
 ## 2026-09-21 - StepToSafety avoids damaging traps
 
 **Goal.** `Action::StepToSafety` treated telegraphs, incursions, and lightning as
@@ -89,8 +106,6 @@ pass. Agent runner frames are 24 and 40 lines at `--size 80x24` and `120x40`.
 membership caller appears. Snapshot per-entity Frenzy deltas only if agents
 need more than `active_modifiers`. Keep schedule-settling and danger-union
 construction local to Wuthering Terminal until a second consumer exists.
-
-## 2026-09-21 - allocation-free TileShape membership
 
 ## 2026-09-21 - allocation-free TileShape membership
 
