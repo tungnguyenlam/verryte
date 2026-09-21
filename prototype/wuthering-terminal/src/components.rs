@@ -978,6 +978,14 @@ pub struct ActiveFloorModifiers {
     pub last_processed_turn: Option<u32>,
 }
 
+/// Records the ATK/DEF deltas Frenzy actually applied so expiry and reroll can
+/// reverse them without inventing DEF for entities that started at zero.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FrenzyBuff {
+    pub atk_delta: i32,
+    pub def_delta: i32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FloorEventKind {
     ModifierSurge {

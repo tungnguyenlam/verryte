@@ -119,6 +119,7 @@ impl Game {
             camera_locked: true,
             last_outcome: crate::snapshot::ActionOutcome::NoOp,
             processed_game_events: 0,
+            nested_replay_events: Vec::new(),
             boss_transitioned: false,
             _audio_stream: audio_stream,
         };

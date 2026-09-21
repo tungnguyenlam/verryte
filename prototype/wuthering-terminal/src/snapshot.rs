@@ -327,6 +327,7 @@ pub fn create_registry() -> WorldRegistry {
     reg.register_component::<crate::components::IncursionFirstAttackDisrupted>(
         "IncursionFirstAttackDisrupted",
     );
+    reg.register_component::<crate::components::FrenzyBuff>("FrenzyBuff");
 
     // Resources
     reg.register_core_resources();

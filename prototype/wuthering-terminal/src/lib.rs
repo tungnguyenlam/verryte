@@ -6779,9 +6779,14 @@ mod tests {
         assert_eq!(multiplier_with_mod, 2.0);
     }
 
+    fn clear_floor_modifiers(game: &mut Game) {
+        crate::systems::select_floor_modifiers_with_override(&mut game.world, vec![], vec![]);
+    }
+
     #[test]
     fn test_frenzy_applies_stat_changes() {
         let mut game = Game::new();
+        clear_floor_modifiers(&mut game);
 
         let warrior = game
             .world
@@ -6807,6 +6812,189 @@ mod tests {
             new_def,
             (initial_def - 1).max(0),
             "Frenzy should reduce DEF by 1"
+        );
+        assert_eq!(
+            game.world
+                .get::<crate::components::FrenzyBuff>(warrior)
+                .map(|buff| (buff.atk_delta, buff.def_delta)),
+            Some((2, -1))
+        );
+    }
+
+    #[test]
+    fn frenzy_expiry_restores_base_stats_including_zero_defense() {
+        let mut game = Game::new();
+        clear_floor_modifiers(&mut game);
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let spore = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::CorruptedSpore)
+            .map(|(e, _)| e)
+            .unwrap();
+
+        let warrior_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+        let warrior_def = game.world.get::<Stats>(warrior).unwrap().def;
+        let spore_atk = game.world.get::<Stats>(spore).unwrap().atk;
+        let spore_def = game.world.get::<Stats>(spore).unwrap().def;
+        assert_eq!(spore_def, 0, "Corrupted Spore is the zero-DEF regression");
+
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Frenzy],
+            vec![1],
+        );
+
+        assert_eq!(
+            game.world.get::<Stats>(warrior).unwrap().atk,
+            warrior_atk + 2
+        );
+        assert_eq!(
+            game.world.get::<Stats>(warrior).unwrap().def,
+            warrior_def - 1
+        );
+        assert_eq!(game.world.get::<Stats>(spore).unwrap().atk, spore_atk + 2);
+        assert_eq!(game.world.get::<Stats>(spore).unwrap().def, 0);
+        assert_eq!(
+            game.world
+                .get::<crate::components::FrenzyBuff>(spore)
+                .map(|buff| buff.def_delta),
+            Some(0)
+        );
+
+        crate::systems::floor_modifier_system(&mut game.world);
+
+        assert!(
+            !crate::systems::has_floor_modifier(
+                &game.world,
+                &crate::components::FloorModifier::Frenzy
+            ),
+            "duration-1 Frenzy should expire on the first processed turn"
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().atk, warrior_atk);
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().def, warrior_def);
+        assert_eq!(game.world.get::<Stats>(spore).unwrap().atk, spore_atk);
+        assert_eq!(
+            game.world.get::<Stats>(spore).unwrap().def,
+            0,
+            "zero-DEF entities must not gain defense when Frenzy expires"
+        );
+        assert!(game
+            .world
+            .get::<crate::components::FrenzyBuff>(warrior)
+            .is_none());
+        assert!(game
+            .world
+            .get::<crate::components::FrenzyBuff>(spore)
+            .is_none());
+    }
+
+    #[test]
+    fn frenzy_reroll_is_reversible_and_does_not_stack() {
+        let mut game = Game::new();
+        clear_floor_modifiers(&mut game);
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let spore = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::CorruptedSpore)
+            .map(|(e, _)| e)
+            .unwrap();
+        let base_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+        let base_def = game.world.get::<Stats>(warrior).unwrap().def;
+        let spore_def = game.world.get::<Stats>(spore).unwrap().def;
+
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Frenzy],
+            vec![5],
+        );
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Frenzy],
+            vec![5],
+        );
+        assert_eq!(
+            game.world.get::<Stats>(warrior).unwrap().atk,
+            base_atk + 2,
+            "re-selecting Frenzy must not stack ATK"
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().def, base_def - 1);
+
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Darkness],
+            vec![5],
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().atk, base_atk);
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().def, base_def);
+        assert_eq!(game.world.get::<Stats>(spore).unwrap().def, spore_def);
+        assert!(game
+            .world
+            .get::<crate::components::FrenzyBuff>(warrior)
+            .is_none());
+    }
+
+    #[test]
+    fn frenzy_modifier_surge_applies_and_refresh_does_not_stack() {
+        let mut game = Game::new();
+        clear_floor_modifiers(&mut game);
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let base_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+        let base_def = game.world.get::<Stats>(warrior).unwrap().def;
+
+        crate::systems::trigger_floor_event(
+            &mut game.world,
+            crate::components::FloorEventKind::ModifierSurge {
+                modifier: crate::components::FloorModifier::Frenzy,
+                duration: 3,
+            },
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().atk, base_atk + 2);
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().def, base_def - 1);
+
+        crate::systems::trigger_floor_event(
+            &mut game.world,
+            crate::components::FloorEventKind::ModifierSurge {
+                modifier: crate::components::FloorModifier::Frenzy,
+                duration: 4,
+            },
+        );
+        assert_eq!(
+            game.world.get::<Stats>(warrior).unwrap().atk,
+            base_atk + 2,
+            "refreshing a Frenzy surge must not stack ATK"
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().def, base_def - 1);
+        assert_eq!(
+            game.world
+                .resource::<crate::components::ActiveFloorModifiers>()
+                .unwrap()
+                .turns_remaining[0],
+            4
         );
     }
 

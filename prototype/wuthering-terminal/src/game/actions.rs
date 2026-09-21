@@ -3518,6 +3518,7 @@ impl Game {
         };
         // Reset outcome for this action.
         self.last_outcome = ActionOutcome::NoOp;
+        self.nested_replay_events.clear();
         self.boss_transitioned = false;
         self.apply_action_internal(action);
         crate::systems::dynamic_floor_event_system(&mut self.world);
@@ -3581,11 +3582,16 @@ impl Game {
             .map(|events| events.iter().count())
             .unwrap_or(0);
         let first_unprocessed = self.processed_game_events.min(queued_event_count);
-        let report_events = self
+        let mut report_events: Vec<GameEvent> = self
             .take_events()
             .into_iter()
             .skip(first_unprocessed)
             .collect();
+        if action == Action::StepReplay {
+            let mut nested = std::mem::take(&mut self.nested_replay_events);
+            nested.extend(report_events);
+            report_events = nested;
+        }
         crate::snapshot::StepReport {
             action,
             source,
@@ -5995,6 +6001,7 @@ impl Game {
                                 replay.verification_errors.push(err);
                             }
                         }
+                        self.nested_replay_events = report.events;
                         self.last_outcome = ActionOutcome::ReplayStepped {
                             index,
                             action: format!("{:?}", action),

@@ -1,5 +1,50 @@
 # Verryte Worklog
 
+## 2026-09-21 - nested StepReplay events without restacked side effects
+
+**Goal.** Surface gameplay events from a nested replayed action on the outer
+`StepReplay` report without applying battle-stat and threat side effects twice.
+
+**Accomplishments.** `Action::StepReplay` still applies the recorded action
+through the shared `apply_action()` path. The nested report's events are stashed
+and prepended onto the outer `StepReport` after the wrapper finishes. Nested
+`take_events()` still drains and applies side effects once; the outer report
+only republishes those events. A live-vs-replayed attack regression asserts an
+`Attacked` event on the wrapper report and equal `total_damage_dealt`.
+
+**Verification.** `cargo test -p wuthering-terminal --test integration replay_step`
+passes, including the new nested-event regression and existing headless
+end-turn replay coverage.
+
+**Next Steps.** Apply reversible Frenzy deltas to characters spawned while the
+modifier is already active (incursion mini-bosses and console spawns), still
+using `FrenzyBuff` rather than a second mutation path.
+
+## 2026-09-21 - reversible Frenzy stats and rustc 1.83 build
+
+**Goal.** Make Frenzy's temporary ATK/DEF adjustment explicitly reversible on
+expiry or reroll without inventing DEF for zero-defense entities, and restore
+a trustworthy compile on the workspace's current stable toolchain.
+
+**Accomplishments.**
+- Replaced unstable `is_multiple_of` calls with `% n == 0` in `verryte-map`,
+  `verryte-terminal`, and Wuthering weather rendering so rustc 1.83 compiles.
+- Frenzy now records a saveable `FrenzyBuff` with the ATK/DEF deltas actually
+  applied (`def_delta = 0` when DEF was already 0). Selection, override,
+  expiry, reroll, and modifier surges all `sync_frenzy_buffs()`. Re-selecting
+  or refreshing Frenzy does not stack. Older saves that already baked Frenzy
+  into `Stats` adopt the marker without mutating again.
+- Frenzy is a valid deeper-floor surge candidate now that apply/clear is safe.
+
+**Verification.** Focused unit tests `frenzy*` and save/load regressions
+`save_load_preserves_frenzy_deltas_and_reverses_on_expiry` /
+`load_adopts_legacy_frenzy_without_restacking_stats` pass.
+
+**Next Steps.** Surface nested replayed game events on the outer `StepReplay`
+report without double-applying side effects.
+
+## 2026-08-23 - turn-committed floor modifiers
+
 ## 2026-08-23 - turn-committed floor modifiers
 
 **Goal.** Stop scheduled floor modifiers from consuming duration and applying
