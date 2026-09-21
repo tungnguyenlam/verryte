@@ -31,6 +31,28 @@ pub struct UnitSummary {
     pub selected: bool,
     #[serde(default)]
     pub status: String,
+    /// Remaining Rooted duration in turns (0 if the unit is not rooted).
+    #[serde(default)]
+    pub rooted_turns: u32,
+    /// Remaining Stunned duration in turns (0 if the unit is not stunned).
+    #[serde(default)]
+    pub stunned_turns: u32,
+}
+
+/// Remaining Rooted / Stunned durations for a combatant (0 if the component is absent).
+pub(crate) fn crowd_control_turns(
+    world: &verryte_core::World,
+    entity: verryte_core::Entity,
+) -> (u32, u32) {
+    let rooted = world
+        .get::<Rooted>(entity)
+        .map(|rooted| rooted.duration)
+        .unwrap_or(0);
+    let stunned = world
+        .get::<Stunned>(entity)
+        .map(|stunned| stunned.duration)
+        .unwrap_or(0);
+    (rooted, stunned)
 }
 
 /// Structured warning for a pending incursion mini-boss attack.
@@ -479,6 +501,10 @@ pub struct CharacterDiag {
     pub ap: i32,
     pub max_ap: i32,
     pub status: String,
+    #[serde(default)]
+    pub rooted_turns: u32,
+    #[serde(default)]
+    pub stunned_turns: u32,
     pub alive: bool,
     #[serde(default)]
     pub prestige: String,

@@ -744,6 +744,8 @@ impl Game {
                         .get::<crate::components::ElementalStatus>(entity)
                         .map(|status| format!("{:?}", status))
                         .unwrap_or_else(|| "None".to_string());
+                    let (rooted_turns, stunned_turns) =
+                        crate::snapshot::crowd_control_turns(&self.world, entity);
                     units.push(crate::snapshot::UnitSummary {
                         entity,
                         name: Self::get_class_name(*class).to_string(),
@@ -755,6 +757,8 @@ impl Game {
                         max_ap: stats.max_ap,
                         selected: state.selected_entity == Some(entity),
                         status,
+                        rooted_turns,
+                        stunned_turns,
                     });
                 }
                 units.sort_by(|a, b| {

@@ -1332,6 +1332,64 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_units_expose_rooted_and_stunned_on_shared_action_path() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::Warrior)
+            .map(|(entity, _)| entity)
+            .unwrap();
+
+        let start = game.snapshot();
+        let kael_start = start
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .expect("Kael should appear in snapshot units");
+        assert_eq!(kael_start.rooted_turns, 0);
+        assert_eq!(kael_start.stunned_turns, 0);
+
+        game.world
+            .insert(kael, crate::components::Rooted { duration: 2 });
+        game.world
+            .insert(kael, crate::components::Stunned { duration: 1 });
+
+        let report = game.apply_action(Action::MoveNorth, ActionSource::Script);
+        let kael_after = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .expect("Kael should remain in snapshot units");
+        assert_eq!(kael_after.rooted_turns, 2);
+        assert_eq!(kael_after.stunned_turns, 1);
+        assert_eq!(
+            kael_after.status, "None",
+            "crowd control is distinct from elemental status"
+        );
+
+        let mira = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.name == "Mira")
+            .expect("Mira should appear in snapshot units");
+        assert_eq!(mira.rooted_turns, 0);
+        assert_eq!(mira.stunned_turns, 0);
+
+        let diag = game.diagnostics();
+        let kael_diag = diag
+            .characters
+            .iter()
+            .find(|character| character.name == "Kael")
+            .expect("diagnostics should include Kael");
+        assert_eq!(kael_diag.rooted_turns, 2);
+        assert_eq!(kael_diag.stunned_turns, 1);
+    }
+
+    #[test]
     fn stepping_on_spike_trap_via_shared_action_deals_damage() {
         let mut game = Game::new();
         let warrior = game

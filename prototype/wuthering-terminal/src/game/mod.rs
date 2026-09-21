@@ -209,6 +209,8 @@ impl Game {
                 .get::<crate::components::ElementalStatus>(e)
                 .map(|s| format!("{:?}", s))
                 .unwrap_or_else(|| "None".to_string());
+            let (rooted_turns, stunned_turns) =
+                crate::snapshot::crowd_control_turns(&self.world, e);
             let is_alive = stats.hp > 0;
             if is_alive {
                 alive += 1;
@@ -246,6 +248,8 @@ impl Game {
                 ap: stats.ap,
                 max_ap: stats.max_ap,
                 status,
+                rooted_turns,
+                stunned_turns,
                 alive: is_alive,
                 prestige: prestige_str,
                 morale: morale_val,
