@@ -1,5 +1,39 @@
 # Verryte Worklog
 
+## 2026-09-21 - allocation-free TileShape membership
+
+**Goal.** Make `TileShape::contains` a cheap, exact membership test instead of
+allocating the full point list and scanning it.
+
+**Accomplishments.** Contains now uses the same geometry as `points()` (including
+zero and negative radii) with i32 deltas so `i16::MIN` offsets cannot overflow
+`abs()`. Battle-preview AoE entity classification uses `contains` plus grid
+bounds instead of `Vec::contains` on the clipped tile list. Exhaustive
+shape/window tests prove membership parity with `points()`.
+
+**Verification.** `cargo test -p verryte-map contains_matches` and
+`cargo test -p wuthering-terminal --lib battle_preview` pass.
+
+**Next Steps.** Consider `TileGrid::contains_in_shape` if a second clipped
+membership caller appears; otherwise keep clipping at `points_in_shape`.
+
+## 2026-09-21 - Frenzy on mid-fight spawns and shared reroll
+
+**Goal.** Characters created while Frenzy is already active should receive the
+same reversible ATK/DEF deltas as units present at selection time, including
+through `Action::RerollModifiers`.
+
+**Accomplishments.** `spawn_character_scaled` applies `FrenzyBuff::for_current_def`
+when the modifier is active, so incursion mini-bosses, console spawns, and
+test-created units join with recorded deltas. A Script-sourced
+`Action::RerollModifiers` regression proves the shared action path cannot stack
+Frenzy ATK.
+
+**Verification.** `cargo test -p wuthering-terminal --lib frenzy` (6 tests) passes.
+
+**Next Steps.** Expose per-entity Frenzy deltas on snapshots only if agents need
+more than `active_modifiers` to plan.
+
 ## 2026-09-21 - nested StepReplay events without restacked side effects
 
 **Goal.** Surface gameplay events from a nested replayed action on the outer
@@ -16,9 +50,7 @@ only republishes those events. A live-vs-replayed attack regression asserts an
 passes, including the new nested-event regression and existing headless
 end-turn replay coverage.
 
-**Next Steps.** Apply reversible Frenzy deltas to characters spawned while the
-modifier is already active (incursion mini-bosses and console spawns), still
-using `FrenzyBuff` rather than a second mutation path.
+**Next Steps.** Done in the spawn/reroll batch above.
 
 ## 2026-09-21 - reversible Frenzy stats and rustc 1.83 build
 

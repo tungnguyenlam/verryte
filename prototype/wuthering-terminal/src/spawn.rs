@@ -1,6 +1,6 @@
 use crate::components::{
-    CharacterClass, ElementalStatus, EquippedItems, Fatigue, Inventory, Item, ItemEffect, Morale,
-    Position, Stats, Team,
+    ActiveFloorModifiers, CharacterClass, ElementalStatus, EquippedItems, Fatigue, FloorModifier,
+    FrenzyBuff, Inventory, Item, ItemEffect, Morale, Position, Stats, Team,
 };
 use verryte_core::{Entity, World};
 
@@ -162,6 +162,17 @@ impl Spawner for World {
             _ => crate::components::CharacterElement::physical(),
         };
 
+        let frenzy_buff = if self
+            .resource::<ActiveFloorModifiers>()
+            .is_some_and(|active| active.modifiers.contains(&FloorModifier::Frenzy))
+        {
+            let buff = FrenzyBuff::for_current_def(stats.def);
+            buff.apply_to(&mut stats);
+            Some(buff)
+        } else {
+            None
+        };
+
         let mut builder = self
             .builder()
             .with(pos)
@@ -230,6 +241,10 @@ impl Spawner for World {
                 max: 100,
             });
             builder = builder.with(Fatigue::default());
+        }
+
+        if let Some(buff) = frenzy_buff {
+            builder = builder.with(buff);
         }
 
         builder.build()

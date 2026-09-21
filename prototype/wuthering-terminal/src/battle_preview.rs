@@ -56,7 +56,7 @@ impl BattlePreview {
         let mut total_damage = 0;
 
         for (e, pos, team) in world.query2::<Position, Team>() {
-            if valid_tiles.contains(pos) {
+            if map.tiles.in_bounds(*pos) && tiles.contains(center, *pos) {
                 if *team == attacker_team {
                     affected_allies.push(e);
                 } else {

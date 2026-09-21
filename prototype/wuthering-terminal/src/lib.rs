@@ -6999,6 +6999,134 @@ mod tests {
     }
 
     #[test]
+    fn spawn_during_active_frenzy_gets_reversible_buff() {
+        let mut game = Game::new();
+        clear_floor_modifiers(&mut game);
+
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Frenzy],
+            vec![5],
+        );
+
+        let spore = game.world.spawn_character(
+            Position::new(1, 1),
+            Team::Enemy,
+            CharacterClass::CorruptedSpore,
+        );
+        let spore_base = crate::spawn::base_stats(CharacterClass::CorruptedSpore);
+        assert_eq!(
+            game.world.get::<Stats>(spore).unwrap().atk,
+            spore_base.atk + 2
+        );
+        assert_eq!(game.world.get::<Stats>(spore).unwrap().def, 0);
+        assert_eq!(
+            game.world
+                .get::<crate::components::FrenzyBuff>(spore)
+                .map(|buff| (buff.atk_delta, buff.def_delta)),
+            Some((2, 0))
+        );
+
+        crate::systems::trigger_floor_event(
+            &mut game.world,
+            crate::components::FloorEventKind::MiniBossIncursion {
+                class: CharacterClass::VoidTerror,
+                position: Position::new(2, 2),
+            },
+        );
+        let terror = game
+            .world
+            .query2::<CharacterClass, crate::components::IncursionMiniBoss>()
+            .into_iter()
+            .find(|(_, class, _)| **class == CharacterClass::VoidTerror)
+            .map(|(entity, _, _)| entity)
+            .unwrap();
+        let terror_base = crate::spawn::base_stats(CharacterClass::VoidTerror);
+        assert_eq!(
+            game.world.get::<Stats>(terror).unwrap().atk,
+            terror_base.atk + 2
+        );
+        assert_eq!(
+            game.world.get::<Stats>(terror).unwrap().def,
+            terror_base.def - 1
+        );
+        assert!(game
+            .world
+            .get::<crate::components::FrenzyBuff>(terror)
+            .is_some());
+
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Darkness],
+            vec![3],
+        );
+        assert_eq!(game.world.get::<Stats>(spore).unwrap().atk, spore_base.atk);
+        assert_eq!(game.world.get::<Stats>(spore).unwrap().def, 0);
+        assert_eq!(
+            game.world.get::<Stats>(terror).unwrap().atk,
+            terror_base.atk
+        );
+        assert_eq!(
+            game.world.get::<Stats>(terror).unwrap().def,
+            terror_base.def
+        );
+        assert!(game
+            .world
+            .get::<crate::components::FrenzyBuff>(spore)
+            .is_none());
+    }
+
+    #[test]
+    fn reroll_modifiers_action_does_not_stack_frenzy() {
+        let mut game = Game::new();
+        clear_floor_modifiers(&mut game);
+
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let base_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+
+        crate::systems::select_floor_modifiers_with_override(
+            &mut game.world,
+            vec![crate::components::FloorModifier::Frenzy],
+            vec![5],
+        );
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.selected_entity = Some(warrior);
+        }
+
+        let report = game.apply_action(Action::RerollModifiers, ActionSource::Script);
+        assert!(
+            matches!(report.outcome, ActionOutcome::ModifiersRerolled { .. }),
+            "reroll should succeed through the shared action path, got {:?}",
+            report.outcome
+        );
+
+        let after_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+        let frenzy_active = crate::systems::has_floor_modifier(
+            &game.world,
+            &crate::components::FloorModifier::Frenzy,
+        );
+        if frenzy_active {
+            assert_eq!(
+                after_atk,
+                base_atk + 2,
+                "rerolling into Frenzy must not stack"
+            );
+        } else {
+            assert_eq!(
+                after_atk, base_atk,
+                "rerolling away from Frenzy must restore ATK"
+            );
+        }
+    }
+
+    #[test]
     fn test_reroll_modifiers_action() {
         let mut game = Game::new();
 

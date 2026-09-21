@@ -582,9 +582,6 @@ pub fn select_floor_modifiers(world: &mut World) {
     sync_frenzy_buffs(world);
 }
 
-const FRENZY_ATK_BONUS: i32 = 2;
-const FRENZY_DEF_PENALTY: i32 = 1;
-
 /// Apply or reverse Frenzy's temporary ATK/DEF deltas to match the active
 /// modifier set. Reversal uses the recorded per-entity deltas so a unit that
 /// started at 0 DEF does not gain defense when Frenzy expires or is rerolled.
@@ -610,15 +607,9 @@ fn apply_frenzy_buffs(world: &mut World) {
             let Some(stats) = world.get_mut::<Stats>(entity) else {
                 continue;
             };
-            let atk_delta = FRENZY_ATK_BONUS;
-            let def_delta = if stats.def > 0 {
-                -FRENZY_DEF_PENALTY
-            } else {
-                0
-            };
-            stats.atk += atk_delta;
-            stats.def += def_delta;
-            (atk_delta, def_delta)
+            let buff = FrenzyBuff::for_current_def(stats.def);
+            buff.apply_to(stats);
+            (buff.atk_delta, buff.def_delta)
         };
         world.insert(
             entity,
@@ -638,8 +629,7 @@ fn clear_frenzy_buffs(world: &mut World) {
         .collect();
     for (entity, buff) in applied {
         if let Some(stats) = world.get_mut::<Stats>(entity) {
-            stats.atk -= buff.atk_delta;
-            stats.def -= buff.def_delta;
+            buff.revert_from(stats);
         }
         world.remove::<FrenzyBuff>(entity);
     }
@@ -665,13 +655,7 @@ pub fn adopt_legacy_frenzy_buffs(world: &mut World) {
             .get::<Stats>(entity)
             .map(|stats| stats.def)
             .unwrap_or(0);
-        world.insert(
-            entity,
-            FrenzyBuff {
-                atk_delta: FRENZY_ATK_BONUS,
-                def_delta: if def > 0 { -FRENZY_DEF_PENALTY } else { 0 },
-            },
-        );
+        world.insert(entity, FrenzyBuff::for_current_def(def));
     }
 }
 

@@ -112,10 +112,10 @@ those pieces.
   `TileGrid::from_ascii` for constructing grids from multi-line string
   literals, `TileGrid::map_tiles` for transforming tile types, and
   `TileGrid::crop` for extracting rectangular sub-regions as new grids.
-  Origin-centered `TileShape` primitives (`Disk`, `Square`, `Cross`, `Line`,
-  `Cone`, `ManhattanRing`, `Diamond`) plus `TileGrid::clip_points` and
+  Origin-centered `TileShape` primitives (`Disk`, `Square`,
+  `Cross`, `Line`, `Cone`, `ManhattanRing`, `Diamond`) plus `TileGrid::clip_points` and
   `TileGrid::points_in_shape` for AoE previews, telegraphs, and other spatial
-  queries.
+  queries. `TileShape::contains` tests membership without allocating the point list.
 - `crates/verryte-terminal` - terminal-cell data structures: colors, cells,
   grids, clipping, borders, line drawing, blitting, viewports, frame diffs,
   plain-text snapshots, ANSI-colored output (`Grid::to_ansi_string` with
