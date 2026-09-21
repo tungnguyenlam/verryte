@@ -3691,6 +3691,17 @@ impl Game {
                     } => {
                         bstats.total_damage_taken += *damage;
                     }
+                    GameEvent::HazardTriggered {
+                        target,
+                        damage,
+                        healing,
+                        ..
+                    } => {
+                        if entity_teams.get(target) == Some(&Team::Player) {
+                            bstats.total_damage_taken += *damage;
+                            bstats.total_healing_done += *healing;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -5033,6 +5044,23 @@ impl Game {
                                                                 self.world
                                                                     .insert(sel_entity, status);
                                                             }
+                                                        }
+                                                        if let Some(events) = self
+                                                            .world
+                                                            .resource_mut::<Events<GameEvent>>()
+                                                        {
+                                                            events.send(
+                                                                GameEvent::HazardTriggered {
+                                                                    hazard: result
+                                                                        .hazard_type
+                                                                        .display_name()
+                                                                        .to_string(),
+                                                                    target: sel_entity,
+                                                                    position: final_dest,
+                                                                    damage: dmg,
+                                                                    healing: heal,
+                                                                },
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -6723,6 +6751,17 @@ impl Game {
             .filter(|weather| weather.current == crate::components::WeatherType::LightningStorm)
         {
             danger_tiles.extend(weather.danger_zones.iter().copied());
+        }
+        if let Some(hazards) = self.world.resource::<crate::components::ActiveHazards>() {
+            danger_tiles.extend(
+                hazards
+                    .hazards
+                    .iter()
+                    .filter(|(_, effect)| {
+                        effect.trigger_count != 0 && effect.hazard_type.threatens_step_to_safety()
+                    })
+                    .map(|(pos, _)| *pos),
+            );
         }
         if danger_tiles.is_empty() {
             let reason = "No danger zones telegraphed.".to_string();

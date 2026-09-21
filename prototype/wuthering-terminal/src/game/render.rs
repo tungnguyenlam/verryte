@@ -744,6 +744,10 @@ impl Game {
                         .get::<crate::components::ElementalStatus>(entity)
                         .map(|status| format!("{:?}", status))
                         .unwrap_or_else(|| "None".to_string());
+                    let (rooted_turns, stunned_turns) =
+                        crate::snapshot::crowd_control_turns(&self.world, entity);
+                    let (shield_type, shield_amount, shield_max) =
+                        crate::snapshot::shield_summary(&self.world, entity);
                     units.push(crate::snapshot::UnitSummary {
                         entity,
                         name: Self::get_class_name(*class).to_string(),
@@ -755,6 +759,11 @@ impl Game {
                         max_ap: stats.max_ap,
                         selected: state.selected_entity == Some(entity),
                         status,
+                        rooted_turns,
+                        stunned_turns,
+                        shield_type,
+                        shield_amount,
+                        shield_max,
                     });
                 }
                 units.sort_by(|a, b| {
@@ -835,7 +844,17 @@ impl Game {
                                         1.0,
                                         20,
                                     );
-                                preview.can_kill = preview.max_damage >= tgt_stats.hp;
+                                let shield = self
+                                    .world
+                                    .get::<crate::components::ElementalShield>(target)
+                                    .map(|shield| shield.amount)
+                                    .unwrap_or(0);
+                                preview.can_kill =
+                                    crate::battle_preview::BattlePreview::lethal_against(
+                                        &preview,
+                                        tgt_stats.hp,
+                                        shield,
+                                    );
                                 Some(preview)
                             } else {
                                 None
@@ -1086,6 +1105,31 @@ impl Game {
                     }
                 })
                 .collect(),
+            hazards: {
+                let mut hazards = self
+                    .world
+                    .resource::<crate::components::ActiveHazards>()
+                    .map(|active| {
+                        active
+                            .hazards
+                            .iter()
+                            .filter(|(_, effect)| effect.trigger_count != 0)
+                            .map(|(pos, effect)| crate::snapshot::HazardPreview {
+                                position: *pos,
+                                kind: effect.hazard_type.display_name().to_string(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                hazards.sort_by(|a, b| {
+                    a.position
+                        .y
+                        .cmp(&b.position.y)
+                        .then(a.position.x.cmp(&b.position.x))
+                        .then(a.kind.cmp(&b.kind))
+                });
+                hazards
+            },
         }
     }
 

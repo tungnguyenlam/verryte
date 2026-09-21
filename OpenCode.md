@@ -89,8 +89,9 @@ before editing and do not revert work you did not make.
 Normal workspace verification:
 
 ```sh
-cargo fmt --check
-cargo test
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 Useful Wuthering Terminal smoke commands:

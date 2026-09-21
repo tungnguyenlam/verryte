@@ -1,5 +1,90 @@
 # Verryte Worklog
 
+## 2026-09-21 - shields on snapshots and shield-aware can_kill
+
+**Goal.** Combat absorbs `ElementalShield` before HP, but unit snapshots omitted
+shields and `damage_preview.can_kill` compared max damage to HP only.
+
+**Accomplishments.** Unit summaries and diagnostics expose `shield_type`,
+`shield_amount`, and `shield_max`. `BattlePreview::lethal_against` treats
+remaining shield as extra HP. A Script-sourced `Wait` on a 1 HP Physical-shielded
+stalker proves `can_kill` is false.
+
+**Verification.** `cargo test -p wuthering-terminal --lib snapshot` (11 tests)
+and `cargo test -p wuthering-terminal --lib can_kill` pass.
+
+**Next Steps.** Keep Frenzy deltas on `active_modifiers`. Add
+`TileGrid::contains_in_shape` only if a second clipped membership caller
+appears. Keep schedule-settling local until a second consumer exists.
+
+## 2026-09-21 - Rooted and Stunned on snapshots
+
+**Goal.** HUD badges showed crowd control, but `Snapshot.units` and
+`CharacterDiag` only serialized elemental status, so scripts and agents could
+not see Rooted or Stunned without scraping the frame.
+
+**Accomplishments.** Unit summaries and diagnostics expose remaining
+`rooted_turns` / `stunned_turns` (serde-default 0). A Script-sourced cursor
+move proves the shared `apply_action()` path updates those fields.
+
+**Verification.** `cargo test -p wuthering-terminal --lib snapshot` (10 tests)
+passes, including
+`test_snapshot_units_expose_rooted_and_stunned_on_shared_action_path`.
+
+**Next Steps.** Expose elemental shields on the same unit summaries and make
+`damage_preview.can_kill` account for remaining shield. Keep Frenzy deltas on
+`active_modifiers`.
+
+## 2026-09-21 - verification docs and stable hazard snapshots
+
+**Goal.** README still documented `cargo fmt --check` / `cargo test` while the
+workspace gate is fmt `--all`, test `--workspace`, and clippy `-D warnings`.
+Hazard snapshot order followed `ActiveHazards` insertion order.
+
+**Accomplishments.** Root `README.md` and `OpenCode.md` now list the same
+verification commands as `prompt/improve.md`. Snapshot `hazards` sort by tile
+then kind so agent JSON is stable.
+
+**Verification.** `cargo test -p wuthering-terminal --lib sorted_by_tile` passes.
+Full workspace fmt/test/clippy follows this checkpoint.
+
+**Next Steps.** Keep Frenzy deltas on `active_modifiers`. Add
+`TileGrid::contains_in_shape` only if a second clipped membership caller
+appears. Keep schedule-settling local until a second consumer exists.
+
+## 2026-09-21 - StepToSafety avoids damaging traps
+
+**Goal.** `Action::StepToSafety` treated telegraphs, incursions, and lightning as
+danger but would leave a hero standing on spikes or path onto a trap.
+
+**Accomplishments.** Armed trap tiles (`spike-trap`, `poison-cloud`, `thorn-bush`,
+`steam-vent`, `cracked-floor`, `exploding-barrel`) join the existing danger union.
+Lava/ice keep their special movement rules and do not change the no-telegraph
+failure. A Script-sourced `StepToSafety` regression moves Kael off a spike.
+
+**Verification.** `cargo test -p wuthering-terminal --test integration step_to_safety`
+(5 tests) passes.
+
+**Next Steps.** Align README verification commands with the workspace fmt/test/clippy
+gate. Keep Frenzy deltas on `active_modifiers`.
+
+## 2026-09-21 - floor hazards on the shared action path
+
+**Goal.** Environmental hazards were implemented and unit-tested in isolation but
+never inserted at `Game::new`, never populated on Floor 2+, and never visible in
+snapshots.
+
+**Accomplishments.** Floor 1 initializes `ActiveHazards` from the tactical map.
+Floor 2+ `NextFloor` places seed-driven traps away from occupied tiles.
+Snapshots expose armed `hazards`. Stepping on a trap through `apply_action()`
+emits `GameEvent::HazardTriggered` and updates battle-stat damage taken.
+
+**Verification.** `cargo test -p wuthering-terminal --lib stepping_on_spike_trap`,
+`floor_transition`, and `hazard` pass, plus `new_mechanics` steam-vent.
+
+**Next Steps.** Treat damaging hazard tiles as danger in `StepToSafety`. Keep
+Frenzy deltas on `active_modifiers`.
+
 ## 2026-09-21 - snapshot unit positions for agents
 
 **Goal.** Give scripts and agents structured combatant positions instead of
@@ -56,8 +141,6 @@ pass. Agent runner frames are 24 and 40 lines at `--size 80x24` and `120x40`.
 membership caller appears. Snapshot per-entity Frenzy deltas only if agents
 need more than `active_modifiers`. Keep schedule-settling and danger-union
 construction local to Wuthering Terminal until a second consumer exists.
-
-## 2026-09-21 - allocation-free TileShape membership
 
 ## 2026-09-21 - allocation-free TileShape membership
 

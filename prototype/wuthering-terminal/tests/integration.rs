@@ -1227,6 +1227,57 @@ fn step_to_safety_reports_invalid_context_instead_of_silent_noop() {
 }
 
 #[test]
+fn step_to_safety_escapes_damaging_hazard_tiles() {
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let start = *game.world.get::<Position>(warrior).unwrap();
+    {
+        let map = game
+            .world
+            .resource_mut::<wuthering_terminal::map::TacticalMap>()
+            .unwrap();
+        map.tiles
+            .set(start, wuthering_terminal::map::Tile::SpikeTrap);
+    }
+    let hazards = {
+        let map = game
+            .world
+            .resource::<wuthering_terminal::map::TacticalMap>()
+            .unwrap();
+        wuthering_terminal::hazards::HazardSystem::initialize_hazards(map)
+    };
+    game.world.insert_resource(hazards);
+    game.world.get_mut::<Stats>(warrior).unwrap().ap = 3;
+    {
+        let state = game.world.resource_mut::<GameState>().unwrap();
+        state.selected_entity = Some(warrior);
+        state.cursor = start;
+    }
+
+    let report = game.apply_action(Action::StepToSafety, ActionSource::Script);
+    let destination = *game.world.get::<Position>(warrior).unwrap();
+
+    assert_ne!(destination, start);
+    assert_eq!(
+        report.outcome,
+        ActionOutcome::Moved {
+            entity: "Kael".to_string(),
+            to: destination,
+        }
+    );
+    assert!(!game
+        .snapshot()
+        .hazards
+        .iter()
+        .any(|h| h.position == destination
+            && matches!(
+                h.kind.as_str(),
+                "spike-trap" | "poison-cloud" | "thorn-bush" | "steam-vent" | "cracked-floor"
+            )));
+    assert_eq!(last_recorded_outcome(&game), report.outcome);
+}
+
+#[test]
 fn step_to_safety_reports_out_of_ap_before_pathfinding() {
     let mut game = Game::new();
     let warrior = find_entity(&game, CharacterClass::Warrior);

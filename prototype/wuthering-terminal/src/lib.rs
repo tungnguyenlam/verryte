@@ -1332,6 +1332,206 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_units_expose_rooted_and_stunned_on_shared_action_path() {
+        let mut game = Game::new();
+        let kael = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::Warrior)
+            .map(|(entity, _)| entity)
+            .unwrap();
+
+        let start = game.snapshot();
+        let kael_start = start
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .expect("Kael should appear in snapshot units");
+        assert_eq!(kael_start.rooted_turns, 0);
+        assert_eq!(kael_start.stunned_turns, 0);
+
+        game.world
+            .insert(kael, crate::components::Rooted { duration: 2 });
+        game.world
+            .insert(kael, crate::components::Stunned { duration: 1 });
+
+        let report = game.apply_action(Action::MoveNorth, ActionSource::Script);
+        let kael_after = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.name == "Kael")
+            .expect("Kael should remain in snapshot units");
+        assert_eq!(kael_after.rooted_turns, 2);
+        assert_eq!(kael_after.stunned_turns, 1);
+        assert_eq!(
+            kael_after.status, "None",
+            "crowd control is distinct from elemental status"
+        );
+
+        let mira = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.name == "Mira")
+            .expect("Mira should appear in snapshot units");
+        assert_eq!(mira.rooted_turns, 0);
+        assert_eq!(mira.stunned_turns, 0);
+
+        let diag = game.diagnostics();
+        let kael_diag = diag
+            .characters
+            .iter()
+            .find(|character| character.name == "Kael")
+            .expect("diagnostics should include Kael");
+        assert_eq!(kael_diag.rooted_turns, 2);
+        assert_eq!(kael_diag.stunned_turns, 1);
+    }
+
+    #[test]
+    fn test_snapshot_units_expose_shields_and_can_kill_accounts_for_them() {
+        let mut game = Game::new();
+        let stalker = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, class)| **class == CharacterClass::ShadowStalker)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let stalker_pos = *game.world.get::<Position>(stalker).unwrap();
+        game.world.get_mut::<Stats>(stalker).unwrap().hp = 1;
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = stalker_pos;
+        }
+        let unshielded = game.snapshot();
+        let preview = unshielded
+            .damage_preview
+            .as_ref()
+            .expect("selecting Kael onto a stalker should produce a damage preview");
+        assert!(
+            preview.can_kill,
+            "1 HP target with no shield should be killable, got {:?}",
+            preview
+        );
+
+        game.world.insert(
+            stalker,
+            crate::components::ElementalShield {
+                shield_type: crate::components::ShieldType::Physical,
+                amount: 500,
+                max_amount: 500,
+            },
+        );
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        let stalker_unit = report
+            .after
+            .units
+            .iter()
+            .find(|unit| unit.entity == stalker)
+            .expect("stalker should remain in snapshot units");
+        assert_eq!(stalker_unit.shield_type, "Physical");
+        assert_eq!(stalker_unit.shield_amount, 500);
+        assert_eq!(stalker_unit.shield_max, 500);
+        let preview = report
+            .after
+            .damage_preview
+            .as_ref()
+            .expect("cursor should still be on the stalker after Wait");
+        assert!(
+            !preview.can_kill,
+            "500 shield should block a can-kill preview, got {:?}",
+            preview
+        );
+
+        let diag = game.diagnostics();
+        let stalker_diag = diag
+            .characters
+            .iter()
+            .find(|character| character.name == stalker_unit.name)
+            .expect("diagnostics should include the stalker");
+        assert_eq!(stalker_diag.shield_type, "Physical");
+        assert_eq!(stalker_diag.shield_amount, 500);
+    }
+
+    #[test]
+    fn stepping_on_spike_trap_via_shared_action_deals_damage() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query::<CharacterClass>()
+            .into_iter()
+            .find(|(_, c)| **c == CharacterClass::Warrior)
+            .map(|(e, _)| e)
+            .unwrap();
+        let hp_before = game.world.get::<Stats>(warrior).unwrap().hp;
+        {
+            let map = game.world.resource_mut::<TacticalMap>().unwrap();
+            map.tiles.set(Position::new(4, 5), Tile::SpikeTrap);
+        }
+        let hazards = {
+            let map = game.world.resource::<TacticalMap>().unwrap();
+            crate::hazards::HazardSystem::initialize_hazards(map)
+        };
+        game.world.insert_resource(hazards);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 5);
+        }
+        let report = game.apply_action(Action::Confirm, ActionSource::Script);
+        assert!(
+            matches!(report.outcome, ActionOutcome::Moved { .. }),
+            "expected move onto spike trap, got {:?}",
+            report.outcome
+        );
+        assert!(
+            report.events.iter().any(|event| matches!(
+                event,
+                crate::components::GameEvent::HazardTriggered { hazard, damage, .. }
+                    if hazard == "spike-trap" && *damage == 15
+            )),
+            "expected HazardTriggered event, got {:?}",
+            report.events
+        );
+        assert_eq!(game.world.get::<Stats>(warrior).unwrap().hp, hp_before - 15);
+        assert!(
+            !game
+                .snapshot()
+                .hazards
+                .iter()
+                .any(|h| h.position == Position::new(4, 5) && h.kind == "spike-trap"),
+            "one-shot spike trap should be exhausted after trigger"
+        );
+    }
+
+    #[test]
+    fn snapshot_hazards_are_sorted_by_tile() {
+        let game = Game::new();
+        let keys: Vec<_> = game
+            .snapshot()
+            .hazards
+            .iter()
+            .map(|h| (h.position.y, h.position.x, h.kind.clone()))
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
     fn test_full_script_victory_path() {
         let mut game = Game::new();
 
@@ -2712,6 +2912,26 @@ mod tests {
         }
         assert!(has_grass);
         assert!(has_wall);
+
+        let hazards = game
+            .world
+            .resource::<crate::components::ActiveHazards>()
+            .expect("Floor 2 should initialize ActiveHazards");
+        assert!(
+            !hazards.hazards.is_empty(),
+            "Floor 2 should populate trap tiles"
+        );
+        let snap = game.snapshot();
+        assert!(
+            snap.hazards.iter().any(|h| h.kind == "spike-trap"
+                || h.kind == "poison-cloud"
+                || h.kind == "thorn-bush"
+                || h.kind == "healing-spring"
+                || h.kind == "cracked-floor"
+                || h.kind == "pressure-plate"),
+            "snapshot should expose populated floor hazards, got {:?}",
+            snap.hazards
+        );
 
         let enemy_boss_exists = game
             .world

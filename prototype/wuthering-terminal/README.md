@@ -53,7 +53,8 @@ Characters can have unique traits that modify gameplay:
   to radius one or removes the escape-side tile from Frozen Sentinel's first
   ring; later attacks return to their normal patterns.
   The existing `safety` action treats boss telegraphs, armed incursion tiles,
-  and committed lightning-strike tiles as one danger set, moves the selected
+  committed lightning-strike tiles, and damaging trap tiles (spikes, poison,
+  thorns, steam vents, cracked floors) as one danger set, moves the selected
   hero to the nearest reachable safe tile, and reports the move through the
   same structured action/event/history path as ordinary movement. Weather
   effects and ambient-loop changes are prepared once per game turn rather than
@@ -64,7 +65,7 @@ Characters can have unique traits that modify gameplay:
 - **Level-up system**: defeating enemies awards XP (scaled by floor depth). Level-ups grant +10 HP, +2 ATK, +1 DEF, and a skill point. Prestige classes (BladeMaster, Archmage, DivineHealer) unlock at milestones with VFX feedback.
 - **Combo system**: consecutive hits on enemies increment the combo counter, boosting damage (+5% per combo point starting from the second hit), granting healing (+5 HP) and concert energy (+10 CE) every 3 combo points; combo resets on turn change or action failure
 - **Battle stats**: tracks total damage dealt, taken, healing done, kills, swaps, turns, and maximum combo reached, serialized in snapshots for agent observability.
-- **Unit snapshots**: each `Snapshot` lists combatants with name, team, tile position, HP/AP, selection, and status so scripts and agents plan from structured state instead of scraping frames.
+- **Unit snapshots**: each `Snapshot` lists combatants with name, team, tile position, HP/AP, selection, elemental status, remaining Rooted/Stunned durations, and any elemental shield so scripts and agents plan from structured state instead of scraping frames or HUD badges.
 
 ## Controls
 
@@ -160,6 +161,8 @@ appear in `enemy_intents` and as structured `IncursionAttackTelegraphed` /
 `IncursionAttackResolved` game events.
 Committed lightning strikes likewise appear in headless end-turn reports as
 `WeatherHazardResolved` events and contribute to battle damage-taken totals.
+Floor 2+ generation places seed-driven trap tiles; snapshots expose `hazards`
+and stepping on them emits `GameEvent::HazardTriggered` through `apply_action()`.
 
 ### Script tokens
 
