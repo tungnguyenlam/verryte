@@ -1279,7 +1279,7 @@ impl Grid {
         let mut count = 0;
         for x in start..=end {
             let offset = x - start;
-            if offset.is_multiple_of(spacing) {
+            if offset % spacing == 0 {
                 self.put(x, y, cell);
                 count += 1;
             }
@@ -1297,7 +1297,7 @@ impl Grid {
         let mut count = 0;
         for y in start..=end {
             let offset = y - start;
-            if offset.is_multiple_of(spacing) {
+            if offset % spacing == 0 {
                 self.put(x, y, cell);
                 count += 1;
             }

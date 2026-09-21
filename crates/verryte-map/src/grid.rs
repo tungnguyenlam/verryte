@@ -2218,7 +2218,7 @@ impl<T> TileGrid<T> {
             } else if r.h > r.w {
                 false
             } else {
-                rng().is_multiple_of(2)
+                rng() % 2 == 0
             };
 
             let max_span = if horizontal { r.h } else { r.w };
@@ -2355,7 +2355,7 @@ impl<T> TileGrid<T> {
 
         // Carve corridors as L-shaped passages.
         for (from, to) in corridors {
-            let mid = if rng().is_multiple_of(2) {
+            let mid = if rng() % 2 == 0 {
                 Point::new(to.x, from.y)
             } else {
                 Point::new(from.x, to.y)
