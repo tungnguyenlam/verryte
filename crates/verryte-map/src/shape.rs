@@ -48,8 +48,47 @@ impl TileShape {
         }
     }
 
+    /// Returns whether `point` is inside this shape around `origin`.
+    ///
+    /// Membership matches [`TileShape::points`] without allocating the full tile list.
     pub fn contains(self, origin: Point, point: Point) -> bool {
-        self.points(origin).contains(&point)
+        let dx = i32::from(point.x) - i32::from(origin.x);
+        let dy = i32::from(point.y) - i32::from(origin.y);
+        match self {
+            TileShape::Disk { radius } => {
+                let radius = i32::from(radius.max(0));
+                dx * dx + dy * dy <= radius.saturating_mul(radius)
+            }
+            TileShape::Square { radius } => {
+                let radius = i32::from(radius.max(0));
+                dx.abs() <= radius && dy.abs() <= radius
+            }
+            TileShape::Cross { radius } => {
+                let radius = i32::from(radius.max(0));
+                (dx == 0 && dy.abs() <= radius) || (dy == 0 && dx.abs() <= radius)
+            }
+            TileShape::Line { length } => {
+                let length = i32::from(length.max(0));
+                dy == 0 && dx >= 0 && dx < length
+            }
+            TileShape::Cone { radius } => {
+                let radius = i32::from(radius.max(0));
+                let d = i32::from(origin.y) - i32::from(point.y);
+                d >= 0 && d <= radius && dx.abs() <= d
+            }
+            TileShape::ManhattanRing { radius } => {
+                let radius = i32::from(radius.max(0));
+                if radius == 0 {
+                    dx == 0 && dy == 0
+                } else {
+                    dx.abs() + dy.abs() == radius
+                }
+            }
+            TileShape::Diamond { radius } => {
+                let radius = i32::from(radius.max(0));
+                dx.abs() + dy.abs() <= radius
+            }
+        }
     }
 
     /// Same as [`TileShape::points`], but the origin is always included first.
@@ -222,5 +261,36 @@ mod tests {
         let tiles = TileShape::ManhattanRing { radius: 2 }.points_including_origin(origin);
         assert_eq!(tiles[0], origin);
         assert_eq!(tiles.len(), 9);
+    }
+
+    #[test]
+    fn contains_matches_points_for_all_shapes() {
+        let origin = Point::new(5, 5);
+        let shapes = [
+            TileShape::Disk { radius: 2 },
+            TileShape::Square { radius: 2 },
+            TileShape::Cross { radius: 2 },
+            TileShape::Line { length: 3 },
+            TileShape::Cone { radius: 2 },
+            TileShape::ManhattanRing { radius: 2 },
+            TileShape::ManhattanRing { radius: 0 },
+            TileShape::Diamond { radius: 2 },
+            TileShape::Disk { radius: 0 },
+            TileShape::Line { length: 0 },
+            TileShape::Cross { radius: -1 },
+        ];
+        for shape in shapes {
+            let tiles = shape.points(origin);
+            for y in 0..12 {
+                for x in 0..12 {
+                    let point = Point::new(x, y);
+                    assert_eq!(
+                        shape.contains(origin, point),
+                        tiles.contains(&point),
+                        "{shape:?} contains {point:?} disagreed with points()"
+                    );
+                }
+            }
+        }
     }
 }

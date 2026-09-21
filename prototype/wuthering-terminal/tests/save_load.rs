@@ -1,7 +1,7 @@
 use verryte_input::ActionSource;
 use wuthering_terminal::components::{
     ActiveFloorModifiers, CharacterClass, DynamicFloorEvents, EquippedItems, FloorEventKind,
-    FloorModifier, GameState, IncursionAttackTelegraphs, IncursionFirstAttackDisrupted,
+    FloorModifier, FrenzyBuff, GameState, IncursionAttackTelegraphs, IncursionFirstAttackDisrupted,
     IncursionMiniBoss, Inventory, Outcome, Stats, Team, TurnPhase, Weather, WeatherType,
 };
 use wuthering_terminal::snapshot::{ActionOutcome, FullSaveState, CURRENT_SAVE_VERSION};
@@ -262,6 +262,131 @@ fn older_floor_modifier_resource_defaults_turn_marker() {
         serde_json::from_str(r#"{"modifiers":[],"turns_remaining":[]}"#).unwrap();
 
     assert_eq!(modifiers.last_processed_turn, None);
+}
+
+#[test]
+fn save_load_preserves_frenzy_deltas_and_reverses_on_expiry() {
+    let mut game = Game::new();
+    wuthering_terminal::systems::select_floor_modifiers_with_override(
+        &mut game.world,
+        vec![],
+        vec![],
+    );
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let spore = find_entity(&game, CharacterClass::CorruptedSpore);
+    let warrior_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+    let warrior_def = game.world.get::<Stats>(warrior).unwrap().def;
+    let spore_def = game.world.get::<Stats>(spore).unwrap().def;
+
+    wuthering_terminal::systems::select_floor_modifiers_with_override(
+        &mut game.world,
+        vec![FloorModifier::Frenzy],
+        vec![1],
+    );
+
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+
+    let warrior = find_entity(&restored, CharacterClass::Warrior);
+    let spore = find_entity(&restored, CharacterClass::CorruptedSpore);
+    assert_eq!(
+        restored
+            .world
+            .get::<FrenzyBuff>(warrior)
+            .map(|buff| (buff.atk_delta, buff.def_delta)),
+        Some((2, -1))
+    );
+    assert_eq!(
+        restored
+            .world
+            .get::<FrenzyBuff>(spore)
+            .map(|buff| buff.def_delta),
+        Some(0)
+    );
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().atk,
+        warrior_atk + 2
+    );
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().def,
+        warrior_def - 1
+    );
+    assert_eq!(restored.world.get::<Stats>(spore).unwrap().def, spore_def);
+
+    wuthering_terminal::systems::floor_modifier_system(&mut restored.world);
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().atk,
+        warrior_atk
+    );
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().def,
+        warrior_def
+    );
+    assert_eq!(restored.world.get::<Stats>(spore).unwrap().def, spore_def);
+    assert!(restored.world.get::<FrenzyBuff>(warrior).is_none());
+}
+
+#[test]
+fn load_adopts_legacy_frenzy_without_restacking_stats() {
+    let mut game = Game::new();
+    wuthering_terminal::systems::select_floor_modifiers_with_override(
+        &mut game.world,
+        vec![],
+        vec![],
+    );
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let spore = find_entity(&game, CharacterClass::CorruptedSpore);
+    let warrior_atk = game.world.get::<Stats>(warrior).unwrap().atk;
+    let warrior_def = game.world.get::<Stats>(warrior).unwrap().def;
+
+    wuthering_terminal::systems::select_floor_modifiers_with_override(
+        &mut game.world,
+        vec![FloorModifier::Frenzy],
+        vec![1],
+    );
+    game.world.remove::<FrenzyBuff>(warrior);
+    game.world.remove::<FrenzyBuff>(spore);
+
+    let json = game.save_state().unwrap();
+    let mut restored = Game::new();
+    restored.load_state(&json).unwrap();
+
+    let warrior = find_entity(&restored, CharacterClass::Warrior);
+    let spore = find_entity(&restored, CharacterClass::CorruptedSpore);
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().atk,
+        warrior_atk + 2
+    );
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().def,
+        warrior_def - 1
+    );
+    assert_eq!(
+        restored
+            .world
+            .get::<FrenzyBuff>(warrior)
+            .map(|buff| (buff.atk_delta, buff.def_delta)),
+        Some((2, -1))
+    );
+    assert_eq!(
+        restored
+            .world
+            .get::<FrenzyBuff>(spore)
+            .map(|buff| buff.def_delta),
+        Some(0)
+    );
+
+    wuthering_terminal::systems::floor_modifier_system(&mut restored.world);
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().atk,
+        warrior_atk
+    );
+    assert_eq!(
+        restored.world.get::<Stats>(warrior).unwrap().def,
+        warrior_def
+    );
+    assert_eq!(restored.world.get::<Stats>(spore).unwrap().def, 0);
 }
 
 #[test]

@@ -2293,19 +2293,17 @@ impl Game {
                         targets.push((e, *p));
                     }
                 }
-            } else {
-                if let Some((target_ent, target_team, _stats, _class)) =
-                    self.get_entity_at(target_pos)
+            } else if let Some((target_ent, target_team, _stats, _class)) =
+                self.get_entity_at(target_pos)
+            {
+                if target_team
+                    == (if class == CharacterClass::Healer {
+                        Team::Player
+                    } else {
+                        Team::Enemy
+                    })
                 {
-                    if target_team
-                        == (if class == CharacterClass::Healer {
-                            Team::Player
-                        } else {
-                            Team::Enemy
-                        })
-                    {
-                        targets.push((target_ent, target_pos));
-                    }
+                    targets.push((target_ent, target_pos));
                 }
             }
 
@@ -3518,6 +3516,7 @@ impl Game {
         };
         // Reset outcome for this action.
         self.last_outcome = ActionOutcome::NoOp;
+        self.nested_replay_events.clear();
         self.boss_transitioned = false;
         self.apply_action_internal(action);
         crate::systems::dynamic_floor_event_system(&mut self.world);
@@ -3581,11 +3580,16 @@ impl Game {
             .map(|events| events.iter().count())
             .unwrap_or(0);
         let first_unprocessed = self.processed_game_events.min(queued_event_count);
-        let report_events = self
+        let mut report_events: Vec<GameEvent> = self
             .take_events()
             .into_iter()
             .skip(first_unprocessed)
             .collect();
+        if action == Action::StepReplay {
+            let mut nested = std::mem::take(&mut self.nested_replay_events);
+            nested.extend(report_events);
+            report_events = nested;
+        }
         crate::snapshot::StepReport {
             action,
             source,
@@ -4710,24 +4714,22 @@ impl Game {
                                 } else {
                                     self.log("Target is out of range for healing!");
                                 }
+                            } else if target_stats.ap > 0 {
+                                self.world
+                                    .resource_mut::<GameState>()
+                                    .unwrap()
+                                    .selected_entity = Some(target_entity);
+                                let target_name = Self::get_class_name(target_class);
+                                self.log(format!(
+                                    "Selected {} (AP: {}/{})",
+                                    target_name, target_stats.ap, target_stats.max_ap
+                                ));
                             } else {
-                                if target_stats.ap > 0 {
-                                    self.world
-                                        .resource_mut::<GameState>()
-                                        .unwrap()
-                                        .selected_entity = Some(target_entity);
-                                    let target_name = Self::get_class_name(target_class);
-                                    self.log(format!(
-                                        "Selected {} (AP: {}/{})",
-                                        target_name, target_stats.ap, target_stats.max_ap
-                                    ));
-                                } else {
-                                    self.world
-                                        .resource_mut::<GameState>()
-                                        .unwrap()
-                                        .selected_entity = None;
-                                    self.log("Selection cleared.");
-                                }
+                                self.world
+                                    .resource_mut::<GameState>()
+                                    .unwrap()
+                                    .selected_entity = None;
+                                self.log("Selection cleared.");
                             }
                         }
                     } else {
@@ -5995,6 +5997,7 @@ impl Game {
                                 replay.verification_errors.push(err);
                             }
                         }
+                        self.nested_replay_events = report.events;
                         self.last_outcome = ActionOutcome::ReplayStepped {
                             index,
                             action: format!("{:?}", action),

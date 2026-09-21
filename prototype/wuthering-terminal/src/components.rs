@@ -978,6 +978,38 @@ pub struct ActiveFloorModifiers {
     pub last_processed_turn: Option<u32>,
 }
 
+/// Records the ATK/DEF deltas Frenzy actually applied so expiry and reroll can
+/// reverse them without inventing DEF for entities that started at zero.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FrenzyBuff {
+    pub atk_delta: i32,
+    pub def_delta: i32,
+}
+
+impl FrenzyBuff {
+    pub const ATK_BONUS: i32 = 2;
+    pub const DEF_PENALTY: i32 = 1;
+
+    /// Build the deltas that would be applied to an entity with the given DEF.
+    /// Zero-defense units keep `def_delta = 0` so later reversal cannot invent DEF.
+    pub fn for_current_def(def: i32) -> Self {
+        Self {
+            atk_delta: Self::ATK_BONUS,
+            def_delta: if def > 0 { -Self::DEF_PENALTY } else { 0 },
+        }
+    }
+
+    pub fn apply_to(self, stats: &mut Stats) {
+        stats.atk += self.atk_delta;
+        stats.def += self.def_delta;
+    }
+
+    pub fn revert_from(self, stats: &mut Stats) {
+        stats.atk -= self.atk_delta;
+        stats.def -= self.def_delta;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FloorEventKind {
     ModifierSurge {

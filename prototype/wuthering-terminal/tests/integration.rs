@@ -1840,6 +1840,70 @@ fn replay_step_settles_headless_end_turn_before_verification() {
 }
 
 #[test]
+fn replay_step_surfaces_nested_events_without_double_applying_stats() {
+    let mut live = Game::new();
+    let warrior = find_entity(&live, CharacterClass::Warrior);
+    let boss = find_entity(&live, CharacterClass::Boss);
+    *live.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+    *live.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+
+    select_character(&mut live, Position::new(4, 4));
+    live.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 5);
+    let live_report = live.apply_action(Action::Confirm, ActionSource::Script);
+    assert!(
+        live_report
+            .events
+            .iter()
+            .any(|event| matches!(event, GameEvent::Attacked { .. })),
+        "live attack should emit Attacked: {:?}",
+        live_report.events
+    );
+    let live_damage = live.snapshot().battle_stats.total_damage_dealt;
+    assert!(live_damage > 0, "live attack should record damage dealt");
+
+    let mut game = Game::new();
+    let warrior = find_entity(&game, CharacterClass::Warrior);
+    let boss = find_entity(&game, CharacterClass::Boss);
+    *game.world.get_mut::<Position>(boss).unwrap() = Position::new(4, 5);
+    *game.world.get_mut::<Position>(warrior).unwrap() = Position::new(4, 4);
+    select_character(&mut game, Position::new(4, 4));
+    game.world.resource_mut::<GameState>().unwrap().cursor = Position::new(4, 5);
+    {
+        let replay = game.world.resource_mut::<ReplayState>().unwrap();
+        replay.active = true;
+        replay.trace.push(Action::Confirm, ActionSource::Replay);
+        replay.expected_outcomes = vec![live_report.outcome.clone()];
+    }
+
+    let report = game.apply_action(Action::StepReplay, ActionSource::Agent);
+    assert!(
+        matches!(
+            report.outcome,
+            ActionOutcome::ReplayStepped {
+                index: 0,
+                verified: true,
+                ..
+            }
+        ),
+        "expected verified replay step, got {:?}",
+        report.outcome
+    );
+    assert!(
+        report
+            .events
+            .iter()
+            .any(|event| matches!(event, GameEvent::Attacked { .. })),
+        "outer StepReplay report should include nested Attacked events, got {:?}",
+        report.events
+    );
+    assert_eq!(
+        game.snapshot().battle_stats.total_damage_dealt,
+        live_damage,
+        "nested replay events must not apply battle-stat side effects a second time"
+    );
+}
+
+#[test]
 fn script_tokens_resolve_persistence_and_replay_controls() {
     assert_eq!(
         wuthering_terminal::resolve_command_token("save"),

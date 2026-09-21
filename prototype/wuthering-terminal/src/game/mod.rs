@@ -47,6 +47,9 @@ pub struct Game {
     /// Number of queued gameplay events whose stat/threat side effects have
     /// already been applied by the real-time schedule.
     pub(super) processed_game_events: usize,
+    /// Gameplay events produced by a nested replayed action. Surfaced on the
+    /// outer `StepReplay` report without applying their side effects again.
+    pub(super) nested_replay_events: Vec<GameEvent>,
     /// Set to true by `check_boss_phase_transition` when the boss crossed into
     /// phase 2 during this step. Reset by `apply_action` at the start of each step.
     pub boss_transitioned: bool,
@@ -419,6 +422,8 @@ impl Game {
             self.world
                 .insert_resource(crate::components::IncursionAttackTelegraphs::default());
         }
+
+        crate::systems::adopt_legacy_frenzy_buffs(&mut self.world);
 
         // Sync camera from resource
         if let Some(camera) = self.world.resource::<verryte_terminal::Camera>() {

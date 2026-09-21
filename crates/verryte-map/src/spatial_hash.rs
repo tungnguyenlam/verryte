@@ -113,7 +113,7 @@ impl<T> SpatialHash<T> {
     }
 
     /// Query all entities within `radius` (Manhattan distance) of `center`.
-    pub fn query<'a>(&'a self, center: Point, radius: u16) -> impl Iterator<Item = &'a T> + 'a {
+    pub fn query(&self, center: Point, radius: u16) -> impl Iterator<Item = &T> + '_ {
         let radius_i16 = radius as i16;
         let cell_radius = (radius_i16 / self.cell_size) + 1;
         let (cx, cy) = self.cell_key(center);
@@ -131,11 +131,7 @@ impl<T> SpatialHash<T> {
     }
 
     /// Query all entities within `radius` (Chebyshev distance) of `center`.
-    pub fn query_chebyshev<'a>(
-        &'a self,
-        center: Point,
-        radius: u16,
-    ) -> impl Iterator<Item = &'a T> + 'a {
+    pub fn query_chebyshev(&self, center: Point, radius: u16) -> impl Iterator<Item = &T> + '_ {
         let radius_i16 = radius as i16;
         let cell_radius = (radius_i16 / self.cell_size) + 1;
         let (cx, cy) = self.cell_key(center);
@@ -153,11 +149,7 @@ impl<T> SpatialHash<T> {
     }
 
     /// Query all entities within `radius` (Euclidean distance) of `center`.
-    pub fn query_euclidean<'a>(
-        &'a self,
-        center: Point,
-        radius: f32,
-    ) -> impl Iterator<Item = &'a T> + 'a {
+    pub fn query_euclidean(&self, center: Point, radius: f32) -> impl Iterator<Item = &T> + '_ {
         let cell_radius = (radius / self.cell_size as f32).ceil() as i16 + 1;
         let (cx, cy) = self.cell_key(center);
 

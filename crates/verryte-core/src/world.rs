@@ -2182,7 +2182,7 @@ pub struct EntityBuilder<'w> {
     entity: Entity,
 }
 
-impl<'w> EntityBuilder<'w> {
+impl EntityBuilder<'_> {
     /// Attach a component to the entity being built.
     pub fn with<T: 'static + Send + Sync>(self, value: T) -> Self {
         self.world.insert(self.entity, value);
@@ -2215,7 +2215,7 @@ impl<'a, T> Iterator for Query<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for Query<'a, T> {}
+impl<T> ExactSizeIterator for Query<'_, T> {}
 
 /// An iterator over two-component query results.
 pub struct Query2<'a, A, B> {
@@ -2232,7 +2232,7 @@ impl<'a, A, B> Iterator for Query2<'a, A, B> {
     }
 }
 
-impl<'a, A, B> ExactSizeIterator for Query2<'a, A, B> {}
+impl<A, B> ExactSizeIterator for Query2<'_, A, B> {}
 
 /// An iterator over three-component query results.
 pub struct Query3<'a, A, B, C> {
@@ -2249,7 +2249,7 @@ impl<'a, A, B, C> Iterator for Query3<'a, A, B, C> {
     }
 }
 
-impl<'a, A, B, C> ExactSizeIterator for Query3<'a, A, B, C> {}
+impl<A, B, C> ExactSizeIterator for Query3<'_, A, B, C> {}
 
 /// A guard that holds mutable borrows of two component columns, allowing safe concurrent iteration and mutation.
 pub struct QueryMut2Guard<'a, A, B>
@@ -2263,7 +2263,7 @@ where
     indices: Vec<usize>,
 }
 
-impl<'a, A, B> QueryMut2Guard<'a, A, B>
+impl<A, B> QueryMut2Guard<'_, A, B>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,
@@ -2303,7 +2303,7 @@ where
     }
 }
 
-impl<'a, A, B> Drop for QueryMut2Guard<'a, A, B>
+impl<A, B> Drop for QueryMut2Guard<'_, A, B>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,
@@ -2332,7 +2332,7 @@ where
     indices: Vec<usize>,
 }
 
-impl<'a, A, B, C> QueryMut3Guard<'a, A, B, C>
+impl<A, B, C> QueryMut3Guard<'_, A, B, C>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,
@@ -2380,7 +2380,7 @@ where
     }
 }
 
-impl<'a, A, B, C> Drop for QueryMut3Guard<'a, A, B, C>
+impl<A, B, C> Drop for QueryMut3Guard<'_, A, B, C>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,
@@ -2414,7 +2414,7 @@ impl<'a, A, B, C, D> Iterator for Query4<'a, A, B, C, D> {
     }
 }
 
-impl<'a, A, B, C, D> ExactSizeIterator for Query4<'a, A, B, C, D> {}
+impl<A, B, C, D> ExactSizeIterator for Query4<'_, A, B, C, D> {}
 
 /// A guard that holds mutable borrows of four component columns, allowing safe concurrent iteration and mutation.
 pub struct QueryMut4Guard<'a, A, B, C, D>
@@ -2432,7 +2432,7 @@ where
     indices: Vec<usize>,
 }
 
-impl<'a, A, B, C, D> QueryMut4Guard<'a, A, B, C, D>
+impl<A, B, C, D> QueryMut4Guard<'_, A, B, C, D>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,
@@ -2486,7 +2486,7 @@ where
     }
 }
 
-impl<'a, A, B, C, D> Drop for QueryMut4Guard<'a, A, B, C, D>
+impl<A, B, C, D> Drop for QueryMut4Guard<'_, A, B, C, D>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,
@@ -2524,7 +2524,7 @@ impl<'a, A, B, C, D, E> Iterator for Query5<'a, A, B, C, D, E> {
     }
 }
 
-impl<'a, A, B, C, D, E> ExactSizeIterator for Query5<'a, A, B, C, D, E> {}
+impl<A, B, C, D, E> ExactSizeIterator for Query5<'_, A, B, C, D, E> {}
 
 /// A guard that holds mutable borrows of five component columns, allowing safe concurrent iteration and mutation.
 pub struct QueryMut5Guard<'a, A, B, C, D, E>
@@ -2544,7 +2544,7 @@ where
     indices: Vec<usize>,
 }
 
-impl<'a, A, B, C, D, E> QueryMut5Guard<'a, A, B, C, D, E>
+impl<A, B, C, D, E> QueryMut5Guard<'_, A, B, C, D, E>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,
@@ -2610,7 +2610,7 @@ where
     }
 }
 
-impl<'a, A, B, C, D, E> Drop for QueryMut5Guard<'a, A, B, C, D, E>
+impl<A, B, C, D, E> Drop for QueryMut5Guard<'_, A, B, C, D, E>
 where
     A: 'static + Send + Sync,
     B: 'static + Send + Sync,

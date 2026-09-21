@@ -1064,7 +1064,7 @@ pub fn render_weather_danger_zones(
                 if let Some(cell) = grid.get_mut(tx as u16, ty as u16) {
                     match weather.current {
                         WeatherType::LightningStorm => {
-                            let flash = (ticks / 8).is_multiple_of(2);
+                            let flash = (ticks / 8) % 2 == 0;
                             cell.bg = verryte_terminal::vfx::blend_color(
                                 cell.bg,
                                 if flash {
@@ -1101,8 +1101,8 @@ pub fn render_weather_danger_zones(
                                 0.25,
                             );
                             if dx == 0 && dy == 0 {
-                                let sparkle = (ticks.wrapping_add((pos.x + pos.y * 7) as u64) / 12)
-                                    .is_multiple_of(2);
+                                let sparkle =
+                                    (ticks.wrapping_add((pos.x + pos.y * 7) as u64) / 12) % 2 == 0;
                                 if sparkle {
                                     cell.fg = Color(220, 230, 255);
                                     cell.glyph = '*';

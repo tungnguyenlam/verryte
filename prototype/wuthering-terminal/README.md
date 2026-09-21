@@ -43,7 +43,7 @@ Characters can have unique traits that modify gameplay:
 - **Alchemy crafting**: combine two items in inventory (e.g. 2x Healing Potion -> 1x Mega Potion, Potion + Elixir -> Elixir of Life, Cleanse Remedy + Energy Elixir -> Ward Charm) using `Action::CraftItem`. Successful crafts report `ActionOutcome::Crafted`; invalid recipes and slots report structured failures. Ward Charm uses `ItemEffect::EventWard` to Brace a telegraphed floor event without spending AP.
 - **Floor progression**: stairs spawn upon defeating enemies, triggering descent to deeper floors (using `Action::NextFloor` or keyboard key `>`). Floor 2+ features a procedural BSP dungeon layout, scaled enemy stats (+15% per floor), bonus loot, and an elite Glacial Golem encounter on Floor 3+. Boss shields scale with floor depth.
 - **Dynamic floor events**: beginning on Floor 2, seed-driven modifier surges or mini-boss incursions are telegraphed one turn before they resolve. Danger tiles, resolve turn, and any player response are exposed in snapshots. Players can `brace`, `intercept`, or `embrace` through the shared action path; a crafted `Ward Charm` (Cleanse Remedy + Energy Elixir) auto-braces without spending AP. Existing inventory items also answer events: Cleanse Remedy purifies a surge, Aegis Elixir bolsters an incursion, Energy Elixir intercepts from anywhere, and a Healing Potion channels a Healing Surge into extra party healing. Mini-boss telegraphs use class-specific patterns (`cross` for Void Terror, `ring` for Frozen Sentinel) from `verryte-map::TileShape`. Intercepting an incursion also disrupts its first post-spawn attack. Triggers still emit structured game events and action outcomes.
-- **Turn-committed floor modifiers**: durations and periodic effects advance once per game turn, independent of render/update frequency. Elemental Storm therefore deals one deterministic 5-10 damage pulse per turn, and save/load preserves whether the current turn was already processed.
+- **Turn-committed floor modifiers**: durations and periodic effects advance once per game turn, independent of render/update frequency. Elemental Storm therefore deals one deterministic 5-10 damage pulse per turn, and save/load preserves whether the current turn was already processed. Frenzy's +2 ATK / -1 DEF adjustment is recorded per entity and reversed on expiry or reroll, including for zero-defense units that never lost DEF. Characters spawned while Frenzy is active receive the same reversible buff.
 - **Incursion attack warnings**: once an event mini-boss has spawned, it keeps
   using its class shape for committed attacks. Void Terror charges a cross-shaped
   Void Rend; Frozen Sentinel charges a ring-shaped Glacial Lock. These attacks
@@ -134,7 +134,9 @@ structured `ActionOutcome` values so scripts and replays do not need to scrape
 log text.
 Recording start/stop controls are excluded from the saved gameplay trace, and
 nested replay steps retain separate outcome metadata for the replayed action and
-the replay-control wrapper. Replaying a headless-recorded `end` settles the same
+the replay-control wrapper. The outer `StepReplay` report also includes the nested
+action's game events (movement, combat, weather, and so on) without applying their
+battle-stat or threat side effects a second time. Replaying a headless-recorded `end` settles the same
 turn schedule before validating its recorded `TurnAdvanced` outcome.
 
 The agent runner uses the same command parser and `Game::apply_action` path but

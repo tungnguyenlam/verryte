@@ -1,5 +1,104 @@
 # Verryte Worklog
 
+## 2026-09-21 - rustc 1.83 clippy -D warnings
+
+**Goal.** Restore the workspace `clippy --all-targets -- -D warnings` gate on the
+current stable toolchain (rustc 1.83).
+
+**Accomplishments.** Elided needless lifetimes on ECS query/builder impls and
+spatial-hash queries, collapsed `else { if }` chains, rewrote the BSP axis
+choice as `cmp`/`match`, and removed an unknown `clippy::manual_checked_ops`
+allow that 1.83 rejects.
+
+**Verification.** `cargo fmt --all --check`, `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`, and `git diff --check`
+pass. Agent runner frames are 24 and 40 lines at `--size 80x24` and `120x40`.
+
+**Next Steps.** Add `TileGrid::contains_in_shape` only if a second clipped
+membership caller appears. Snapshot per-entity Frenzy deltas only if agents
+need more than `active_modifiers`. Keep schedule-settling and danger-union
+construction local to Wuthering Terminal until a second consumer exists.
+
+## 2026-09-21 - allocation-free TileShape membership
+
+## 2026-09-21 - allocation-free TileShape membership
+
+**Goal.** Make `TileShape::contains` a cheap, exact membership test instead of
+allocating the full point list and scanning it.
+
+**Accomplishments.** Contains now uses the same geometry as `points()` (including
+zero and negative radii) with i32 deltas so `i16::MIN` offsets cannot overflow
+`abs()`. Battle-preview AoE entity classification uses `contains` plus grid
+bounds instead of `Vec::contains` on the clipped tile list. Exhaustive
+shape/window tests prove membership parity with `points()`.
+
+**Verification.** `cargo test -p verryte-map contains_matches` and
+`cargo test -p wuthering-terminal --lib battle_preview` pass. Full workspace
+fmt/test/clippy gates are recorded in the rustc 1.83 clippy entry above.
+
+**Next Steps.** Consider `TileGrid::contains_in_shape` if a second clipped
+membership caller appears; otherwise keep clipping at `points_in_shape`.
+
+## 2026-09-21 - Frenzy on mid-fight spawns and shared reroll
+
+**Goal.** Characters created while Frenzy is already active should receive the
+same reversible ATK/DEF deltas as units present at selection time, including
+through `Action::RerollModifiers`.
+
+**Accomplishments.** `spawn_character_scaled` applies `FrenzyBuff::for_current_def`
+when the modifier is active, so incursion mini-bosses, console spawns, and
+test-created units join with recorded deltas. A Script-sourced
+`Action::RerollModifiers` regression proves the shared action path cannot stack
+Frenzy ATK.
+
+**Verification.** `cargo test -p wuthering-terminal --lib frenzy` (6 tests) passes.
+
+**Next Steps.** Expose per-entity Frenzy deltas on snapshots only if agents need
+more than `active_modifiers` to plan.
+
+## 2026-09-21 - nested StepReplay events without restacked side effects
+
+**Goal.** Surface gameplay events from a nested replayed action on the outer
+`StepReplay` report without applying battle-stat and threat side effects twice.
+
+**Accomplishments.** `Action::StepReplay` still applies the recorded action
+through the shared `apply_action()` path. The nested report's events are stashed
+and prepended onto the outer `StepReport` after the wrapper finishes. Nested
+`take_events()` still drains and applies side effects once; the outer report
+only republishes those events. A live-vs-replayed attack regression asserts an
+`Attacked` event on the wrapper report and equal `total_damage_dealt`.
+
+**Verification.** `cargo test -p wuthering-terminal --test integration replay_step`
+passes, including the new nested-event regression and existing headless
+end-turn replay coverage.
+
+**Next Steps.** Done in the spawn/reroll batch above.
+
+## 2026-09-21 - reversible Frenzy stats and rustc 1.83 build
+
+**Goal.** Make Frenzy's temporary ATK/DEF adjustment explicitly reversible on
+expiry or reroll without inventing DEF for zero-defense entities, and restore
+a trustworthy compile on the workspace's current stable toolchain.
+
+**Accomplishments.**
+- Replaced unstable `is_multiple_of` calls with `% n == 0` in `verryte-map`,
+  `verryte-terminal`, and Wuthering weather rendering so rustc 1.83 compiles.
+- Frenzy now records a saveable `FrenzyBuff` with the ATK/DEF deltas actually
+  applied (`def_delta = 0` when DEF was already 0). Selection, override,
+  expiry, reroll, and modifier surges all `sync_frenzy_buffs()`. Re-selecting
+  or refreshing Frenzy does not stack. Older saves that already baked Frenzy
+  into `Stats` adopt the marker without mutating again.
+- Frenzy is a valid deeper-floor surge candidate now that apply/clear is safe.
+
+**Verification.** Focused unit tests `frenzy*` and save/load regressions
+`save_load_preserves_frenzy_deltas_and_reverses_on_expiry` /
+`load_adopts_legacy_frenzy_without_restacking_stats` pass.
+
+**Next Steps.** Surface nested replayed game events on the outer `StepReplay`
+report without double-applying side effects.
+
+## 2026-08-23 - turn-committed floor modifiers
+
 ## 2026-08-23 - turn-committed floor modifiers
 
 **Goal.** Stop scheduled floor modifiers from consuming duration and applying

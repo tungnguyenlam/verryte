@@ -1,6 +1,6 @@
 use crate::components::{
     incursion_shape, ActiveFloorModifiers, CharacterClass, DynamicFloorEvents, FloorEventKind,
-    FloorEventRecord, FloorEventResponse, FloorModifier, GameEvent, GameState,
+    FloorEventRecord, FloorEventResponse, FloorModifier, FrenzyBuff, GameEvent, GameState,
     IncursionFirstAttackDisrupted, IncursionMiniBoss, Inventory, Item, ItemEffect,
     PendingFloorEvent, Position, Stats, Team, TurnPhase, Weather, WeatherType,
 };
@@ -474,6 +474,7 @@ pub fn floor_modifier_system(world: &mut World) {
             format!("[fg:808080]Floor modifier '{}' has expired.[/fg]", name),
         );
     }
+    sync_frenzy_buffs(world);
 }
 
 pub fn select_floor_modifiers(world: &mut World) {
@@ -562,7 +563,6 @@ pub fn select_floor_modifiers(world: &mut World) {
                     world,
                     "[fg:FF0000]Frenzy grants +2 ATK and -1 DEF to all entities.[/fg]",
                 );
-                apply_frenzy_buffs(world);
             }
             "Fog of War" => {
                 log(
@@ -579,18 +579,83 @@ pub fn select_floor_modifiers(world: &mut World) {
             _ => {}
         }
     }
+    sync_frenzy_buffs(world);
+}
+
+/// Apply or reverse Frenzy's temporary ATK/DEF deltas to match the active
+/// modifier set. Reversal uses the recorded per-entity deltas so a unit that
+/// started at 0 DEF does not gain defense when Frenzy expires or is rerolled.
+pub fn sync_frenzy_buffs(world: &mut World) {
+    if has_floor_modifier(world, &FloorModifier::Frenzy) {
+        apply_frenzy_buffs(world);
+    } else {
+        clear_frenzy_buffs(world);
+    }
 }
 
 fn apply_frenzy_buffs(world: &mut World) {
-    let mut entities = Vec::new();
-    for (e, _team) in world.query::<Team>() {
-        entities.push(e);
-    }
+    let entities: Vec<_> = world
+        .query::<Team>()
+        .into_iter()
+        .map(|(entity, _)| entity)
+        .collect();
     for entity in entities {
-        if let Some(stats) = world.get_mut::<Stats>(entity) {
-            stats.atk += 2;
-            stats.def = (stats.def - 1).max(0);
+        if world.get::<FrenzyBuff>(entity).is_some() {
+            continue;
         }
+        let (atk_delta, def_delta) = {
+            let Some(stats) = world.get_mut::<Stats>(entity) else {
+                continue;
+            };
+            let buff = FrenzyBuff::for_current_def(stats.def);
+            buff.apply_to(stats);
+            (buff.atk_delta, buff.def_delta)
+        };
+        world.insert(
+            entity,
+            FrenzyBuff {
+                atk_delta,
+                def_delta,
+            },
+        );
+    }
+}
+
+fn clear_frenzy_buffs(world: &mut World) {
+    let applied: Vec<_> = world
+        .query::<FrenzyBuff>()
+        .into_iter()
+        .map(|(entity, buff)| (entity, *buff))
+        .collect();
+    for (entity, buff) in applied {
+        if let Some(stats) = world.get_mut::<Stats>(entity) {
+            buff.revert_from(stats);
+        }
+        world.remove::<FrenzyBuff>(entity);
+    }
+}
+
+/// Older saves may have Frenzy already baked into `Stats` without a `FrenzyBuff`
+/// marker. Attach the marker without mutating stats so later expiry/reroll can
+/// reverse the existing adjustment. Zero-DEF entities keep `def_delta = 0`.
+pub fn adopt_legacy_frenzy_buffs(world: &mut World) {
+    if !has_floor_modifier(world, &FloorModifier::Frenzy) {
+        return;
+    }
+    let entities: Vec<_> = world
+        .query::<Team>()
+        .into_iter()
+        .map(|(entity, _)| entity)
+        .collect();
+    for entity in entities {
+        if world.get::<FrenzyBuff>(entity).is_some() {
+            continue;
+        }
+        let def = world
+            .get::<Stats>(entity)
+            .map(|stats| stats.def)
+            .unwrap_or(0);
+        world.insert(entity, FrenzyBuff::for_current_def(def));
     }
 }
 
@@ -625,9 +690,13 @@ pub fn select_floor_modifiers_with_override(
 
     for modifier_name in &names {
         if modifier_name.as_str() == "Frenzy" {
-            apply_frenzy_buffs(world);
+            log(
+                world,
+                "[fg:FF0000]Frenzy grants +2 ATK and -1 DEF to all entities.[/fg]",
+            );
         }
     }
+    sync_frenzy_buffs(world);
 }
 
 pub fn has_floor_modifier(world: &World, modifier: &FloorModifier) -> bool {
@@ -717,6 +786,7 @@ fn choose_floor_event_kind(world: &mut World, floor: u32) -> Option<FloorEventKi
             FloorModifier::GravityWell,
             FloorModifier::ElementalStorm,
             FloorModifier::HealingSurge,
+            FloorModifier::Frenzy,
             FloorModifier::FogOfWar,
             FloorModifier::Reversal,
         ];
@@ -1031,6 +1101,7 @@ pub fn trigger_floor_event(world: &mut World, kind: FloorEventKind) -> FloorEven
                     active.turns_remaining.push(*duration);
                 }
             }
+            sync_frenzy_buffs(world);
             format!(
                 "{} {} for {} turns",
                 modifier.display_name(),
