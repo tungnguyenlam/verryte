@@ -1388,6 +1388,20 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_hazards_are_sorted_by_tile() {
+        let game = Game::new();
+        let keys: Vec<_> = game
+            .snapshot()
+            .hazards
+            .iter()
+            .map(|h| (h.position.y, h.position.x, h.kind.clone()))
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
     fn test_full_script_victory_path() {
         let mut game = Game::new();
 

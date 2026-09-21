@@ -259,8 +259,9 @@ The script runner prints the rendered frame, viewport, state summary, source, ac
 The normal check for the workspace is:
 
 ```sh
-cargo fmt --check
-cargo test
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 This environment must have the Rust toolchain on `PATH` for those commands.
