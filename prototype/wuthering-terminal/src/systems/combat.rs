@@ -214,13 +214,11 @@ pub fn resolve_combat_hit(
                 target_name, actual_damage, final_hp
             ),
         );
-    } else {
-        if let Some(stats) = world.get_mut::<Stats>(target) {
-            stats.hp -= actual_damage;
-            final_hp = stats.hp;
-            if stats.hp <= 0 {
-                defeated = true;
-            }
+    } else if let Some(stats) = world.get_mut::<Stats>(target) {
+        stats.hp -= actual_damage;
+        final_hp = stats.hp;
+        if stats.hp <= 0 {
+            defeated = true;
         }
     }
 

@@ -2293,19 +2293,17 @@ impl Game {
                         targets.push((e, *p));
                     }
                 }
-            } else {
-                if let Some((target_ent, target_team, _stats, _class)) =
-                    self.get_entity_at(target_pos)
+            } else if let Some((target_ent, target_team, _stats, _class)) =
+                self.get_entity_at(target_pos)
+            {
+                if target_team
+                    == (if class == CharacterClass::Healer {
+                        Team::Player
+                    } else {
+                        Team::Enemy
+                    })
                 {
-                    if target_team
-                        == (if class == CharacterClass::Healer {
-                            Team::Player
-                        } else {
-                            Team::Enemy
-                        })
-                    {
-                        targets.push((target_ent, target_pos));
-                    }
+                    targets.push((target_ent, target_pos));
                 }
             }
 
@@ -4716,24 +4714,22 @@ impl Game {
                                 } else {
                                     self.log("Target is out of range for healing!");
                                 }
+                            } else if target_stats.ap > 0 {
+                                self.world
+                                    .resource_mut::<GameState>()
+                                    .unwrap()
+                                    .selected_entity = Some(target_entity);
+                                let target_name = Self::get_class_name(target_class);
+                                self.log(format!(
+                                    "Selected {} (AP: {}/{})",
+                                    target_name, target_stats.ap, target_stats.max_ap
+                                ));
                             } else {
-                                if target_stats.ap > 0 {
-                                    self.world
-                                        .resource_mut::<GameState>()
-                                        .unwrap()
-                                        .selected_entity = Some(target_entity);
-                                    let target_name = Self::get_class_name(target_class);
-                                    self.log(format!(
-                                        "Selected {} (AP: {}/{})",
-                                        target_name, target_stats.ap, target_stats.max_ap
-                                    ));
-                                } else {
-                                    self.world
-                                        .resource_mut::<GameState>()
-                                        .unwrap()
-                                        .selected_entity = None;
-                                    self.log("Selection cleared.");
-                                }
+                                self.world
+                                    .resource_mut::<GameState>()
+                                    .unwrap()
+                                    .selected_entity = None;
+                                self.log("Selection cleared.");
                             }
                         }
                     } else {

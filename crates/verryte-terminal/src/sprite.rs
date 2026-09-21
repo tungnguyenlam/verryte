@@ -119,12 +119,10 @@ impl Sprite {
     pub fn set_tier(&mut self, tier: ResolutionTier) {
         if self.tiers.contains_key(&tier) {
             self.current_tier = tier;
-        } else {
-            if let Some((&t, _)) = self.tiers.range(..=tier).next_back() {
-                self.current_tier = t;
-            } else if let Some((&t, _)) = self.tiers.range(tier..).next() {
-                self.current_tier = t;
-            }
+        } else if let Some((&t, _)) = self.tiers.range(..=tier).next_back() {
+            self.current_tier = t;
+        } else if let Some((&t, _)) = self.tiers.range(tier..).next() {
+            self.current_tier = t;
         }
         if let Some(frames) = self.tiers.get(&self.current_tier) {
             if self.current_frame >= frames.len() {

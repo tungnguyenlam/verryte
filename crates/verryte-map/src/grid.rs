@@ -2213,12 +2213,10 @@ impl<T> TileGrid<T> {
         fn split(node: &mut Node, min_size: u16, rng: &mut impl FnMut() -> u64) {
             let r = node.region;
             // Decide split direction: prefer splitting the longer axis.
-            let horizontal = if r.w > r.h {
-                true
-            } else if r.h > r.w {
-                false
-            } else {
-                rng() % 2 == 0
+            let horizontal = match r.w.cmp(&r.h) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Less => false,
+                std::cmp::Ordering::Equal => rng() % 2 == 0,
             };
 
             let max_span = if horizontal { r.h } else { r.w };

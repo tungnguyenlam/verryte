@@ -1,5 +1,26 @@
 # Verryte Worklog
 
+## 2026-09-21 - rustc 1.83 clippy -D warnings
+
+**Goal.** Restore the workspace `clippy --all-targets -- -D warnings` gate on the
+current stable toolchain (rustc 1.83).
+
+**Accomplishments.** Elided needless lifetimes on ECS query/builder impls and
+spatial-hash queries, collapsed `else { if }` chains, rewrote the BSP axis
+choice as `cmp`/`match`, and removed an unknown `clippy::manual_checked_ops`
+allow that 1.83 rejects.
+
+**Verification.** `cargo fmt --all --check`, `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`, and `git diff --check`
+pass. Agent runner frames are 24 and 40 lines at `--size 80x24` and `120x40`.
+
+**Next Steps.** Add `TileGrid::contains_in_shape` only if a second clipped
+membership caller appears. Snapshot per-entity Frenzy deltas only if agents
+need more than `active_modifiers`. Keep schedule-settling and danger-union
+construction local to Wuthering Terminal until a second consumer exists.
+
+## 2026-09-21 - allocation-free TileShape membership
+
 ## 2026-09-21 - allocation-free TileShape membership
 
 **Goal.** Make `TileShape::contains` a cheap, exact membership test instead of
@@ -12,7 +33,8 @@ bounds instead of `Vec::contains` on the clipped tile list. Exhaustive
 shape/window tests prove membership parity with `points()`.
 
 **Verification.** `cargo test -p verryte-map contains_matches` and
-`cargo test -p wuthering-terminal --lib battle_preview` pass.
+`cargo test -p wuthering-terminal --lib battle_preview` pass. Full workspace
+fmt/test/clippy gates are recorded in the rustc 1.83 clippy entry above.
 
 **Next Steps.** Consider `TileGrid::contains_in_shape` if a second clipped
 membership caller appears; otherwise keep clipping at `points_in_shape`.

@@ -464,7 +464,6 @@ impl Grid {
 
     /// Blur the foreground and background colors of cells within the given `rect`
     /// using a box blur of the specified `radius`.
-    #[allow(clippy::manual_checked_ops)]
     pub fn apply_blur(&mut self, rect: Rect, radius: usize) {
         if radius == 0 {
             return;
