@@ -1,5 +1,23 @@
 # Verryte Worklog
 
+## 2026-09-21 - script diagnostics print crowd control and shield
+
+**Goal.** Unit JSON already carried `rooted_turns` / `stunned_turns` / shield,
+but the script runner's human diagnostics lines still showed only elemental
+status.
+
+**Accomplishments.** `CharacterDiag::script_line` prints remaining crowd-control
+turns and shield (`none` or `Physical:500/500`). Both the batch and REPL
+diagnostics printers share it. Script-sourced regressions assert the formatted
+line after `apply_action()`.
+
+**Verification.** `cargo test -p wuthering-terminal --lib snapshot_units_expose`
+passes (rooted/stunned and shield tests).
+
+**Next Steps.** Keep Frenzy deltas on `active_modifiers`. Add
+`TileGrid::contains_in_shape` only if a second clipped membership caller
+appears. Keep schedule-settling local until a second consumer exists.
+
 ## 2026-09-21 - StepToSafety shares occupant hazards
 
 **Goal.** `Action::StepToSafety` teleported onto a safe tile without running the

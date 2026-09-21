@@ -256,7 +256,7 @@ cargo run -p wuthering-terminal --bin wuthering-terminal
 ```
 
 `verryte-input` command bindings accept action tokens, e.g. for team swapping, skills, item use, crafting, equipment upgrades, save/load, recording, replay controls, UI/tool toggles, and target selections. The script runner parses these commands and validates game logic with structured outcomes, including item use, crafting, equipment upgrade, set reward, echo absorption, boss phase transition, save/load, recording/replay state changes, replay steps, rest recovery, floor modifier rerolls, scheduled deeper-floor events and player responses (brace/intercept/embrace plus item answers: purify/bolster/channel, and Energy Elixir remote intercept), status views, and precise failure reports for invalid inventory/crafting/floor/replay actions.
-The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action.
+The script runner prints the rendered frame, viewport, state summary, source, action result, and event outcomes after each action. Closing diagnostics lines include remaining Rooted/Stunned durations and elemental shield.
 
 ## Verification
 

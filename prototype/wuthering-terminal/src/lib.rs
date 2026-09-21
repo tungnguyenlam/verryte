@@ -1388,6 +1388,11 @@ mod tests {
             .expect("diagnostics should include Kael");
         assert_eq!(kael_diag.rooted_turns, 2);
         assert_eq!(kael_diag.stunned_turns, 1);
+        let line = kael_diag.script_line();
+        assert!(
+            line.contains("rooted=2") && line.contains("stunned=1") && line.contains("shield=none"),
+            "script diagnostics should print CC and empty shield, got {line}"
+        );
     }
 
     #[test]
@@ -1460,6 +1465,13 @@ mod tests {
             .expect("diagnostics should include the stalker");
         assert_eq!(stalker_diag.shield_type, "Physical");
         assert_eq!(stalker_diag.shield_amount, 500);
+        assert!(
+            stalker_diag
+                .script_line()
+                .contains("shield=Physical:500/500"),
+            "script diagnostics should print remaining shield, got {}",
+            stalker_diag.script_line()
+        );
     }
 
     #[test]

@@ -127,6 +127,8 @@ cargo run -p wuthering-terminal --bin wuthering-terminal-script -- "confirm skil
 
 The script runner accepts action tokens separated by spaces. It prints
 rendered frames, state summaries, and event outcomes after each action.
+Closing character diagnostics include remaining Rooted/Stunned turns and any
+elemental shield (the same fields already present in JSON).
 An `end` token advances the normal turn-management and enemy-AI schedule until
 the next player turn, so its `StepReport` contains the resulting state and
 events rather than a pending transition request.

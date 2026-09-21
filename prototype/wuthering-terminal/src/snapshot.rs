@@ -589,6 +589,36 @@ pub struct CharacterDiag {
     pub team: Team,
 }
 
+impl CharacterDiag {
+    /// One-line script/REPL diagnostics, including crowd control and shield.
+    pub fn script_line(&self) -> String {
+        let shield = if self.shield_type.is_empty() || self.shield_amount <= 0 {
+            "none".to_string()
+        } else {
+            format!(
+                "{}:{}/{}",
+                self.shield_type, self.shield_amount, self.shield_max
+            )
+        };
+        format!(
+            "{} {:?}: pos=({},{}) hp={}/{} ap={}/{} status={} rooted={} stunned={} shield={} alive={}",
+            self.name,
+            self.team,
+            self.position.x,
+            self.position.y,
+            self.hp,
+            self.max_hp,
+            self.ap,
+            self.max_ap,
+            self.status,
+            self.rooted_turns,
+            self.stunned_turns,
+            shield,
+            self.alive
+        )
+    }
+}
+
 /// A snapshot of diagnostic information about the game state, useful for
 /// agents, CI verification, and replay debugging.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
