@@ -235,6 +235,7 @@ weather danger-zone coordinates so a headless controller can plan from state
 rather than scrape the rendered frame. Unit summaries on each snapshot include
 name, team, position, HP/AP, selection, elemental status, remaining
 Rooted/Stunned durations, and any elemental shield. Armed hazard tiles are listed on `hazards`.
+The selected character's 1-based inventory slots appear on `inventory` for `use:N` / `craft:N,M`.
 `damage_preview` uses equipment-adjusted ATK/DEF; `can_kill` counts remaining shield as extra HP.
 The shared `safety` action plans against
 the union of boss, incursion, committed lightning warnings, and damaging trap tiles, while weather

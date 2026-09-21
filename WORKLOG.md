@@ -1,5 +1,21 @@
 # Verryte Worklog
 
+## 2026-09-21 - selected inventory on snapshots
+
+**Goal.** Scripts and agents use `use:N` / `craft:N,M` but had to scrape the
+inventory overlay to learn which item occupied each slot.
+
+**Accomplishments.** `Snapshot.inventory` lists the selected character's items
+with 1-based slots, names, and compact effect tags. A Script-sourced select,
+open-inventory, and `UseItem(0)` proves the shared `apply_action()` path
+reindexes remaining slots after consuming a Healing Potion.
+
+**Verification.** `cargo test -p wuthering-terminal --lib snapshot_inventory`
+passes.
+
+**Next Steps.** Apply destination hazards after `StepToSafety`. Print
+Rooted/Stunned/shield on script-runner diagnostics lines.
+
 ## 2026-09-21 - equipment-aware damage preview
 
 **Goal.** Snapshot `damage_preview` used raw `Stats.atk`/`Stats.def`, so Kael's

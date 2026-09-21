@@ -80,6 +80,33 @@ pub(crate) fn shield_summary(
         .unwrap_or_default()
 }
 
+/// 1-based inventory slot for the selected character (`use:N` / `craft:N,M`).
+pub(crate) fn selected_inventory(
+    world: &verryte_core::World,
+    selected: Option<verryte_core::Entity>,
+) -> Vec<InventoryItemPreview> {
+    let Some(entity) = selected else {
+        return Vec::new();
+    };
+    let Some(inventory) = world.get::<Inventory>(entity) else {
+        return Vec::new();
+    };
+    inventory
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item_entity)| {
+            world
+                .get::<Item>(*item_entity)
+                .map(|item| InventoryItemPreview {
+                    slot: index + 1,
+                    name: item.name.clone(),
+                    effect: item.effect.display_name(),
+                })
+        })
+        .collect()
+}
+
 /// Structured warning for a pending incursion mini-boss attack.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct IncursionAttackPreview {
@@ -173,6 +200,9 @@ pub struct Snapshot {
     /// Inventory items that can answer the pending floor event without a new recipe.
     #[serde(default)]
     pub pending_floor_event_item_offers: Vec<String>,
+    /// 1-based inventory slots of the currently selected character (`use:N` / `craft:N,M`).
+    #[serde(default)]
+    pub inventory: Vec<InventoryItemPreview>,
     /// Class-specific attacks armed by already-spawned incursion mini-bosses.
     #[serde(default)]
     pub incursion_attacks: Vec<IncursionAttackPreview>,
@@ -188,6 +218,14 @@ pub struct Snapshot {
 pub struct HazardPreview {
     pub position: Position,
     pub kind: String,
+}
+
+/// Selected character inventory slot for scripts and agents.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InventoryItemPreview {
+    pub slot: usize,
+    pub name: String,
+    pub effect: String,
 }
 
 fn default_floor_one() -> u32 {

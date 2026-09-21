@@ -1047,6 +1047,7 @@ impl Game {
                         .map(|pending| pending.kind.item_offers())
                 })
                 .unwrap_or_default(),
+            inventory: crate::snapshot::selected_inventory(&self.world, state.selected_entity),
             incursion_attacks: self
                 .world
                 .resource::<crate::components::IncursionAttackTelegraphs>()

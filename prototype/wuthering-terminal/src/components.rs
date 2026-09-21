@@ -370,6 +370,21 @@ pub enum ItemEffect {
     EventWard,
 }
 
+impl ItemEffect {
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Heal(amount) => format!("heal:{amount}"),
+            Self::ReplenishAp(amount) => format!("ap:{amount}"),
+            Self::Cleanse => "cleanse".to_string(),
+            Self::RestoreShield(kind, amount) => format!("shield:{:?}:{amount}", kind),
+            Self::Combined(heal, ap) => format!("heal:{heal}+ap:{ap}"),
+            Self::CleanseAndHeal(amount) => format!("cleanse+heal:{amount}"),
+            Self::UpgradeKit => "upgrade-kit".to_string(),
+            Self::EventWard => "event-ward".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Item {
     pub name: String,

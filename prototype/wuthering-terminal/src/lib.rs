@@ -19,7 +19,8 @@ pub use action::{default_commands, resolve_command_token, Action};
 pub use components::Outcome;
 pub use game::Game;
 pub use snapshot::{
-    ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, Snapshot, StepReport, UnitSummary,
+    ActionOutcome, CharacterDiag, FullSaveState, GameDiagnostics, InventoryItemPreview, Snapshot,
+    StepReport, UnitSummary,
 };
 pub use spawn::{base_stats, scale_stats_by_floor, Spawner};
 pub use verryte_map::Point as Position;
@@ -1459,6 +1460,52 @@ mod tests {
             .expect("diagnostics should include the stalker");
         assert_eq!(stalker_diag.shield_type, "Physical");
         assert_eq!(stalker_diag.shield_amount, 500);
+    }
+
+    #[test]
+    fn test_snapshot_inventory_exposes_selected_slots_on_shared_action_path() {
+        let mut game = Game::new();
+        let snap = game.snapshot();
+        assert!(
+            snap.inventory.is_empty(),
+            "no selection should hide inventory slots, got {:?}",
+            snap.inventory
+        );
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        let selected = game.apply_action(Action::Confirm, ActionSource::Script);
+        assert_eq!(
+            selected
+                .after
+                .inventory
+                .iter()
+                .map(|item| (item.slot, item.name.as_str(), item.effect.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, "Healing Potion", "heal:30"),
+                (2, "Energy Elixir", "ap:2"),
+                (3, "Aegis Elixir", "shield:Physical:30"),
+            ]
+        );
+
+        game.apply_action(Action::ToggleInventory, ActionSource::Script);
+        let used = game.apply_action(Action::UseItem(0), ActionSource::Script);
+        assert!(
+            matches!(used.outcome, ActionOutcome::ItemUsed { ref name } if name == "Healing Potion"),
+            "expected potion use, got {:?}",
+            used.outcome
+        );
+        assert_eq!(
+            used.after
+                .inventory
+                .iter()
+                .map(|item| (item.slot, item.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1, "Energy Elixir"), (2, "Aegis Elixir")]
+        );
     }
 
     #[test]
