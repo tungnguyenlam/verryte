@@ -704,15 +704,21 @@ impl Game {
                     .get::<Stats>(sel)
                     .map(|s| s.ap > 0)
                     .unwrap_or(false);
+                let origin = self
+                    .world
+                    .get::<Position>(sel)
+                    .copied()
+                    .unwrap_or(state.cursor);
                 let mut targets: Vec<Position> = Vec::new();
                 for (_, team, pos) in self.world.query2::<Team, Position>() {
                     if team == &Team::Enemy {
-                        let dist = (pos.x - state.cursor.x).abs() + (pos.y - state.cursor.y).abs();
+                        let dist = (pos.x - origin.x).abs() + (pos.y - origin.y).abs();
                         if dist <= attack_range {
                             targets.push(*pos);
                         }
                     }
                 }
+                targets.sort_by(|a, b| a.y.cmp(&b.y).then(a.x.cmp(&b.x)));
                 (reachable, targets, can_act)
             } else {
                 (Vec::new(), Vec::new(), false)

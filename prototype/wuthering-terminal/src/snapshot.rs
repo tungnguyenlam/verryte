@@ -108,7 +108,8 @@ pub struct Snapshot {
     /// Tiles the currently selected character can reach with movement.
     #[serde(default)]
     pub reachable_tiles: Vec<Position>,
-    /// Tiles the currently selected character can attack (within attack range).
+    /// Enemy tiles the currently selected character can attack from their tile
+    /// (class attack range), independent of cursor position.
     #[serde(default)]
     pub targetable_tiles: Vec<Position>,
     /// True iff there is a character selected who still has AP to act.

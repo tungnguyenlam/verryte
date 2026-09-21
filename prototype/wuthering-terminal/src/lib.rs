@@ -1815,9 +1815,58 @@ mod tests {
         assert!(snap.selected_can_act);
         // Reachable tiles are non-empty (warrior at (4,4) can reach several tiles).
         assert!(!snap.reachable_tiles.is_empty());
-        // Targetable tiles may or may not be empty depending on cursor position.
-        // The default cursor is (0,0), so no enemy is in range initially.
+        // No enemy starts adjacent to Kael, so melee range is empty.
         assert!(snap.targetable_tiles.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_targetable_tiles_use_selected_unit_not_cursor() {
+        let mut game = Game::new();
+        let warrior = game
+            .world
+            .query2::<CharacterClass, Position>()
+            .into_iter()
+            .find(|(_, class, _)| **class == CharacterClass::Warrior)
+            .map(|(entity, _, _)| entity)
+            .unwrap();
+        let stalker = game
+            .world
+            .query2::<CharacterClass, Position>()
+            .into_iter()
+            .find(|(_, class, _)| **class == CharacterClass::ShadowStalker)
+            .map(|(entity, _, _)| entity)
+            .unwrap();
+        *game.world.get_mut::<Position>(stalker).unwrap() = Position::new(5, 4);
+
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(4, 4);
+        }
+        game.apply_action(Action::Confirm, ActionSource::Script);
+        assert_eq!(
+            game.world.resource::<GameState>().unwrap().selected_entity,
+            Some(warrior)
+        );
+        {
+            let state = game.world.resource_mut::<GameState>().unwrap();
+            state.cursor = Position::new(0, 0);
+        }
+        let report = game.apply_action(Action::Wait, ActionSource::Script);
+        assert_eq!(report.after.cursor, Position::new(0, 0));
+        assert!(
+            report.after.targetable_tiles.contains(&Position::new(5, 4)),
+            "melee range is from Kael at (4,4), not the distant cursor, got {:?}",
+            report.after.targetable_tiles
+        );
+        let keys: Vec<_> = report
+            .after
+            .targetable_tiles
+            .iter()
+            .map(|pos| (pos.y, pos.x))
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
     }
 
     #[test]

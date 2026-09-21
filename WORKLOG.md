@@ -1,5 +1,23 @@
 # Verryte Worklog
 
+## 2026-09-21 - targetable tiles from the selected unit
+
+**Goal.** `Snapshot.targetable_tiles` was documented as the selected unit's
+attack range but measured Manhattan distance from the cursor, so moving the
+cursor (or leaving it at the default) hid adjacent enemies from agents.
+
+**Accomplishments.** Target lists now use the selected combatant's tile, matching
+`Confirm`'s attack-range check, and sort by y/x for stable JSON. A Script-sourced
+`Wait` with the cursor at (0,0) still reports a stalker standing next to Kael.
+
+**Verification.** `cargo test -p wuthering-terminal --lib targetable` (2 tests)
+passes.
+
+**Next Steps.** Make `damage_preview` use equipment-adjusted ATK/DEF so
+`can_kill` matches combat. Expose selected-unit inventory on snapshots. Apply
+destination hazards after `StepToSafety`. Print Rooted/Stunned/shield on
+script-runner diagnostics lines.
+
 ## 2026-09-21 - shields on snapshots and shield-aware can_kill
 
 **Goal.** Combat absorbs `ElementalShield` before HP, but unit snapshots omitted
